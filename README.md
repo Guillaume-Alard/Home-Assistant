@@ -128,6 +128,7 @@ que Sentinel sert du HTTPS même en LAN.
 |---|---|
 | « Micro indisponible… » | L'URL doit être en `https://` (ou le certificat refusé) ; vérifie l'autorisation micro du navigateur |
 | Pas de réponse, erreur `ANTHROPIC_API_KEY` | Clé absente/incorrecte dans `.env`, puis `docker compose up -d` |
+| « L'API Anthropic a renvoyé une erreur (400) : … » | Le détail affiché dit la cause ; la plus fréquente en cours d'usage est le **crédit API épuisé** → recharge sur console.anthropic.com (Plans & Billing). Détail aussi dans `docker compose logs sentinel-core` |
 | « Service de transcription injoignable » | `docker compose ps` : whisper démarré ? Premier téléchargement du modèle en cours ? |
 | Transcription lente | Essaie `WHISPER_MODEL=tiny-int8` ; `small-int8` vise 1–2 s sur un x86 récent |
 | Sentinel coupe trop tôt / trop tard | Ajuste les constantes de silence dans `ui/js/app.js` (`SILENCE_MS`, `VOICE_THRESHOLD`) |

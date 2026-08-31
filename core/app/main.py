@@ -245,10 +245,23 @@ class Sentinel:
 
 
 def _build_history(records: list[dict]) -> list[dict]:
-    """Convertit l'historique stocké au format API (premier message = user)."""
-    history = [{"role": r["role"], "content": r["content"]} for r in records]
+    """Convertit l'historique stocké au format API.
+
+    Contraintes de l'API Messages : premier message de rôle `user`, aucun contenu
+    vide, et jamais un `assistant` en dernier (traité comme un prefill → 400 sur
+    les modèles récents). Le flux normal les garantit déjà ; on les impose ici
+    pour qu'aucune donnée héritée ou imprévue ne casse un tour.
+    """
+    history = [
+        {"role": r["role"], "content": r["content"]}
+        for r in records
+        if (r.get("content") or "").strip()
+    ]
     while history and history[0]["role"] != "user":
         history.pop(0)
+    while history and history[-1]["role"] == "assistant":
+        log.warning("Historique terminé par un message assistant — retiré avant l'appel API")
+        history.pop()
     return history
 
 

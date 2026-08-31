@@ -6,6 +6,7 @@ arrivent en Phase 2+ et passeront tous par le moteur d'actions.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -14,9 +15,33 @@ import anthropic
 
 from ..config import Settings
 
+log = logging.getLogger("sentinel.brain")
+
 
 class LLMUnavailable(RuntimeError):
     """Erreur LLM — le message (en français) est montré tel quel à l'utilisateur."""
+
+
+def _api_error_message(status_code: int, body: object) -> str:
+    """Traduit une erreur API en message utilisateur, sans perdre le détail.
+
+    Le corps d'une erreur Anthropic est {"error": {"type": …, "message": …}} ;
+    ce message dit presque toujours la vraie cause (crédit épuisé, requête
+    invalide…) — on l'affiche plutôt que de le cacher derrière un code.
+    """
+    detail = ""
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            detail = str(err.get("message") or "").strip()
+
+    if "credit balance" in detail.lower():
+        return (
+            "Le crédit de la clé API Anthropic est épuisé — recharge le compte sur "
+            "console.anthropic.com (Plans & Billing) puis réessaie."
+        )
+    base = f"L'API Anthropic a renvoyé une erreur ({status_code})"
+    return f"{base} : {detail}" if detail else f"{base}."
 
 
 # Bloc stable, mis en cache côté API (cache_control) : ne rien y mettre de variable.
@@ -99,18 +124,21 @@ class Brain:
                 async for text in stream.text_stream:
                     yield text
         except anthropic.AuthenticationError as exc:
+            log.error("Authentification API refusée : %s", exc)
             raise LLMUnavailable(
                 "La clé API Anthropic est invalide ou révoquée (ANTHROPIC_API_KEY)."
             ) from exc
         except anthropic.RateLimitError as exc:
+            log.warning("Limite de débit API atteinte : %s", exc)
             raise LLMUnavailable(
                 "L'API Anthropic limite le débit pour l'instant — réessaie dans un moment."
             ) from exc
         except anthropic.APIStatusError as exc:
-            raise LLMUnavailable(
-                f"L'API Anthropic a renvoyé une erreur ({exc.status_code})."
-            ) from exc
+            body = getattr(exc, "body", None)
+            log.error("Erreur API Anthropic %s — corps : %r", exc.status_code, body or exc)
+            raise LLMUnavailable(_api_error_message(exc.status_code, body)) from exc
         except anthropic.APIConnectionError as exc:
+            log.error("API Anthropic injoignable : %s", exc)
             raise LLMUnavailable(
                 "Impossible de joindre l'API Anthropic — vérifie l'accès Internet de Nebula."
             ) from exc
