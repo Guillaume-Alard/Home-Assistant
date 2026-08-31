@@ -10,9 +10,13 @@ function escapeHtml(s) {
 export function renderMarkdown(md) {
   // 1) Blocs de code mis de côté (avant tout le reste)
   const codeBlocks = [];
-  let src = md.replace(/```\w*\n?([\s\S]*?)```/g, (m, code) => {
+  // Le tag de langage n'existe que suivi d'un saut de ligne (```bash\n…) ;
+  // sinon (fence « en ligne ») tout le contenu est du code
+  let src = md.replace(/```(?:\w*\n)?([\s\S]*?)```/g, (m, code) => {
     codeBlocks.push(code.replace(/\n$/, ''));
-    return `\u0000B${codeBlocks.length - 1}\u0000`;
+    // Entouré de sauts de ligne : le marqueur est toujours seul sur sa ligne,
+    // même quand la clôture ``` partage sa ligne avec du texte
+    return `\n\u0000B${codeBlocks.length - 1}\u0000\n`;
   });
 
   // 2) Échappement HTML puis styles en ligne

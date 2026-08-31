@@ -11,12 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def _bool(value: str | None, default: bool) -> bool:
-    if value is None or value.strip() == "":
-        return default
-    return value.strip().lower() in ("1", "true", "yes", "on")
-
-
 def _int(value: str | None, default: int) -> int:
     try:
         return int(value) if value not in (None, "") else default
@@ -49,8 +43,8 @@ class Settings:
     piper_host: str
     piper_port: int
 
-    # Réseau / stockage
-    tls: bool
+    # Réseau / stockage — le TLS lui-même est géré hors application
+    # (entrypoint.sh + healthcheck.py lisent SENTINEL_TLS directement)
     data_dir: Path
     ui_dir: Path
     tz: str
@@ -79,7 +73,6 @@ class Settings:
             whisper_port=_int(os.environ.get("WHISPER_PORT"), 10300),
             piper_host=os.environ.get("PIPER_HOST", "sentinel-piper"),
             piper_port=_int(os.environ.get("PIPER_PORT"), 10200),
-            tls=_bool(os.environ.get("SENTINEL_TLS"), True),
             data_dir=data_dir,
             ui_dir=find_ui_dir(),
             tz=os.environ.get("TZ", "Europe/Paris"),

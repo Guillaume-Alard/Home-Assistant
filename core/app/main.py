@@ -40,20 +40,25 @@ log = logging.getLogger("sentinel")
 class Client:
     """Un appareil connecté (onglet de navigateur, téléphone…)."""
 
-    def __init__(self, ws: WebSocket):
+    def __init__(self, ws: WebSocket, max_utterance_seconds: int = 60):
         self.ws = ws
         self.id = uuid.uuid4().hex[:8]
-        self.capture = CaptureSession()
+        self.capture = CaptureSession(max_seconds=max_utterance_seconds)
 
 
 class Hub:
     """Registre des clients connectés + diffusion des événements."""
 
+    # Un client gelé (Wi-Fi coupé sans fermeture TCP) ne doit jamais figer un
+    # tour de parole : au-delà de ce délai on ferme sa connexion, il se
+    # reconnectera tout seul.
+    SEND_TIMEOUT = 5.0
+
     def __init__(self) -> None:
         self._clients: dict[WebSocket, Client] = {}
 
-    def register(self, ws: WebSocket) -> Client:
-        client = Client(ws)
+    def register(self, ws: WebSocket, max_utterance_seconds: int = 60) -> Client:
+        client = Client(ws, max_utterance_seconds)
         self._clients[ws] = client
         return client
 
@@ -64,19 +69,34 @@ class Hub:
     def count(self) -> int:
         return len(self._clients)
 
+    async def _safe_send(
+        self, client: Client, *, text: str | None = None, data: bytes | None = None
+    ) -> None:
+        try:
+            async with asyncio.timeout(self.SEND_TIMEOUT):
+                if text is not None:
+                    await client.ws.send_text(text)
+                elif data is not None:
+                    await client.ws.send_bytes(data)
+        except TimeoutError:
+            log.warning("Client %s ne répond plus — fermeture de sa connexion", client.id)
+            with contextlib.suppress(Exception):
+                await client.ws.close()
+        except Exception:
+            pass  # client parti entre-temps
+
     async def send(self, client: Client, payload: dict) -> None:
-        with contextlib.suppress(Exception):  # client parti entre-temps
-            await client.ws.send_text(json.dumps(payload, ensure_ascii=False))
+        await self._safe_send(client, text=json.dumps(payload, ensure_ascii=False))
 
     async def send_bytes(self, client: Client, data: bytes) -> None:
-        with contextlib.suppress(Exception):
-            await client.ws.send_bytes(data)
+        await self._safe_send(client, data=data)
 
     async def broadcast(self, payload: dict) -> None:
         text = json.dumps(payload, ensure_ascii=False)
-        for client in list(self._clients.values()):
-            with contextlib.suppress(Exception):
-                await client.ws.send_text(text)
+        clients = list(self._clients.values())
+        if clients:
+            # En parallèle : un client lent ne retarde pas les autres
+            await asyncio.gather(*(self._safe_send(c, text=text) for c in clients))
 
 
 class Sentinel:
@@ -136,6 +156,15 @@ class Sentinel:
         except asyncio.CancelledError:
             await self.set_state("idle")
             return
+        except Exception:
+            # Quoi qu'il arrive, on ne laisse jamais l'état bloqué sur « transcription »
+            log.exception("Échec inattendu de la transcription")
+            await self.hub.send(
+                origin,
+                {"type": "notice", "text": "La transcription a échoué — détail dans les journaux du serveur."},
+            )
+            await self.set_state("idle")
+            return
 
         if not text:
             await self.hub.send(origin, {"type": "notice", "text": "Je n'ai rien entendu."})
@@ -191,6 +220,9 @@ class Sentinel:
             cancelled = True
         except LLMUnavailable as exc:
             error_text = str(exc)
+        except Exception:
+            log.exception("Échec inattendu du tour de parole")
+            error_text = "Une erreur interne est survenue — détail dans les journaux du serveur."
         finally:
             if speaker and not speaker.done():
                 speaker.cancel()
@@ -201,7 +233,9 @@ class Sentinel:
             message = None
             if full:
                 with contextlib.suppress(Exception):  # arrêt serveur pendant le tour
-                    message = await self.store.add_message("assistant", full, "text")
+                    message = await self.store.add_message(
+                        "assistant", full, "voice" if speak else "text"
+                    )
             await self.hub.broadcast(
                 {
                     "type": "assistant_end",
@@ -303,7 +337,7 @@ async def health() -> dict:
 async def websocket_endpoint(ws: WebSocket) -> None:
     sentinel: Sentinel = ws.app.state.sentinel
     await ws.accept()
-    client = sentinel.hub.register(ws)
+    client = sentinel.hub.register(ws, sentinel.settings.max_utterance_seconds)
     log.info("Client %s connecté (%d en ligne)", client.id, sentinel.hub.count)
 
     await sentinel.hub.send(

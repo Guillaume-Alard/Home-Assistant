@@ -126,6 +126,7 @@ def test_tour_vocal_complet(client, fake_brain):
     # La réponse simulée est diffusée puis synthétisée par le faux piper
     end = next(e for e in events if e["type"] == "assistant_end")
     assert end["message"]["content"] == "Bonjour Guillaume."
+    assert end["message"]["source"] == "voice"  # réponse prononcée
 
     speak_start = next(e for e in events if e["type"] == "speak_start")
     assert speak_start["rate"] == 22050

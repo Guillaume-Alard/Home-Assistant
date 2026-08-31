@@ -6,7 +6,12 @@ DATA_DIR="${SENTINEL_DATA_DIR:-/data}"
 CERT_DIR="$DATA_DIR/certs"
 ARGS="--host 0.0.0.0 --port 8443"
 
-if [ "${SENTINEL_TLS:-on}" = "on" ]; then
+# Toutes les valeurs « vraies » usuelles activent le TLS (on/true/yes/1),
+# même interprétation que healthcheck.py — ne pas diverger.
+TLS=$(printf '%s' "${SENTINEL_TLS:-on}" | tr '[:upper:]' '[:lower:]')
+case "$TLS" in on|true|yes|1) TLS=on ;; *) TLS=off ;; esac
+
+if [ "$TLS" = "on" ]; then
   if [ ! -f "$CERT_DIR/sentinel.crt" ] || [ ! -f "$CERT_DIR/sentinel.key" ]; then
     echo "[sentinel] Aucun certificat trouvé — génération d'un certificat auto-signé (10 ans) dans $CERT_DIR"
     echo "[sentinel] Pour un certificat de confiance (PWA installable sans avertissement), voir le README (mkcert)."

@@ -77,6 +77,8 @@ class WhisperSTT(_WyomingService):
                         return (Transcript.from_event(event).text or "").strip()
         except TimeoutError as exc:
             raise VoiceServiceError(f"{self._label} n'a pas répondu à temps.") from exc
+        except OSError as exc:  # connexion coupée en plein échange (redémarrage du conteneur…)
+            raise VoiceServiceError(f"{self._label} — connexion interrompue.") from exc
         finally:
             await client.disconnect()
 
@@ -102,5 +104,7 @@ class PiperTTS(_WyomingService):
                         return
         except TimeoutError as exc:
             raise VoiceServiceError(f"{self._label} n'a pas répondu à temps.") from exc
+        except OSError as exc:
+            raise VoiceServiceError(f"{self._label} — connexion interrompue.") from exc
         finally:
             await client.disconnect()

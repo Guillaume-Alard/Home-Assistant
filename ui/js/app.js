@@ -87,18 +87,18 @@ async function ensureAudio() {
 async function ensureCapture() {
   await ensureAudio();
   if (capture) return;
-  capture = new Capture();
-  await capture.init(audioCtx);
+  const cap = new Capture();
+  await cap.init(audioCtx); // si ça échoue, `capture` reste null → nouvel essai possible
 
-  capture.addEventListener('chunk', (e) => ws.sendBytes(e.detail));
+  cap.addEventListener('chunk', (e) => ws.sendBytes(e.detail));
 
-  capture.addEventListener('flushed', () => {
+  cap.addEventListener('flushed', () => {
     if (st.pendingEnd === null) return;
     ws.sendJSON({ type: st.pendingEnd ? 'audio_end' : 'audio_cancel' });
     st.pendingEnd = null;
   });
 
-  capture.addEventListener('level', (e) => {
+  cap.addEventListener('level', (e) => {
     const { value, active } = e.detail;
     if (!active || !st.listening) return;
     viz.setLevel(value);
@@ -117,6 +117,8 @@ async function ensureCapture() {
       stopListening(true);
     }
   });
+
+  capture = cap; // publié seulement une fois l'initialisation réussie
 }
 
 // ── Prise de parole ─────────────────────────────────────────────────────

@@ -71,6 +71,38 @@ pip install -r requirements-dev.txt && pytest -q   # 14 tests
 
 Déploiement réel : voir le [README](../../README.md) (docker compose, clé API, HTTPS).
 
+## Addendum — revue interne du 31/08 (7 constats, tous corrigés)
+
+Codex n'étant pas exécutable depuis l'environnement de développement, une passe de revue
+adversariale interne (8 angles, périmètre complet de la Phase 1) a été menée. Constats,
+tous vérifiés puis corrigés :
+
+1. `run_voice_turn` : une exception inattendue du STT laissait l'état global bloqué sur
+   « transcription » → filet `Exception` + retour à `idle` garanti ; les coupures de
+   connexion Wyoming en plein échange deviennent des `VoiceServiceError` propres.
+2. `ensureCapture` (PWA) : un échec d'initialisation micro laissait un objet cassé en
+   cache et pouvait coincer le serveur en « listening » → l'objet n'est publié qu'après
+   une initialisation réussie (nouvel essai possible au clic suivant).
+3. `SENTINEL_TLS` interprété différemment par `config.py`, `entrypoint.sh` et
+   `healthcheck.py` (`true` désactivait silencieusement le TLS, donc le micro) →
+   interprétation unifiée `on/true/yes/1`, et champ `Settings.tls` mort supprimé.
+4. `Hub.broadcast` séquentiel : un client gelé (Wi-Fi coupé sans fermeture TCP) figeait
+   le tour pour tous les appareils → envois parallèles avec timeout de 5 s et fermeture
+   du client muet.
+5. `renderMarkdown` : une fence ``` en ligne rendait un marqueur parasite et perdait le
+   code → marqueur isolé sur sa ligne, tag de langage compté seulement s'il est suivi
+   d'un saut de ligne.
+6. Réglage mort : `max_utterance_seconds` est maintenant réellement transmis aux
+   sessions de capture.
+7. Les réponses prononcées sont stockées avec `source="voice"` (données exactes pour
+   les usages futurs).
+
+S'y ajoute, suite au premier test réel : le détail des erreurs API Anthropic est
+désormais affiché et journalisé (cas « crédit épuisé » traduit explicitement, c'est un
+400 fréquent), et l'historique envoyé au modèle est assaini (contenus vides filtrés,
+jamais de message assistant en dernière position → prefill interdit sur les modèles
+récents). Les points de doute listés plus haut restent ouverts pour un second avis.
+
 ## Hors périmètre (ne pas commenter)
 
 Le choix du modèle d'autorisation, le phasage, la scission 3A/3B et les contraintes de

@@ -5,7 +5,9 @@ import ssl
 import sys
 import urllib.request
 
-scheme = "https" if os.environ.get("SENTINEL_TLS", "on") == "on" else "http"
+# Même interprétation des valeurs « vraies » qu'entrypoint.sh — ne pas diverger
+_tls = os.environ.get("SENTINEL_TLS", "on").strip().lower() in ("on", "true", "yes", "1")
+scheme = "https" if _tls else "http"
 url = f"{scheme}://127.0.0.1:8443/health"
 
 ctx = ssl.create_default_context()
