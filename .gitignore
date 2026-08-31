@@ -1,0 +1,17 @@
+# Secrets & environnement
+.env
+
+# Données d'exécution (SQLite, certificats, caches) et espace de travail
+data/
+workspace/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Divers
+.DS_Store

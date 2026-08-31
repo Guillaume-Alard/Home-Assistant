@@ -1,0 +1,60 @@
+# Sentinel — un seul fichier compose pour tout lancer.
+# Les variables ${…} sont lues depuis le fichier .env (copie de .env.example).
+name: sentinel
+
+services:
+  # Cerveau : API + WebSocket + UI PWA + moteur de conversation
+  sentinel-core:
+    build:
+      context: .
+      dockerfile: core/Dockerfile
+    container_name: sentinel-core
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SENTINEL_DATA_DIR: /data
+      WHISPER_HOST: sentinel-whisper
+      WHISPER_PORT: "10300"
+      PIPER_HOST: sentinel-piper
+      PIPER_PORT: "10200"
+    ports:
+      # Seul service exposé sur le LAN
+      - "${SENTINEL_PORT:-8443}:8443"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - sentinel-whisper
+      - sentinel-piper
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  # STT : faster-whisper via le protocole Wyoming (image officielle de l'écosystème HA).
+  # Le modèle est téléchargé au premier démarrage puis mis en cache dans le volume.
+  sentinel-whisper:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: sentinel-whisper
+    restart: unless-stopped
+    command: --model ${WHISPER_MODEL:-small-int8} --language fr
+    volumes:
+      - whisper-models:/data
+    # GPU NVIDIA (optionnel) : cette image est CPU. Pour un GPU, remplacer par une
+    # image faster-whisper CUDA compatible Wyoming (ex. linuxserver/faster-whisper
+    # avec le tag gpu), ajouter la réservation de device nvidia, et passer
+    # WHISPER_MODEL=medium dans .env — même port Wyoming, rien d'autre ne change.
+
+  # TTS : Piper via Wyoming. La voix est téléchargée au premier démarrage.
+  sentinel-piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: sentinel-piper
+    restart: unless-stopped
+    command: --voice ${PIPER_VOICE:-fr_FR-siwis-medium}
+    volumes:
+      - piper-voices:/data
+
+volumes:
+  whisper-models:
+  piper-voices:

@@ -1,9 +1,11 @@
 # Sentinel — Plan de projet (Phase 0)
 
-> **Statut : proposition — en attente de validation par Guillaume.**
-> Aucun code n'est écrit tant que ce plan n'est pas validé. Les choix marqués *« par défaut »*
-> sont mes recommandations : ils s'appliquent sauf contre-ordre, et chacun peut être changé
-> sans remettre le reste en cause.
+> **Statut : validé par Guillaume le 31/08/2026**, avec les décisions suivantes :
+> mot d'éveil **openWakeWord** ; whisper **`small-int8` CPU** par défaut (GPU de Nebula à
+> confirmer, bascule facile) ; modèle d'autorisation du §5 (« ordre direct = exécution
+> immédiate pour la domotique whitelistée, proposition pour tout le reste, double
+> confirmation pour le sensible ») **confirmé** ; scission 3A/3B acceptée.
+> L'état d'avancement réel est tenu à jour dans [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
