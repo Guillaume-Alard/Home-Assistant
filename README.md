@@ -99,6 +99,28 @@ jusqu'à la Phase 5.
 
 Après modification : `docker compose up -d` (et `--build` si le code a changé).
 
+## Coûts API (à lire une fois)
+
+⚠️ **L'abonnement Claude (Pro/Max) et l'API sont deux facturations séparées.** Un forfait
+claude.ai — même Max — couvre l'application Claude et Claude Code, mais **pas** la clé API
+utilisée par Sentinel : il faut créditer le compte API sur
+[console.anthropic.com](https://console.anthropic.com/) (minimum ~5 $). C'est
+[documenté par Anthropic](https://support.claude.com/en/articles/9876003) et il n'existe
+pas de contournement propre.
+
+La bonne nouvelle : Sentinel coûte très peu. Un échange vocal typique consomme ~2 000 à
+3 000 tokens d'entrée (persona mise en cache) et ~100 à 300 en sortie, soit **moins d'un
+centime par échange** avec `claude-sonnet-5` (2 $/M entrée, 10 $/M sortie) — 5 $ couvrent
+plusieurs centaines d'échanges. Leviers si besoin : `SENTINEL_MODEL=claude-haiku-4-5`
+(2× moins cher), `SENTINEL_HISTORY_WINDOW`, et surtout la Phase 2 : les commandes
+domotiques courantes passeront par les intents locaux, **sans aucun appel API**. Pense à
+définir une **limite de dépense mensuelle** dans la Console (Settings → Limits) et à
+laisser l'auto-recharge désactivée si tu veux garder la main.
+
+À noter : la délégation de tâches de développement (Phase 3B) passera par **Claude Code**,
+qui, lui, est couvert par l'abonnement Pro/Max — le gros des tokens ira donc sur ton
+forfait, l'API ne payant que la conversation légère.
+
 ## HTTPS & certificats
 
 Le micro du navigateur (`getUserMedia`) exige un **contexte sécurisé** — c'est pour ça
