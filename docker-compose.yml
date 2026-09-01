@@ -22,6 +22,9 @@ services:
       - "${SENTINEL_PORT:-8443}:8443"
     volumes:
       - ./data:/data
+      # Protocoles, alertes et alias d'intents éditables sans reconstruire
+      # l'image : modifier puis `docker compose restart sentinel-core`
+      - ./config:/opt/sentinel/config:ro
     depends_on:
       - sentinel-whisper
       - sentinel-piper

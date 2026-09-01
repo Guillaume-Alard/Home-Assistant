@@ -18,14 +18,18 @@ def _int(value: str | None, default: int) -> int:
         return default
 
 
-def find_ui_dir() -> Path:
-    # Conteneur : /opt/sentinel/app/config.py → /opt/sentinel/ui
-    # Dépôt     : core/app/config.py         → <racine>/ui
+def _find_dir(name: str) -> Path:
+    # Conteneur : /opt/sentinel/app/config.py → /opt/sentinel/<name>
+    # Dépôt     : core/app/config.py         → <racine>/<name>
     here = Path(__file__).resolve()
-    for candidate in (here.parents[1] / "ui", here.parents[2] / "ui"):
+    for candidate in (here.parents[1] / name, here.parents[2] / name):
         if candidate.is_dir():
             return candidate
-    return here.parents[1] / "ui"
+    return here.parents[1] / name
+
+
+def find_ui_dir() -> Path:
+    return _find_dir("ui")
 
 
 @dataclass(frozen=True)
@@ -47,8 +51,13 @@ class Settings:
     # (entrypoint.sh + healthcheck.py lisent SENTINEL_TLS directement)
     data_dir: Path
     ui_dir: Path
+    config_dir: Path
     tz: str
     log_level: str
+
+    # Home Assistant (Nova) — vide = fonctionnalités domotiques désactivées
+    ha_url: str = ""
+    ha_token: str = ""
 
     # Garde-fous
     max_utterance_seconds: int = 60
@@ -75,6 +84,9 @@ class Settings:
             piper_port=_int(os.environ.get("PIPER_PORT"), 10200),
             data_dir=data_dir,
             ui_dir=find_ui_dir(),
+            config_dir=Path(os.environ.get("SENTINEL_CONFIG_DIR", "")) if os.environ.get("SENTINEL_CONFIG_DIR") else _find_dir("config"),
             tz=os.environ.get("TZ", "Europe/Paris"),
             log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+            ha_url=os.environ.get("HA_URL", "").strip().rstrip("/"),
+            ha_token=os.environ.get("HA_TOKEN", "").strip(),
         )

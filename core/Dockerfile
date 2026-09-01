@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY core/app ./app
 COPY ui ./ui
+COPY config ./config
 COPY core/entrypoint.sh core/healthcheck.py ./
 
 # Note durcissement : le conteneur tourne en root pour pouvoir écrire dans le

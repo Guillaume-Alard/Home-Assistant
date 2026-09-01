@@ -17,11 +17,38 @@
       <span class="brand-dot" aria-hidden="true"></span>
       <span class="brand-name">SENTINEL</span>
     </div>
-    <div class="conn" id="conn">
-      <span class="conn-dot" id="conn-dot" aria-hidden="true"></span>
-      <span id="conn-label">connexion…</span>
+    <div class="top-right">
+      <button id="proposals-btn" class="chip" type="button" hidden
+              aria-label="Propositions en attente">
+        ▤ <span id="prop-count">0</span>
+      </button>
+      <div class="conn" id="conn-nova" title="Nova (Home Assistant)" hidden>
+        <span class="conn-dot nova" id="nova-dot" aria-hidden="true"></span>
+        <span>nova</span>
+      </div>
+      <div class="conn" id="conn">
+        <span class="conn-dot" id="conn-dot" aria-hidden="true"></span>
+        <span id="conn-label">connexion…</span>
+      </div>
     </div>
   </header>
+
+  <div id="alert-banner" class="alert-banner" role="alert" hidden>
+    <span id="alert-text"></span>
+    <button id="alert-close" type="button" aria-label="Fermer l'alerte">✕</button>
+  </div>
+
+  <aside id="proposals-panel" class="panel" hidden aria-label="Centre de propositions">
+    <header class="panel-head">
+      <h2>Propositions</h2>
+      <button id="panel-close" type="button" aria-label="Fermer">✕</button>
+    </header>
+    <div id="proposals-list" class="panel-list"></div>
+    <p class="panel-hint">
+      À la voix : « approuve / refuse / reporte la proposition N ».
+      Les propositions <em>sensibles</em> ne s'approuvent qu'ici.
+    </p>
+  </aside>
 
   <main class="layout">
     <section class="stage" aria-label="Commande vocale">

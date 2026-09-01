@@ -73,6 +73,107 @@ body {
   background: var(--danger); transition: background 0.3s;
 }
 body.online .conn-dot { background: #59d78c; box-shadow: 0 0 8px rgba(89, 215, 140, 0.6); }
+body.online .conn-dot.nova { background: var(--danger); box-shadow: none; }
+body.online.nova-on .conn-dot.nova { background: #59d78c; box-shadow: 0 0 8px rgba(89, 215, 140, 0.6); }
+
+.top-right { display: flex; align-items: center; gap: 14px; }
+
+.chip {
+  border: 1px solid var(--panel-edge);
+  background: var(--panel);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12.5px; font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.chip:hover { background: var(--user-bubble); }
+.chip.attention { border-color: var(--warn); color: var(--warn); }
+
+/* ── Bannière d'alerte ────────────────────────────────────────────────── */
+
+.alert-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: min(820px, calc(100% - 24px));
+  margin: 8px auto 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-edge);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-raised);
+  font-size: 14px;
+  z-index: 30;
+}
+.alert-banner.warning { border-left-color: var(--warn); }
+.alert-banner.critical {
+  border-left-color: var(--danger);
+  box-shadow: 0 0 24px rgba(255, 107, 107, 0.25);
+}
+.alert-banner button {
+  border: none; background: none; color: var(--muted);
+  cursor: pointer; font-size: 14px; padding: 2px 6px;
+}
+
+/* ── Centre de propositions ───────────────────────────────────────────── */
+
+.panel {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(420px, 100vw);
+  background: var(--bg-raised);
+  border-left: 1px solid var(--panel-edge);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.45);
+  z-index: 40;
+  display: flex; flex-direction: column;
+}
+.panel-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--panel-edge);
+}
+.panel-head h2 {
+  margin: 0; font-size: 13px; letter-spacing: 0.3em; text-transform: uppercase;
+  color: var(--text); font-weight: 600;
+}
+.panel-head button {
+  border: none; background: none; color: var(--muted); cursor: pointer; font-size: 15px;
+}
+.panel-list { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
+.panel-hint { margin: 0; padding: 12px 18px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--panel-edge); }
+.panel-empty { color: var(--muted); font-size: 13.5px; text-align: center; margin-top: 30px; }
+
+.prop {
+  border: 1px solid var(--panel-edge);
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.prop .prop-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.prop .prop-title { font-weight: 600; font-size: 14.5px; }
+.prop .prop-num { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.prop .prop-text { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.prop .prop-rollback { font-size: 12px; color: var(--muted); font-style: italic; }
+.risk {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--panel-edge); align-self: flex-start;
+}
+.risk.low { color: #59d78c; border-color: rgba(89, 215, 140, 0.4); }
+.risk.medium { color: var(--warn); border-color: rgba(255, 180, 84, 0.4); }
+.risk.sensitive { color: var(--danger); border-color: rgba(255, 107, 107, 0.45); }
+.prop .prop-actions { display: flex; gap: 8px; }
+.prop .prop-actions button {
+  flex: 1;
+  border: 1px solid var(--panel-edge); border-radius: 8px;
+  background: var(--bg-raised); color: var(--text);
+  padding: 7px 0; font-size: 13px; font-family: inherit; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.prop button.approve:hover { border-color: #59d78c; color: #59d78c; }
+.prop button.reject:hover { border-color: var(--danger); color: var(--danger); }
+.prop button.defer:hover { border-color: var(--warn); color: var(--warn); }
+.prop.deferred { opacity: 0.75; }
 
 /* ── Disposition centrale ─────────────────────────────────────────── */
 

@@ -14,14 +14,19 @@ from fastapi.testclient import TestClient
 from conftest import FAKE_TRANSCRIPT
 
 
-@pytest.fixture()
-def client(fake_wyoming, tmp_path, monkeypatch):
+def _base_env(monkeypatch, tmp_path, fake_wyoming):
     monkeypatch.setenv("SENTINEL_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("WHISPER_HOST", "127.0.0.1")
     monkeypatch.setenv("WHISPER_PORT", str(fake_wyoming.whisper_port))
     monkeypatch.setenv("PIPER_HOST", "127.0.0.1")
     monkeypatch.setenv("PIPER_PORT", str(fake_wyoming.piper_port))
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # le cerveau est simulé ci-dessous
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # le cerveau est simulé par les tests
+
+
+@pytest.fixture()
+def client(fake_wyoming, tmp_path, monkeypatch):
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")  # pas de domotique dans ces tests
 
     from app.main import app
 
@@ -30,16 +35,61 @@ def client(fake_wyoming, tmp_path, monkeypatch):
 
 
 @pytest.fixture()
+def client_ha(fake_wyoming, fake_ha, tmp_path, monkeypatch):
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", f"http://127.0.0.1:{fake_ha.port}")
+    monkeypatch.setenv("HA_TOKEN", fake_ha.token)
+    monkeypatch.setenv("SENTINEL_CONFIG_DIR", str(_write_config(tmp_path)))
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def _write_config(tmp_path):
+    from conftest import PROTOCOLS_TEST_YML
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "protocols.yml").write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
+    return config_dir
+
+
+@pytest.fixture()
 def fake_brain(monkeypatch):
     from app.brain.llm import Brain
 
-    async def fake_stream(self, history):
+    async def fake_stream(self, history, **kwargs):
         assert history, "l'historique ne doit pas être vide"
         assert history[0]["role"] == "user"
         yield "Bonjour "
         yield "Guillaume."
 
     monkeypatch.setattr(Brain, "stream_reply", fake_stream)
+
+
+@pytest.fixture()
+def brain_interdit(monkeypatch):
+    """Garantit qu'un intent local ne déclenche JAMAIS le LLM."""
+    from app.brain.llm import Brain
+
+    async def boom(self, history, **kwargs):
+        raise AssertionError("le LLM ne doit pas être appelé pour un intent local")
+        yield  # jamais atteint — fait de boom un générateur asynchrone
+
+    monkeypatch.setattr(Brain, "stream_reply", boom)
+
+
+def _wait_ha(test_client, timeout: float = 5.0):
+    import time as _time
+
+    sentinel = test_client.app.state.sentinel
+    for _ in range(int(timeout / 0.05)):
+        if sentinel.ha and sentinel.ha.connected:
+            return
+        _time.sleep(0.05)
+    raise AssertionError("Nova (faux serveur) jamais connectée")
 
 
 def _drain(ws, stop_types: set[str], max_frames: int = 200):
@@ -157,3 +207,42 @@ def test_erreur_llm_sans_cle(client):
         events, _ = _drain(ws, {"error"})
         error = next(e for e in events if e["type"] == "error")
         assert "ANTHROPIC_API_KEY" in error["text"]
+
+
+def test_intent_local_bout_en_bout(client_ha, fake_ha, brain_interdit):
+    """« Allume la lumière du salon » par WebSocket : Nova reçoit l'ordre, sans LLM."""
+    _wait_ha(client_ha)
+    with client_ha.websocket_connect("/ws") as ws:
+        hello = json.loads(ws.receive()["text"])
+        assert hello["ha_configured"] is True
+        assert any(p["nom"] == "Test" for p in hello["protocols"])
+
+        ws.send_text(json.dumps({"type": "chat", "text": "Allume la lumière du salon"}))
+        events, _ = _drain(ws, {"assistant_end"})
+
+    end = next(e for e in events if e["type"] == "assistant_end")
+    assert end["message"]["content"] == "Allumé : Plafonnier salon."
+    assert fake_ha.calls[-1][:2] == ("homeassistant", "turn_on")
+    assert fake_ha.calls[-1][3] == {"entity_id": ["light.salon"]}
+
+
+def test_protocole_bout_en_bout(client_ha, fake_ha, brain_interdit):
+    _wait_ha(client_ha)
+    with client_ha.websocket_connect("/ws") as ws:
+        ws.receive()  # hello
+        ws.send_text(json.dumps({"type": "chat", "text": "protocole test"}))
+        events, _ = _drain(ws, {"assistant_end"})
+
+    end = next(e for e in events if e["type"] == "assistant_end")
+    assert end["message"]["content"] == "Protocole de test exécuté."
+    assert fake_ha.calls[-1][:2] == ("persistent_notification", "create")
+
+
+def test_decision_proposition_via_ws(client_ha, fake_ha):
+    _wait_ha(client_ha)
+    with client_ha.websocket_connect("/ws") as ws:
+        ws.receive()  # hello
+        ws.send_text(json.dumps({"type": "proposal_decision", "id": 999, "decision": "approve"}))
+        events, _ = _drain(ws, {"notice"})
+    notice = next(e for e in events if e["type"] == "notice")
+    assert "999" in notice["text"]

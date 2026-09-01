@@ -1,0 +1,11 @@
+# ── Vocabulaire des intents locaux ───────────────────────────────────────
+# Alias de pièces : à gauche ce que tu dis, à droite le nom EXACT de la pièce
+# (area) dans Nova. Utile quand le nom parlé diffère du nom déclaré.
+# Après modification : docker compose restart sentinel-core
+
+pieces:
+  sejour: salon
+  living: salon
+  piece a vivre: salon
+  # bureau de guillaume: bureau
+  # chambre parentale: chambre

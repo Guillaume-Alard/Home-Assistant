@@ -30,6 +30,15 @@ const els = {
   composer: document.getElementById('composer'),
   input: document.getElementById('text-input'),
   toast: document.getElementById('toast'),
+  connNova: document.getElementById('conn-nova'),
+  proposalsBtn: document.getElementById('proposals-btn'),
+  propCount: document.getElementById('prop-count'),
+  alertBanner: document.getElementById('alert-banner'),
+  alertText: document.getElementById('alert-text'),
+  alertClose: document.getElementById('alert-close'),
+  panel: document.getElementById('proposals-panel'),
+  panelClose: document.getElementById('panel-close'),
+  proposalsList: document.getElementById('proposals-list'),
 };
 
 const ws = new WSClient();
@@ -43,6 +52,7 @@ const st = {
   hadVoice: false,
   lastVoice: 0,
   startedAt: 0,
+  proposals: new Map(), // num → proposition (pending/deferred)
 };
 
 let audioCtx = null;
@@ -187,7 +197,29 @@ ws.addEventListener('event', (e) => {
       thread.clear();
       (msg.history || []).forEach((m) => thread.addMessage(m));
       st.server = msg.state || 'idle';
+      els.connNova.hidden = !msg.ha_configured;
+      setNova(!!msg.ha_connected);
+      st.proposals.clear();
+      (msg.proposals || []).forEach((p) => st.proposals.set(p.num, p));
+      renderProposals();
       refreshUi();
+      break;
+    case 'ha_status':
+      setNova(!!msg.connected);
+      break;
+    case 'activity':
+      // Pendant la réflexion : montre ce que Sentinel fait (« consulte Nova… »)
+      if (st.server === 'thinking') els.stateLabel.textContent = msg.text;
+      break;
+    case 'alert':
+      showAlert(msg.level || 'info', msg.text || '');
+      break;
+    case 'proposal_new':
+      upsertProposal(msg.proposal);
+      toast(`Nouvelle proposition n°${msg.proposal.num} : ${msg.proposal.title}`);
+      break;
+    case 'proposal_update':
+      upsertProposal(msg.proposal);
       break;
     case 'status':
       st.server = msg.state;
@@ -223,6 +255,109 @@ ws.addEventListener('event', (e) => {
   }
 });
 
+// ── Nova, alertes, propositions ─────────────────────────────────────────
+
+function setNova(connected) {
+  document.body.classList.toggle('nova-on', connected);
+  els.connNova.title = connected ? 'Nova connectée' : 'Nova déconnectée';
+}
+
+let alertTimer = null;
+function showAlert(level, text) {
+  els.alertText.textContent = text;
+  els.alertBanner.className = `alert-banner ${level}`;
+  els.alertBanner.hidden = false;
+  clearTimeout(alertTimer);
+  if (level !== 'critical') {
+    alertTimer = setTimeout(() => { els.alertBanner.hidden = true; }, 10000);
+  }
+}
+els.alertClose.addEventListener('click', () => { els.alertBanner.hidden = true; });
+
+const RISK_LABELS = { low: 'faible', medium: 'moyen', sensitive: 'sensible' };
+
+function upsertProposal(p) {
+  if (!p || typeof p.num === 'undefined') return;
+  if (p.status === 'pending' || p.status === 'deferred') st.proposals.set(p.num, p);
+  else st.proposals.delete(p.num);
+  renderProposals();
+}
+
+function renderProposals() {
+  const items = [...st.proposals.values()].sort((a, b) => a.num - b.num);
+  els.propCount.textContent = String(items.length);
+  els.proposalsBtn.hidden = items.length === 0 && els.panel.hidden;
+  els.proposalsBtn.classList.toggle('attention', items.length > 0);
+
+  els.proposalsList.textContent = '';
+  if (!items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-empty';
+    empty.textContent = 'Aucune proposition en attente.';
+    els.proposalsList.appendChild(empty);
+    return;
+  }
+  for (const p of items) {
+    const card = document.createElement('article');
+    card.className = `prop${p.status === 'deferred' ? ' deferred' : ''}`;
+
+    const top = document.createElement('div');
+    top.className = 'prop-top';
+    const title = document.createElement('span');
+    title.className = 'prop-title';
+    title.textContent = p.title;
+    const num = document.createElement('span');
+    num.className = 'prop-num';
+    num.textContent = `n°${p.num}${p.status === 'deferred' ? ' · reportée' : ''}`;
+    top.append(title, num);
+
+    const risk = document.createElement('span');
+    risk.className = `risk ${p.risk}`;
+    risk.textContent = `risque ${RISK_LABELS[p.risk] || p.risk}`;
+
+    const text = document.createElement('p');
+    text.className = 'prop-text';
+    text.textContent = [p.description, p.justification].filter(Boolean).join(' — ');
+
+    card.append(top, risk, text);
+
+    if (p.rollback) {
+      const rb = document.createElement('p');
+      rb.className = 'prop-rollback';
+      rb.textContent = `Retour arrière : ${p.rollback}`;
+      card.appendChild(rb);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'prop-actions';
+    for (const [decision, label, cls] of [
+      ['approve', 'Approuver', 'approve'],
+      ['reject', 'Refuser', 'reject'],
+      ['defer', 'Reporter', 'defer'],
+    ]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = cls;
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        ws.sendJSON({ type: 'proposal_decision', id: p.num, decision });
+      });
+      actions.appendChild(btn);
+    }
+    card.appendChild(actions);
+    els.proposalsList.appendChild(card);
+  }
+}
+
+els.proposalsBtn.addEventListener('click', () => {
+  els.panel.hidden = false;
+  renderProposals();
+});
+els.panelClose.addEventListener('click', () => {
+  els.panel.hidden = true;
+  renderProposals();
+});
+
 // ── Interactions ────────────────────────────────────────────────────────
 
 els.mic.addEventListener('click', micAction);
@@ -240,6 +375,11 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     micAction();
   } else if (e.key === 'Escape') {
+    if (!els.panel.hidden) {
+      els.panel.hidden = true;
+      renderProposals();
+      return;
+    }
     if (st.listening) stopListening(false);
     interrupt();
   }

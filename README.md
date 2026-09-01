@@ -11,29 +11,43 @@ conversation, synchronisé en temps réel entre tous les appareils connectés.
 | Phase | Contenu | État |
 |---|---|---|
 | 0 | Plan d'architecture ([docs/PLAN.md](docs/PLAN.md)) | ✅ validée |
-| **1** | **Squelette voix ↔ LLM : je parle/j'écris dans le navigateur, Sentinel répond en voix et en texte** | ✅ **livrée** |
-| 2 | Domotique : Nova (Home Assistant), intents locaux, protocoles (Forteresse…), moteur « propose puis approuve », alertes | ⏳ |
+| 1 | Squelette voix ↔ LLM : je parle/j'écris dans le navigateur, Sentinel répond en voix et en texte | ✅ livrée |
+| **2** | **Domotique : Nova (Home Assistant), intents locaux, protocoles (Forteresse…), moteur « propose puis approuve », alertes proactives** | ✅ **livrée** |
 | 3A/3B | Copilote technique : santé des systèmes, audits, délégation de dev, maintenance Loggia/Atrium | ⏳ |
 | 4 | UI/UX finale | ⏳ |
 | 5 | Mot d'éveil & satellites (ESP32, app HA via Assist) | ⏳ |
 
 ---
 
-## Ce que fait la Phase 1
+## Ce que sait faire Sentinel
 
-- 🎙️ **Voix** : bouton (ou barre espace) → capture micro, fin de phrase détectée au
-  silence → transcription locale (faster-whisper FR) → réponse de Claude en streaming →
-  synthèse vocale locale (Piper FR) **phrase par phrase** : Sentinel commence à parler
-  avant d'avoir fini d'écrire.
-- ⌨️ **Chat écrit** : même cerveau, même fil. On commence à la voix, on poursuit au
-  clavier, et inversement. Tous les appareils connectés voient la conversation en direct.
-- 🧠 **Mémoire** : le fil est persisté (SQLite) et rechargé à la connexion.
-- 🛑 **Interruption** : reparler, envoyer un message ou presser Échap interrompt Sentinel.
-- 📱 **PWA** : interface sombre installable, zéro dépendance externe (fonctionne sans CDN).
+**Converser (Phase 1)**
+- 🎙️ **Voix** : bouton (ou barre espace) → transcription locale (faster-whisper FR) →
+  réponse de Claude en streaming → voix locale (Piper FR) **phrase par phrase**.
+- ⌨️ **Chat écrit** : même cerveau, même fil, synchronisé sur tous les appareils.
+- 🧠 **Mémoire** du fil (SQLite), **interruption** à tout moment (Échap, reparler),
+  **PWA** sombre sans CDN.
 
-Pas encore là (et c'est voulu, voir le plan) : le pilotage Home Assistant, les protocoles,
-les propositions à approuver, le mot d'éveil. La PWA fonctionne en « appui-pour-parler »
-jusqu'à la Phase 5.
+**Piloter la maison (Phase 2)**
+- ⚡ **Intents locaux** : « allume la lumière du salon », « ferme les volets »,
+  « quelle est la température ? », « quelle heure est-il ? » — compris **sans LLM**,
+  en moins d'une seconde, même sans Internet. Les pièces viennent des areas de Nova.
+- 🏰 **Protocoles** : « Sentinel, protocole forteresse » — séquences d'actions
+  déclaratives ([docs/PROTOCOLES.md](docs/PROTOCOLES.md)), génériques (Nuit, Cinéma…).
+- 🛡️ **Moteur « propose puis approuve »** : la domotique courante s'exécute sur ton
+  ordre direct (journalisé) ; **tout le reste** devient une proposition à approuver
+  (panneau ▤ en haut à droite, ou « approuve la proposition 3 » à la voix). Les actions
+  sensibles (déverrouiller, désarmer) exigent une double confirmation, et leurs
+  propositions ne s'approuvent que dans l'interface. Tout est journalisé.
+- 🚨 **Alertes proactives** : Sentinel surveille les événements de Nova (fumée,
+  intrusion, …) et prend la parole sur tes appareils + notifie ton téléphone
+  (règles déclaratives dans `config/alerts.yml`).
+- 🧰 **Outils du cerveau** : Claude lit l'état réel de la maison avant de répondre,
+  agit sur ta demande explicite, et **propose** pour tout ce qui dépasse la liste
+  blanche — il ne peut techniquement pas la contourner.
+
+Pas encore là (et c'est voulu) : surveillance des serveurs et copilote de dev
+(Phase 3), mot d'éveil (Phase 5 — la PWA fonctionne en appui-pour-parler d'ici là).
 
 ## Prérequis
 
@@ -96,8 +110,35 @@ jusqu'à la Phase 5.
 | `PIPER_VOICE` | `fr_FR-siwis-medium` | Voix française de Sentinel |
 | `TZ` | `Europe/Paris` | Fuseau horaire (Sentinel connaît la date et l'heure) |
 | `LOG_LEVEL` | `INFO` | Verbosité des journaux |
+| `HA_URL` | — | URL de Nova, ex. `http://192.168.1.10:8123` |
+| `HA_TOKEN` | — | Jeton longue durée Home Assistant (voir ci-dessous) |
 
 Après modification : `docker compose up -d` (et `--build` si le code a changé).
+
+## Connecter Nova (Home Assistant)
+
+1. **Crée un jeton longue durée** dans Nova : clique ton avatar (en bas à gauche) →
+   onglet **Sécurité** → « Jetons d'accès longue durée » → *Créer un jeton*, nommé
+   `sentinel`. ⚠️ Utilise un compte **administrateur** : Sentinel a besoin des
+   registres (pièces/entités) pour comprendre « le salon ».
+2. Renseigne `HA_URL` et `HA_TOKEN` dans `.env`, puis `docker compose up -d`.
+3. La pastille **nova** du bandeau passe au vert. Dis : « Allume la lumière du
+   salon » (le nom de pièce doit exister dans Nova → Paramètres → Zones).
+
+### Tester la Phase 2 en 3 minutes
+
+- **Protocole** : « Sentinel, protocole test » → il répond et une notification
+  apparaît dans Nova. Puis adapte `forteresse` dans `config/protocols.yml`
+  ([guide](docs/PROTOCOLES.md)).
+- **Alerte proactive** : dans Nova, crée un bouton à bascule nommé « Test
+  Sentinel » (Paramètres → Appareils et services → Entrées) et active-le :
+  Sentinel prend la parole tout seul. Adapte ensuite `config/alerts.yml`
+  (fumée, intrusion…).
+- **Propositions** : demande par écrit « purge la base de données de Nova en
+  gardant 30 jours » → Sentinel ne peut pas le faire directement : il crée une
+  proposition, à approuver dans le panneau ▤ (ou « approuve la proposition 1 »).
+- **Sensible** : « déverrouille la porte » → Sentinel exige « Sentinel,
+  confirme » avant d'agir.
 
 ## Coûts API (à lire une fois)
 
@@ -151,6 +192,9 @@ que Sentinel sert du HTTPS même en LAN.
 | « Micro indisponible… » | L'URL doit être en `https://` (ou le certificat refusé) ; vérifie l'autorisation micro du navigateur |
 | Pas de réponse, erreur `ANTHROPIC_API_KEY` | Clé absente/incorrecte dans `.env`, puis `docker compose up -d` |
 | « L'API Anthropic a renvoyé une erreur (400) : … » | Le détail affiché dit la cause ; la plus fréquente en cours d'usage est le **crédit API épuisé** → recharge sur console.anthropic.com (Plans & Billing). Détail aussi dans `docker compose logs sentinel-core` |
+| Pastille **nova** rouge | `HA_URL` joignable depuis le conteneur ? Jeton valide ? `docker compose logs sentinel-core` dit si Nova refuse le jeton |
+| « Je ne trouve pas de pièce… » | Le nom vient des **Zones** de Nova (Paramètres → Zones) ; ajoute un alias dans `config/intents.yml` si tu la nommes autrement |
+| Protocole/alerte sans effet | Vérifie le journal de démarrage (`docker compose logs sentinel-core`) : les entrées YAML invalides y sont listées avec la raison |
 | « Service de transcription injoignable » | `docker compose ps` : whisper démarré ? Premier téléchargement du modèle en cours ? |
 | Transcription lente | Essaie `WHISPER_MODEL=tiny-int8` ; `small-int8` vise 1–2 s sur un x86 récent |
 | Sentinel coupe trop tôt / trop tard | Ajuste les constantes de silence dans `ui/js/app.js` (`SILENCE_MS`, `VOICE_THRESHOLD`) |
@@ -176,14 +220,16 @@ SENTINEL_TLS=off SENTINEL_DATA_DIR=../data WHISPER_HOST=IP-DE-NEBULA PIPER_HOST=
 ```
 docker-compose.yml   # les 3 services (core, whisper, piper)
 .env.example         # configuration commentée
-core/                # serveur Python (FastAPI) : voix, cerveau, WebSocket, store
-  app/brain/         #   LLM (Claude) + découpage en phrases pour le TTS
+config/              # protocoles, alertes, alias d'intents (éditables à chaud)
+core/                # serveur Python (FastAPI)
+  app/actions/       #   LE moteur « propose puis approuve » : registre, exécuteurs
+  app/ha/            #   client WebSocket Nova, protocoles, alertes
+  app/brain/         #   LLM (Claude + outils), intents locaux FR, texte→parole
   app/voice/         #   clients Wyoming (whisper/piper) + sessions de capture
-  app/store/         #   fil de conversation (SQLite)
-  tests/             #   pytest (unitaires + intégration WebSocket)
+  app/store/         #   SQLite : conversation, propositions, journal
+  tests/             #   72 tests (moteur, intents, invariant d'écriture, bout-en-bout)
 ui/                  # PWA statique sans build : HTML/CSS/JS natifs
-config/              # (Phase 2) protocoles, alertes, intents
-docs/                # PLAN, ARCHITECTURE, briefs de revue
+docs/                # PLAN, ARCHITECTURE, PROTOCOLES, OUTILS-LLM, briefs de revue
 data/                # créé à l'exécution : SQLite, certificats (non versionné)
 ```
 

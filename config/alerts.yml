@@ -1,0 +1,62 @@
+# ── Alertes proactives de Sentinel ───────────────────────────────────────
+# Sentinel écoute les changements d'état de Nova ; quand une règle correspond,
+# il prend la parole sur les appareils connectés et/ou notifie le téléphone.
+#
+# Chaque règle (liste) :
+#   id        : identifiant court (journal, anti-rebond)
+#   nom       : libellé lisible
+#   entites   : liste d'entity_id exacts        (au moins entites OU motif)
+#   motif     : motif glob, ex. "binary_sensor.*fumee*"
+#   vers      : état(s) qui déclenchent (transition entrante uniquement)
+#   depuis    : état(s) d'origine exigés (optionnel)
+#   condition : { entite: ..., etats: [...] }   (optionnel, ex. alarme armée)
+#   gravite   : info | attention | critique
+#               (critique interrompt même Sentinel s'il est en train de parler)
+#   message   : gabarit — variables : {friendly_name} {entity_id} {state}
+#   parler    : true/false — annonce vocale sur les appareils connectés (défaut true)
+#   notifier  : { service: notify.mobile_app_xxx, titre: "..." }   (optionnel)
+#   silence   : anti-rebond en secondes par entité (défaut 300)
+#
+# La notification passe par le moteur d'actions (chemin « système », journalisé).
+# Après modification : docker compose restart sentinel-core
+
+# Règle de test : crée un « bouton » dans Nova (Paramètres → Appareils et
+# services → Entrées → Bouton à bascule, nommé « Test Sentinel ») puis
+# bascule-le : Sentinel doit l'annoncer de vive voix.
+- id: test
+  nom: "Test d'alerte"
+  entites: [input_boolean.test_sentinel]
+  vers: ["on"]
+  gravite: info
+  message: "Ceci est un test : {friendly_name} vient d'être activé."
+  parler: true
+  silence: 10
+
+# ── Exemples à adapter puis décommenter ─────────────────────────────────
+
+# - id: fumee
+#   nom: "Détection de fumée"
+#   motif: "binary_sensor.*smoke*"        # ou entites: [binary_sensor.fumee_cuisine]
+#   vers: ["on"]
+#   gravite: critique
+#   message: "Alerte incendie : {friendly_name} détecte de la fumée !"
+#   notifier: { service: notify.mobile_app_telephone_guillaume, titre: "🔥 Sentinel" }
+#   silence: 60
+
+# - id: intrusion-porte
+#   nom: "Ouverture pendant absence"
+#   motif: "binary_sensor.*porte*"
+#   vers: ["on"]
+#   condition: { entite: alarm_control_panel.maison, etats: [armed_away, armed_night] }
+#   gravite: critique
+#   message: "Intrusion possible : {friendly_name} vient de s'ouvrir alors que l'alarme est armée."
+#   notifier: { service: notify.mobile_app_telephone_guillaume, titre: "🚨 Sentinel" }
+#   silence: 30
+
+# - id: co2
+#   nom: "CO2 élevé"
+#   entites: [binary_sensor.co2_salon_eleve]   # binaire dérivé d'un seuil dans HA
+#   vers: ["on"]
+#   gravite: attention
+#   message: "Le taux de CO2 du salon est élevé — pense à aérer."
+#   silence: 1800

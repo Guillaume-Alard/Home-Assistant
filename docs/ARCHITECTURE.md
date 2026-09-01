@@ -1,4 +1,4 @@
-# Architecture — état courant (fin de Phase 1)
+# Architecture — état courant (fin de Phase 2)
 
 > Document vivant : mis à jour à chaque phase. La cible globale est décrite dans
 > [PLAN.md](PLAN.md) ; ici, seulement ce qui **existe** et pourquoi.
@@ -7,23 +7,80 @@
 
 ```mermaid
 flowchart LR
-    B["Navigateur (PWA)<br/>capture 16 kHz · lecture · chat"]
-    C["sentinel-core<br/>FastAPI · Hub WS · tours de parole"]
+    B["Navigateur (PWA)<br/>capture 16 kHz · lecture · chat<br/>propositions · alertes"]
+    C["sentinel-core<br/>FastAPI · Hub WS · tours de parole<br/>intents FR · moteur d'actions"]
     W["sentinel-whisper<br/>Wyoming · STT fr"]
     P["sentinel-piper<br/>Wyoming · TTS fr"]
-    A["API Anthropic<br/>messages.stream"]
-    D[("SQLite<br/>data/sentinel.db")]
+    A["API Anthropic<br/>messages.stream + outils"]
+    N["Nova — Home Assistant<br/>WebSocket : états, événements, services"]
+    D[("SQLite<br/>conversation · propositions · journal")]
 
     B <-->|"WSS /ws : JSON + PCM binaire"| C
     C -->|Wyoming TCP| W
     C -->|Wyoming TCP| P
     C <-->|streaming| A
+    C <-->|"jeton longue durée<br/>reconnexion auto"| N
     C <--> D
 ```
 
 Trois conteneurs (`docker-compose.yml`). Seul `sentinel-core` est publié sur le LAN
 (HTTPS 8443) ; whisper et piper vivent sur le réseau interne Docker et parlent le
 protocole **Wyoming** (réutilisables plus tard par Nova/Assist et les satellites).
+Le dossier `config/` (protocoles, alertes, alias) est monté en volume : éditable
+sans reconstruction, rechargé au redémarrage du conteneur.
+
+## Le moteur « propose puis approuve » (`core/app/actions/`)
+
+Point de passage **unique** des écritures — PLAN §5, appliqué techniquement :
+
+- **Registre** (`registry.py` + `executors.py`) : la liste blanche exhaustive.
+  Chaque action déclare son risque (`low`/`medium`/`sensitive`) et si elle est
+  exécutable en ordre direct. Les exécuteurs valident strictement leurs
+  paramètres (domaines autorisés, bornes) — seuls fichiers, avec `ha/client.py`,
+  à toucher `call_service`.
+- **Ordre direct** : « allume la lumière » exécute immédiatement (l'ordre EST
+  l'autorisation, journalisée avec la phrase exacte). Une action `sensitive`
+  (déverrouiller, désarmer, protocole sensible) exige la **double
+  confirmation** (« Sentinel, confirme », 60 s, annulable).
+- **Propositions** : tout le reste (`ha.call_service` générique, initiatives)
+  passe en file : `pending → approved/rejected/deferred → executing → done/failed`.
+  Approbation à la voix pour risque faible/moyen ; **UI uniquement** pour le
+  sensible. Exécution seulement après approbation — il n'existe aucun autre
+  chemin dans le code.
+- **Chemin « système »** : les règles d'alerte peuvent notifier (`ha.notify`)
+  avec l'autorisation « règle X » — limité techniquement au risque `low`.
+- **Journal** append-only : qui, quoi, quand, autorisation, résultat.
+- **Verrou statique** : `tests/test_invariant.py` interdit `call_service` et
+  `_send_wait` hors des fichiers autorisés — la CI casse si on contourne.
+
+## Nova (`core/app/ha/`)
+
+- `client.py` : WebSocket HA (auth jeton, `get_states`, registres
+  areas/entités/appareils, `subscribe_events`), cache d'états tenu à jour,
+  reconnexion backoff (30 s max), commandes avec futures + timeout. Registres
+  inaccessibles (jeton non admin) → mode dégradé sans résolution de pièces.
+- `protocols.py` : chargement/validation de `config/protocols.yml`, phrases de
+  déclenchement implicites (« protocole X », « mode X ») + explicites,
+  normalisées sans accents. L'exécution est un exécuteur du moteur.
+- `alerts.py` : règles de `config/alerts.yml` évaluées sur `state_changed` —
+  transition entrante uniquement, condition optionnelle (ex. alarme armée),
+  anti-rebond par (règle, entité). Déclenchement → annonce (fil + bannière +
+  voix sur tous les appareils ; « critique » interrompt Sentinel) + notification
+  via le moteur.
+
+## Le routeur intents → LLM (`core/app/brain/`)
+
+1. **Intents locaux** (`intents.py`) : mots-clés FR sur texte normalisé, pièces
+   résolues par les areas de Nova (+ alias `config/intents.yml`). Couverts :
+   lumières, volets, serrures, température, protocoles, propositions
+   (approuver/refuser/reporter/lister), confirmation/annulation, heure/date.
+   Latence < 1 s, zéro Internet, zéro token.
+2. **LLM avec outils** (`llm.py` + `toolbox.py`) : boucle manuelle en streaming
+   (texte diffusé pendant les tours d'outils, 6 tours max). Lecture libre
+   (`etat_maison`, `liste_pieces`, `details_entite`, `lister_propositions`) ;
+   actions uniquement via le moteur (`action_domotique`, `lancer_protocole`,
+   `creer_proposition`). Le déverrouillage/désarmement est **absent** des
+   outils, volontairement.
 
 ## Protocole WebSocket (`/ws`)
 
@@ -41,15 +98,21 @@ qui a parlé.
 | `audio_end` | — | Fin de capture → transcription → tour de parole |
 | `audio_cancel` | — | Abandon de la capture (rien n'est transcrit) |
 | `cancel` | — | Interrompt le tour en cours (LLM + voix) |
+| `proposal_decision` | `{id, decision}` | `approve` · `reject` · `defer` depuis l'UI |
 | `ping` | — | Maintien de connexion (le serveur répond `pong`) |
 
 ### Serveur → client(s)
 
 | Message | Payload | Rôle |
 |---|---|---|
-| `hello` | `{version, state, history}` | À la connexion : état + 50 derniers messages |
+| `hello` | `{version, state, history, ha_configured, ha_connected, proposals, protocols}` | À la connexion : état + 50 derniers messages + file de propositions |
 | `status` | `{state}` | `idle` · `listening` · `transcribing` · `thinking` · `speaking` |
-| `message` | `{message}` | Message utilisateur persisté (`source: text\|voice`) |
+| `message` | `{message}` | Message persisté (`source: text\|voice\|alert`) |
+| `ha_status` | `{connected}` | Connexion à Nova (pastille de l'UI) |
+| `activity` | `{text}` | Ce que fait Sentinel pendant la réflexion (« consulte Nova… ») |
+| `alert` | `{level, text}` | Alerte proactive (`info`/`warning`/`critical`) — bannière |
+| `proposal_new` | `{proposal}` | Nouvelle proposition dans la file |
+| `proposal_update` | `{proposal}` | Changement de statut d'une proposition |
 | `assistant_start` | `{id}` | Début de réponse |
 | `assistant_delta` | `{id, text}` | Delta de texte (streaming) |
 | `assistant_end` | `{id, message, cancelled}` | Fin (message persisté, ou `null` si rien) |
@@ -128,12 +191,21 @@ pour des fils multiples futurs, sans migration.
 | Un seul fil de conversation global | Correspond à l'usage (un foyer, un assistant) | `conversation_id` prêt si séparation nécessaire |
 | Certificat auto-signé par défaut | Zéro friction au premier lancement | mkcert documenté ; authentification avant toute exposition |
 
-## Repères pour la Phase 2
+## Compromis supplémentaires de la Phase 2 (assumés)
 
-- Le moteur d'actions (`core/app/actions/`) devient **l'unique** chemin d'écriture ;
-  les outils LLM d'action ne font que créer des propositions ou invoquer ce moteur.
-- Client WebSocket Nova (`core/app/ha/`) : token `.env` (déjà prévu), abonnements
-  d'événements, cache des registres (areas/entités) pour les intents FR.
-- Le routeur d'intents s'insère **avant** l'appel LLM dans `run_reply_turn`
-  (`core/app/main.py`) — l'emplacement est volontairement unique et évident.
-- Nouveaux événements WS à prévoir : `proposal_*` (file d'attente), `protocol_*`.
+| Sujet | Choix | Suite prévue |
+|---|---|---|
+| Annonce vocale pendant qu'un utilisateur parle à Sentinel | l'annonce attend la fin du tour (30 s max), sauf `critical` qui interrompt ; un chevauchement audio reste théoriquement possible | file audio par client si le besoin se confirme |
+| Approbation « texte » des propositions sensibles | traitée comme l'UI (même canal authentifié par l'accès LAN) ; seule la **voix** est restreinte | authentification utilisateur avant toute exposition hors LAN |
+| Cibles des protocoles | identifiants natifs HA (`entity_id`/`area_id`), pas de noms parlés | résolution de noms si l'édition YAML s'avère pénible |
+| Rechargement de `config/` | au redémarrage du conteneur (2 s) | rechargement à chaud si le besoin se confirme |
+| `for:` (durée) dans les alertes | non géré (transition immédiate uniquement) | timers si un vrai cas l'exige |
+
+## Repères pour la Phase 3A
+
+- Moniteurs (`core/app/monitors/`) : Docker via socket-proxy en lecture seule
+  (nouveau service compose), Atrium healthcheck HTTP, Nova (mises à jour,
+  entités indisponibles) via le client existant.
+- Les rapports/audits produisent des **propositions** via l'`ActionEngine`
+  existant — de nouvelles actions au registre (`docker.restart`…), `direct=False`.
+- Rapport quotidien : planificateur asyncio simple dans `main.py` + `announce()`.

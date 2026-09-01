@@ -27,9 +27,16 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from .actions.engine import ActionEngine
+from .actions.executors import build_registry
+from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
 from .brain.speech_text import SentenceChunker, markdown_to_speech
+from .brain.toolbox import Toolbox
 from .config import Settings, find_ui_dir
+from .ha.alerts import AlertEngine, load_rules
+from .ha.client import HAClient
+from .ha.protocols import ProtocolBook
 from .store import Store
 from .voice.session import CaptureSession
 from .voice.wyoming import PiperTTS, VoiceServiceError, WhisperSTT
@@ -69,6 +76,9 @@ class Hub:
     def count(self) -> int:
         return len(self._clients)
 
+    def clients(self) -> list[Client]:
+        return list(self._clients.values())
+
     async def _safe_send(
         self, client: Client, *, text: str | None = None, data: bytes | None = None
     ) -> None:
@@ -106,7 +116,6 @@ class Sentinel:
         self.settings = settings
         self.store = store
         self.hub = Hub()
-        self.brain = Brain(settings)
         self.stt = WhisperSTT(
             settings.whisper_host, settings.whisper_port, settings.wyoming_timeout_seconds
         )
@@ -116,6 +125,91 @@ class Sentinel:
         self.state = "idle"
         self._turn_task: asyncio.Task | None = None
         self._turn_lock = asyncio.Lock()
+        self._announce_lock = asyncio.Lock()
+
+        # ── Domotique (Phase 2) — se dégrade proprement sans HA_URL/HA_TOKEN ──
+        self.protocols = ProtocolBook.load(settings.config_dir / "protocols.yml")
+        self.ha: HAClient | None = None
+        self.engine: ActionEngine | None = None
+        self.alerts: AlertEngine | None = None
+        toolbox: Toolbox | None = None
+        if settings.ha_url and settings.ha_token:
+            self.ha = HAClient(
+                settings.ha_url, settings.ha_token,
+                on_event=self._on_ha_event, on_status=self._on_ha_status,
+            )
+            registry = build_registry(self.ha, self.protocols)
+            self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
+            self.alerts = AlertEngine(
+                load_rules(settings.config_dir / "alerts.yml"), self.ha, self.engine, self.announce
+            )
+            toolbox = Toolbox(self.ha, self.engine, self.protocols, store)
+        else:
+            log.warning("HA_URL/HA_TOKEN absents : domotique désactivée (conversation seule).")
+
+        self.intents = LocalIntents(
+            self.ha, self.engine, self.protocols, store,
+            settings.config_dir / "intents.yml", settings.tz,
+        )
+        self.brain = Brain(settings, toolbox, on_activity=self._on_activity)
+
+    # ── Ponts vers l'UI ──────────────────────────────────────────────────
+
+    async def _on_ha_event(self, event: dict) -> None:
+        if self.alerts:
+            await self.alerts.on_state_changed(event)
+
+    async def _on_ha_status(self, connected: bool) -> None:
+        await self.hub.broadcast({"type": "ha_status", "connected": connected})
+
+    async def _on_activity(self, label: str) -> None:
+        await self.hub.broadcast({"type": "activity", "text": label})
+
+    async def _on_proposal_change(self, change: str, proposal: dict) -> None:
+        kind = "proposal_new" if change == "new" else "proposal_update"
+        await self.hub.broadcast({"type": kind, "proposal": proposal})
+
+    # ── Annonces proactives (alertes, à tous les appareils) ──────────────
+
+    async def announce(self, text: str, severity: str = "info", speak: bool = True) -> None:
+        """Sentinel prend la parole de lui-même : fil + bannière + voix partout."""
+        message = await self.store.add_message("assistant", text, "alert")
+        await self.hub.broadcast({"type": "alert", "level": severity, "text": text})
+        await self.hub.broadcast({"type": "message", "message": message})
+        if speak:
+            asyncio.create_task(self._speak_announcement(text, severity))
+
+    async def _speak_announcement(self, text: str, severity: str) -> None:
+        async with self._announce_lock:  # une annonce vocale à la fois
+            if severity == "critical":
+                await self.cancel_turn()  # une alerte critique coupe la parole
+            else:
+                task = self._turn_task
+                if task and not task.done():
+                    await asyncio.wait({task}, timeout=30)  # laisser finir le tour
+            speakable = markdown_to_speech(text)
+            if not speakable:
+                return
+            clients = self.hub.clients()
+            if not clients:
+                return
+            await self.set_state("speaking")
+            started = False
+            try:
+                async for rate, chunk in self.tts.synthesize(speakable):
+                    if not started:
+                        started = True
+                        for c in clients:
+                            await self.hub.send(c, {"type": "speak_start", "rate": rate})
+                    for c in clients:
+                        await self.hub.send_bytes(c, chunk)
+            except VoiceServiceError as exc:
+                log.warning("Annonce vocale impossible : %s", exc)
+            finally:
+                if started:
+                    for c in clients:
+                        await self.hub.send(c, {"type": "speak_end"})
+                await self.set_state("idle")
 
     # ── États diffusés ────────────────────────────────────────────────────
 
@@ -189,16 +283,23 @@ class Sentinel:
             await self.hub.broadcast({"type": "message", "message": user_msg})
             await self.set_state("thinking")
 
-            history = _build_history(
-                await self.store.recent_messages(self.settings.history_window)
-            )
+            # Intents locaux d'abord : domotique courante sans LLM, hors Internet
+            intent_reply = await self.intents.handle(text, source)
+            if intent_reply is not None:
+                stream = _single_reply(intent_reply)
+            else:
+                history = _build_history(
+                    await self.store.recent_messages(self.settings.history_window)
+                )
+                stream = self.brain.stream_reply(history, utterance=text, source=source)
+
             await self.hub.broadcast({"type": "assistant_start", "id": assistant_id})
 
             if speak:
                 speaker = asyncio.create_task(self._speak_worker(origin, tts_queue))
 
             chunker = SentenceChunker()
-            async for delta in self.brain.stream_reply(history):
+            async for delta in stream:
                 parts.append(delta)
                 await self.hub.broadcast(
                     {"type": "assistant_delta", "id": assistant_id, "text": delta}
@@ -278,6 +379,11 @@ class Sentinel:
                 await self.hub.send(origin, {"type": "speak_end"})
 
 
+async def _single_reply(text: str):
+    """Réponse d'intent local, servie dans le même pipeline que le LLM."""
+    yield text
+
+
 def _build_history(records: list[dict]) -> list[dict]:
     """Convertit l'historique stocké au format API.
 
@@ -311,7 +417,10 @@ async def lifespan(app: FastAPI):
     )
     store = Store(settings.data_dir / "sentinel.db")
     await store.open()
-    app.state.sentinel = Sentinel(settings, store)
+    sentinel = Sentinel(settings, store)
+    app.state.sentinel = sentinel
+    if sentinel.ha:
+        await sentinel.ha.start()
     log.info(
         "Sentinel %s démarré — modèle %s, effort %s, UI %s",
         __version__, settings.model, settings.effort, settings.ui_dir,
@@ -321,7 +430,9 @@ async def lifespan(app: FastAPI):
             "ANTHROPIC_API_KEY absente : la voix et le chat répondront par une erreur."
         )
     yield
-    await app.state.sentinel.cancel_turn()
+    await sentinel.cancel_turn()
+    if sentinel.ha:
+        await sentinel.ha.stop()
     await store.close()
 
 
@@ -340,6 +451,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     client = sentinel.hub.register(ws, sentinel.settings.max_utterance_seconds)
     log.info("Client %s connecté (%d en ligne)", client.id, sentinel.hub.count)
 
+    pending = await sentinel.store.list_proposals("pending")
+    deferred = await sentinel.store.list_proposals("deferred")
     await sentinel.hub.send(
         client,
         {
@@ -347,6 +460,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "version": __version__,
             "state": sentinel.state,
             "history": await sentinel.store.recent_messages(50),
+            "ha_connected": bool(sentinel.ha and sentinel.ha.connected),
+            "ha_configured": sentinel.ha is not None,
+            "proposals": sorted(pending + deferred, key=lambda p: p["num"]),
+            "protocols": [
+                {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
+            ],
         },
     )
 
@@ -423,6 +542,22 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
         client.capture.reset()
         await sentinel.cancel_turn()
         await sentinel.set_state("idle")
+
+    elif mtype == "proposal_decision":
+        if sentinel.engine is None:
+            await sentinel.hub.send(
+                client, {"type": "notice", "text": "Le moteur d'actions n'est pas disponible."}
+            )
+            return
+        decision = str(msg.get("decision") or "")
+        if decision not in ("approve", "reject", "defer"):
+            return
+        try:
+            num = int(msg.get("id"))
+        except (TypeError, ValueError):
+            return
+        _, message = await sentinel.engine.decide(num, decision, via="ui")
+        await sentinel.hub.send(client, {"type": "notice", "text": message})
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})

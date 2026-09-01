@@ -1,0 +1,70 @@
+# ── Protocoles de Sentinel ───────────────────────────────────────────────
+# Un protocole = une séquence d'actions Home Assistant déclenchable à la voix
+# (« Sentinel, protocole forteresse »), à l'écrit, ou par le LLM.
+#
+# Champs :
+#   nom      : nom affiché et prononcé (défaut : la clé)
+#   risque   : faible | moyen | sensible
+#              - faible/moyen : exécution immédiate sur ordre direct
+#              - sensible     : double confirmation vocale exigée
+#   annonce  : phrase dite par Sentinel à l'exécution
+#   phrases  : déclencheurs vocaux supplémentaires (en plus de
+#              « protocole <nom> » et « mode <nom> », implicites)
+#   actions  : liste d'appels de services HA, exécutés dans l'ordre
+#     - service : "domaine.service"                (obligatoire)
+#       data    : { … }                            (service_data, optionnel)
+#       target  : { entity_id: [...] | area_id: [...] }   (cibles HA, optionnel)
+#
+# Après modification : docker compose restart sentinel-core
+# Les étapes en échec n'arrêtent pas le protocole — elles sont signalées.
+
+# Protocole de test : ne touche à rien, crée juste une notification dans
+# l'interface de Nova. Idéal pour valider la chaîne complète dès le premier jour.
+test:
+  nom: "Test"
+  risque: faible
+  annonce: "Protocole de test exécuté. La chaîne fonctionne."
+  actions:
+    - service: persistent_notification.create
+      data:
+        title: "Sentinel"
+        message: "Protocole de test exécuté avec succès."
+
+# Forteresse : verrouillage de la maison. Livré avec une seule étape inoffensive
+# (notification) pour être utilisable immédiatement — décommente et adapte les
+# étapes réelles avec TES entity_id (Outils de développement → États, dans Nova).
+forteresse:
+  nom: "Forteresse"
+  risque: moyen
+  annonce: "Protocole Forteresse activé. La maison passe en mode sécurisé."
+  phrases:
+    - "verrouille la maison"
+    - "mode securise"
+  actions:
+    - service: persistent_notification.create
+      data:
+        title: "Sentinel — Forteresse"
+        message: "Protocole Forteresse déclenché. (Adapte config/protocols.yml avec tes entités réelles.)"
+    # - service: alarm_control_panel.alarm_arm_away
+    #   target: { entity_id: alarm_control_panel.maison }
+    # - service: cover.close_cover
+    #   target: { area_id: [salon, chambre] }        # area_id HA, pas le nom affiché
+    # - service: lock.lock
+    #   target: { entity_id: lock.porte_entree }
+    # - service: light.turn_off
+    #   target: { entity_id: all }
+    # - service: notify.mobile_app_telephone_guillaume
+    #   data: { title: "Sentinel", message: "Maison verrouillée — protocole Forteresse." }
+
+# Exemple supplémentaire : soirée cinéma (à adapter puis décommenter).
+# cinema:
+#   nom: "Cinéma"
+#   risque: faible
+#   annonce: "Protocole Cinéma. Bonne séance."
+#   actions:
+#     - service: light.turn_off
+#       target: { area_id: [salon] }
+#     - service: cover.close_cover
+#       target: { area_id: [salon] }
+#     - service: media_player.turn_on
+#       target: { entity_id: media_player.tv_salon }

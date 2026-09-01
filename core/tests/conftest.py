@@ -98,3 +98,190 @@ def fake_wyoming() -> FakeWyoming:
     server.start()
     yield server
     server.stop()
+
+
+# ── Faux Home Assistant (protocole WebSocket réel) ──────────────────────
+
+import json as _json
+
+import websockets as _websockets
+
+FAKE_HA_TOKEN = "jeton-de-test"
+
+DEFAULT_AREAS = {"area_salon": "Salon", "area_chambre": "Chambre"}
+DEFAULT_ENTITY_AREA = {
+    "light.salon": "area_salon",
+    "light.chambre": "area_chambre",
+    "cover.salon": "area_salon",
+    "sensor.temp_salon": "area_salon",
+}
+
+
+def default_states() -> dict[str, dict]:
+    return {
+        "light.salon": {"entity_id": "light.salon", "state": "off",
+                        "attributes": {"friendly_name": "Plafonnier salon"}},
+        "light.chambre": {"entity_id": "light.chambre", "state": "off",
+                          "attributes": {"friendly_name": "Lampe chambre"}},
+        "cover.salon": {"entity_id": "cover.salon", "state": "closed",
+                        "attributes": {"friendly_name": "Volet salon"}},
+        "sensor.temp_salon": {"entity_id": "sensor.temp_salon", "state": "21.5",
+                              "attributes": {"friendly_name": "Température salon",
+                                             "device_class": "temperature"}},
+        "lock.entree": {"entity_id": "lock.entree", "state": "locked",
+                        "attributes": {"friendly_name": "Porte d'entrée"}},
+        "alarm_control_panel.maison": {"entity_id": "alarm_control_panel.maison",
+                                       "state": "disarmed",
+                                       "attributes": {"friendly_name": "Alarme"}},
+        "input_boolean.test_sentinel": {"entity_id": "input_boolean.test_sentinel",
+                                        "state": "off",
+                                        "attributes": {"friendly_name": "Test Sentinel"}},
+    }
+
+
+class FakeHA:
+    """Faux serveur Home Assistant : auth, états, registres, services, événements."""
+
+    def __init__(self):
+        self.token = FAKE_HA_TOKEN
+        self.states = default_states()
+        self.areas = dict(DEFAULT_AREAS)
+        self.entity_area = dict(DEFAULT_ENTITY_AREA)
+        self.calls: list[tuple] = []  # (domain, service, data, target)
+        self.port: int | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._clients: set = set()
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        assert self._ready.wait(5), "faux serveur HA non démarré"
+
+    def stop(self) -> None:
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+    def _run(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._start_server())
+        self._loop.run_forever()
+
+    async def _start_server(self) -> None:
+        server = await _websockets.serve(self._handler, "127.0.0.1", 0)
+        self.port = server.sockets[0].getsockname()[1]
+        self._ready.set()
+
+    async def _handler(self, ws) -> None:
+        try:
+            await ws.send(_json.dumps({"type": "auth_required"}))
+            msg = _json.loads(await ws.recv())
+            if msg.get("access_token") != self.token:
+                await ws.send(_json.dumps({"type": "auth_invalid", "message": "bad token"}))
+                return
+            await ws.send(_json.dumps({"type": "auth_ok"}))
+            self._clients.add(ws)
+            async for raw in ws:
+                m = _json.loads(raw)
+                mid, mtype = m.get("id"), m.get("type")
+                if mtype == "ping":
+                    await ws.send(_json.dumps({"id": mid, "type": "pong"}))
+                    continue
+                result = None
+                if mtype == "get_states":
+                    result = list(self.states.values())
+                elif mtype == "config/area_registry/list":
+                    result = [{"area_id": k, "name": v} for k, v in self.areas.items()]
+                elif mtype == "config/entity_registry/list":
+                    result = [
+                        {"entity_id": e, "area_id": a, "device_id": None}
+                        for e, a in self.entity_area.items()
+                    ]
+                elif mtype == "config/device_registry/list":
+                    result = []
+                elif mtype == "call_service":
+                    self.calls.append((
+                        m.get("domain"), m.get("service"),
+                        m.get("service_data"), m.get("target"),
+                    ))
+                    result = {}
+                await ws.send(_json.dumps(
+                    {"id": mid, "type": "result", "success": True, "result": result}
+                ))
+        except Exception:
+            pass
+        finally:
+            self._clients.discard(ws)
+
+    def push_state_changed(self, entity_id: str, new_state: dict, old_state: dict | None) -> None:
+        """Injecte un événement state_changed (thread-safe)."""
+        assert self._loop is not None
+        self.states[entity_id] = new_state
+        event = {
+            "id": 1, "type": "event",
+            "event": {
+                "event_type": "state_changed",
+                "data": {"entity_id": entity_id, "new_state": new_state, "old_state": old_state},
+            },
+        }
+
+        async def _send() -> None:
+            for ws in list(self._clients):
+                try:
+                    await ws.send(_json.dumps(event))
+                except Exception:
+                    pass
+
+        asyncio.run_coroutine_threadsafe(_send(), self._loop)
+
+
+@pytest.fixture()
+def fake_ha() -> FakeHA:
+    server = FakeHA()
+    server.start()
+    yield server
+    server.stop()
+
+
+def make_ha_stub():
+    """HAClient peuplé sans réseau : caches remplis, call_service enregistré.
+
+    Pour les tests d'intents/outils/alertes qui n'ont pas besoin du vrai
+    protocole WebSocket (couvert par test_ha_client.py).
+    """
+    from app.ha.client import HAClient
+
+    ha = HAClient("http://test-local", "jeton")
+    ha.connected = True
+    ha._states = default_states()
+    ha._areas = dict(DEFAULT_AREAS)
+    ha._entity_area = dict(DEFAULT_ENTITY_AREA)
+
+    calls: list[tuple] = []
+
+    async def record(domain, service, data=None, target=None):
+        calls.append((domain, service, data, target))
+
+    ha.call_service = record  # écritures capturées au lieu de partir sur le réseau
+    return ha, calls
+
+
+PROTOCOLS_TEST_YML = """\
+test:
+  nom: "Test"
+  risque: faible
+  annonce: "Protocole de test exécuté."
+  actions:
+    - service: persistent_notification.create
+      data: { title: "Sentinel", message: "ok" }
+
+verrou:
+  nom: "Verrou"
+  risque: sensible
+  annonce: "Verrouillage général effectué."
+  actions:
+    - service: lock.lock
+      target: { entity_id: lock.entree }
+"""
