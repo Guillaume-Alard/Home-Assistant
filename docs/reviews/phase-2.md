@@ -51,6 +51,37 @@ pip install -r requirements-dev.txt && pytest -q   # 72 tests
 
 Réel : README → « Connecter Nova » puis « Tester la Phase 2 en 3 minutes ».
 
+## Addendum — revue interne du 01/09 (10 constats, tous corrigés)
+
+Passe adversariale interne menée avant remise, constats vérifiés puis corrigés :
+
+1. **Contournement d'autorisation (sécurité, le plus grave)** : une proposition
+   `ha.call_service` enveloppant `lock.unlock`/`alarm_disarm` restait « moyenne »
+   donc approuvable à la voix → le service générique porte désormais le risque de
+   sa charge utile (liste de domaines/services sensibles, extensible).
+2. `decide()` non sérialisé : deux approbations simultanées pouvaient exécuter
+   deux fois → verrou asyncio (testé par un gather concurrent).
+3. Interruption (barge-in) pendant un appel à Nova : l'écriture partait sans
+   journal → exécution + journalisation blindées contre l'annulation.
+4. « Coupe la musique dans le salon » éteignait la lumière → un verbe + une pièce
+   sans mot-lumière n'est accepté que si la phrase ne contient rien d'autre.
+5. « Éteins toutes les lumières de la chambre » agissait sur toute la maison →
+   la pièce nommée prime sur « toutes ».
+6. « Mets la température à 21 » répondait la température au lieu de régler →
+   verbes de réglage et météo extérieure partent au LLM.
+7. Plafond de tours d'outils : la dernière fournée d'actions s'exécutait sans que
+   le modèle en voie le résultat → plus rien ne s'exécute au tour final.
+8. Annonce vocale : chevauchement possible avec un tour en cours + écrasement de
+   l'état → annonce sautée si le tour dure, état préservé.
+9. Règle d'alerte avec `condition` sans `etats` chargée mais ne se déclenchant
+   jamais (piège silencieux sur une alerte de sécurité) → rejetée au chargement ;
+   entité de condition inconnue signalée en log.
+10. Divers : dates françaises factorisées ; apostrophes normalisées (« l'entrée »
+    devient résoluble comme pièce).
+
+79 tests après correctifs (7 ajoutés pour verrouiller les points 1, 2, 4, 5, 6, 9).
+Les points de doute plus haut restent ouverts pour un second avis.
+
 ## Hors périmètre (ne pas commenter)
 
 Le modèle d'autorisation lui-même (ordre direct/proposition/sensible) est
