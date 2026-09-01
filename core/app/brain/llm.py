@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import anthropic
 
 from ..config import Settings
+from ..norm import date_francaise
 from .toolbox import ACTIVITY_LABELS, Toolbox
 
 log = logging.getLogger("sentinel.brain")
@@ -95,14 +96,9 @@ def _system_blocks(settings: Settings) -> list[dict]:
     except Exception:  # tzdata absente ou TZ invalide : on ne casse pas un tour pour ça
         tz = None
     now = datetime.now(tz)
-    jours = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-    mois = [
-        "janvier", "février", "mars", "avril", "mai", "juin",
-        "juillet", "août", "septembre", "octobre", "novembre", "décembre",
-    ]
     date_fr = (
-        f"Nous sommes le {jours[now.weekday()]} {now.day} {mois[now.month - 1]} "
-        f"{now.year} et il est {now.strftime('%H:%M')} ({settings.tz})."
+        f"Nous sommes le {date_francaise(now)} et il est "
+        f"{now.strftime('%H:%M')} ({settings.tz})."
     )
     return [
         # Bloc stable en premier + cache : les tours suivants relisent le cache
@@ -166,6 +162,15 @@ class Brain:
                 if final.stop_reason != "tool_use" or not self._toolbox:
                     return
 
+                if round_no == MAX_TOOL_ROUNDS - 1:
+                    # Budget épuisé : on n'exécute PAS des actions dont le modèle
+                    # ne verrait jamais le résultat.
+                    yield (
+                        "\n(Je m'arrête là — trop d'étapes d'outils pour une seule "
+                        "demande. Rien n'a été exécuté à la dernière étape.)"
+                    )
+                    return
+
                 # Tour d'outils : exécuter puis renvoyer les résultats
                 messages.append({"role": "assistant", "content": final.content})
                 results = []
@@ -185,8 +190,6 @@ class Brain:
                         item["is_error"] = True
                     results.append(item)
                 messages.append({"role": "user", "content": results})
-
-            yield "\n(Je m'arrête là — trop d'étapes d'outils pour une seule demande.)"
 
         except anthropic.AuthenticationError as exc:
             log.error("Authentification API refusée : %s", exc)

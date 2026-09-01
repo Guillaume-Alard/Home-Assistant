@@ -15,6 +15,8 @@ direct → refus ; proposition non approuvée → jamais exécutée ; le chemin
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -66,6 +68,9 @@ class ActionEngine:
         self._store = store
         self._on_proposal_change = on_proposal_change
         self._pending_confirm: _PendingConfirmation | None = None
+        # Deux approbations simultanées (deux appareils) ne doivent pas exécuter
+        # deux fois : les décisions sont sérialisées.
+        self._decide_lock = asyncio.Lock()
 
     # ── Chemin 1 : ordre direct ──────────────────────────────────────────
 
@@ -126,6 +131,19 @@ class ActionEngine:
         self, spec: ActionSpec, params: dict, utterance: str, source: str, *, confirmed: bool
     ) -> Outcome:
         auth = f"ordre direct ({source}{', confirmé' if confirmed else ''}) : « {utterance} »"
+        # L'exécution ET sa journalisation survivent à une interruption (barge-in) :
+        # un ordre déjà parti vers Nova doit toujours laisser une trace au journal.
+        task = asyncio.create_task(self._run_executor(spec, params, auth, source))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await task
+            raise
+
+    async def _run_executor(
+        self, spec: ActionSpec, params: dict, auth: str, source: str
+    ) -> Outcome:
         try:
             result = await spec.executor(params)
         except (ActionError, HAError) as exc:
@@ -172,6 +190,12 @@ class ActionEngine:
 
     async def decide(
         self, num: int, decision: str, *, via: str, actor: str = "guillaume"
+    ) -> tuple[dict | None, str]:
+        async with self._decide_lock:
+            return await self._decide_locked(num, decision, via=via, actor=actor)
+
+    async def _decide_locked(
+        self, num: int, decision: str, *, via: str, actor: str
     ) -> tuple[dict | None, str]:
         proposal = await self._store.get_proposal(num)
         if proposal is None:

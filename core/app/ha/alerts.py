@@ -83,6 +83,10 @@ def load_rules(path: Path) -> list[AlertRule]:
             log.error("Règle « %s » ignorée : ni entites ni motif", rule_id)
             continue
         condition = spec.get("condition") or {}
+        if condition.get("entite") and not condition.get("etats"):
+            log.error("Règle « %s » ignorée : condition sans champ etats — elle ne se "
+                      "déclencherait jamais", rule_id)
+            continue
         notify = spec.get("notifier") or {}
         rules.append(AlertRule(
             id=rule_id,
@@ -139,7 +143,13 @@ class AlertEngine:
             if rule.from_states and old_state not in rule.from_states:
                 continue
             if rule.condition_entity:
-                cond = self._ha.get_state(rule.condition_entity) or {}
+                cond = self._ha.get_state(rule.condition_entity)
+                if cond is None:
+                    log.warning(
+                        "Règle « %s » : entité de condition inconnue (%s) — alerte non déclenchée",
+                        rule.id, rule.condition_entity,
+                    )
+                    continue
                 if cond.get("state") not in rule.condition_states:
                     continue
             now = time.monotonic()

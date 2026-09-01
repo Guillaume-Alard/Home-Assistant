@@ -178,10 +178,26 @@ def build_registry(ha: HAClient, protocols: "ProtocolBook | None" = None) -> Act
         )
         return f"Service {domain}.{service} appelé."
 
+    def generic_service_risk(params: dict) -> str:
+        """Le service générique porte le risque de sa charge utile : les services
+        qui désarment, ouvrent un accès ou exécutent du code sont sensibles —
+        leur proposition ne pourra donc pas être approuvée à la voix."""
+        domain = str(params.get("domain") or "").lower()
+        service = str(params.get("service") or "").lower()
+        if domain in {"shell_command", "hassio", "python_script"}:
+            return "sensitive"
+        if (domain, service) in {
+            ("lock", "unlock"), ("lock", "open"),
+            ("alarm_control_panel", "alarm_disarm"),
+            ("homeassistant", "restart"), ("homeassistant", "stop"),
+        }:
+            return "sensitive"
+        return "medium"
+
     reg.register(ActionSpec(
         "ha.call_service",
         "Appeler un service Home Assistant quelconque (réservé aux propositions approuvées)",
-        "medium", False, generic_service,
+        "medium", False, generic_service, risk_fn=generic_service_risk,
     ))
 
     # ── Protocoles ───────────────────────────────────────────────────────

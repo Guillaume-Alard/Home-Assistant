@@ -108,3 +108,25 @@ async def test_lancer_protocole_sensible_transmet_la_confirmation(box):
 async def test_outil_inconnu(box):
     content, is_error = await box.toolbox.run("hacker_le_pentagone", {}, utterance="", source="text")
     assert is_error
+
+
+async def test_proposition_de_service_sensible_escaladee(box):
+    """Un lock.unlock enveloppé dans une proposition « moyenne » devient sensible :
+    impossible de l'approuver à la voix — le contournement est fermé."""
+    content, is_error = await _run(box, "creer_proposition", {
+        "titre": "Ouvrir la porte",
+        "justification": "test",
+        "risque": "moyen",  # le LLM minimise — le moteur ne le croit pas
+        "action": {"domain": "lock", "service": "unlock",
+                   "target": {"entity_id": ["lock.entree"]}},
+    })
+    assert not is_error and "sensible" in content
+
+    pending = (await box.store.list_proposals("pending"))[0]
+    assert pending["risk"] == "sensitive"
+
+    from app.actions.engine import ActionEngine  # l'engine du fixture
+    engine = box.toolbox._engine
+    _, msg = await engine.decide(pending["num"], "approve", via="voice")
+    assert "interface" in msg
+    assert box.calls == []

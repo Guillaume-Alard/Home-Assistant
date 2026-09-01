@@ -161,6 +161,21 @@ async def test_echec_execution_journalise(env):
     assert journal[0]["outcome"] == "failed"
 
 
+async def test_deux_approbations_simultanees_une_seule_execution(env):
+    import asyncio
+
+    proposal, _ = await env.engine.propose(
+        title="Une seule fois", justification="x", action_id="test.proposal_only",
+    )
+    results = await asyncio.gather(
+        env.engine.decide(proposal["num"], "approve", via="ui"),
+        env.engine.decide(proposal["num"], "approve", via="voice"),
+    )
+    messages = [msg for _, msg in results]
+    assert len(env.rec.calls) == 1  # l'action n'a tourné qu'UNE fois
+    assert sum("déjà" in m for m in messages) == 1  # l'autre appel a été bloqué
+
+
 async def test_chemin_systeme_risque_faible_uniquement(env):
     ok = await env.engine.run_system("test.low", {}, authorization="règle « test »")
     assert ok.ok

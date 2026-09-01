@@ -21,15 +21,21 @@ import yaml
 from ..actions.engine import RISK_FR, ActionEngine
 from ..ha.client import HAClient
 from ..ha.protocols import ProtocolBook
-from ..norm import normalize
+from ..norm import date_francaise, normalize
 from ..store import Store
 
 log = logging.getLogger("sentinel.intents")
 
-# Vocabulaire (sur texte normalisé, donc sans accents)
+# Vocabulaire (sur texte normalisé, donc sans accents ni apostrophes)
 _LIGHT_WORDS = {"lumiere", "lumieres", "lampe", "lampes", "eclairage", "plafonnier", "spot", "spots", "led", "leds"}
 _COVER_WORDS = {"volet", "volets", "store", "stores"}
-_ALL_WORDS = ("tout", "toute la maison", "partout", "toutes les lumieres")
+_ALL_WORDS = {"tout", "toute", "toutes", "partout"}
+# Mots creux tolérés dans « allume le salon » (sans mot-lumière explicite)
+_FILLER_WORDS = {
+    "la", "le", "les", "l", "un", "une", "des", "du", "de", "d", "dans", "au",
+    "aux", "a", "en", "et", "s", "il", "te", "plait", "stp", "sentinel", "moi",
+    "maison", "toute", "tout", "toutes", "partout", "grand", "grande",
+}
 
 _ON_VERBS = {"allume", "allumer", "allumes", "rallume"}
 _OFF_VERBS = {"eteins", "eteindre", "eteint", "coupe"}
@@ -43,9 +49,10 @@ _PROPOSAL_RE = re.compile(
 _LIST_PROPOSALS_RE = re.compile(r"\b(liste|montre|affiche|donne)\b.*\bpropositions?\b|\bpropositions? en attente\b")
 _CONFIRM_RE = re.compile(r"^(sentinel )?(je )?confirme$")
 _CANCEL_RE = re.compile(r"^(sentinel )?annule( tout)?$|^laisse tomber$")
-_TIME_RE = re.compile(r"\bquelle heure\b|\bl'heure\b$")
+_TIME_RE = re.compile(r"\bquelle heure\b|\bl heure\b$")
 _DATE_RE = re.compile(r"\bquel jour\b|\bquelle date\b|\bla date\b$")
-_TEMP_RE = re.compile(r"\btemperature\b|\bcombien fait[- ]il\b|\bil fait combien\b|\bquel temps fait[- ]il a l'interieur\b")
+_TEMP_RE = re.compile(r"\btemperature\b|\bcombien fait[- ]il\b|\bil fait combien\b")
+_TEMP_SET_VERBS = {"mets", "met", "regle", "regles", "monte", "baisse", "augmente", "diminue", "chauffe", "passe"}
 
 
 class LocalIntents:
@@ -121,8 +128,12 @@ class LocalIntents:
                 return "Nova est injoignable pour l'instant — je ne peux pas piloter la maison."
             return None
 
-        # 5) Température (lecture)
+        # 5) Température — LECTURE seulement : un réglage (« mets à 21 ») ou la
+        # météo extérieure partent au LLM et à ses outils
         if _TEMP_RE.search(norm):
+            words = set(norm.split())
+            if words & _TEMP_SET_VERBS or words & {"dehors", "exterieur", "exterieure"}:
+                return None
             return self._temperature_reply(norm)
 
         # 6) Volets
@@ -158,23 +169,32 @@ class LocalIntents:
         if not (on or off):
             return None
         mentions_light = bool(words & _LIGHT_WORDS)
-        wants_all = any(w in norm for w in _ALL_WORDS)
-
+        wants_all = bool(words & _ALL_WORDS)
         area = self._find_area(norm)
+
         if not mentions_light and not wants_all and area is None:
             return None  # « allume la télé » etc. : pas pour nous → LLM
 
-        if wants_all:
-            entity_ids = self._ha.entities_by_domain("light")
-            where = "de toute la maison"
-        elif area:
+        if not mentions_light:
+            # « allume le salon » est accepté, mais « coupe la musique dans le
+            # salon » doit partir au LLM : la phrase ne doit parler de rien d'autre.
+            leftovers = words - _ON_VERBS - _OFF_VERBS - _FILLER_WORDS
+            if area:
+                leftovers -= set(normalize(area[1]).split())
+            if leftovers:
+                return None
+
+        # La pièce nommée PRIME sur « tout » : « éteins toutes les lumières de
+        # la chambre » ne touche que la chambre.
+        if area:
             area_id, area_name = area
             entity_ids = self._ha.entities_in_area(area_id, "light")
             where = f"« {area_name} »"
-        elif mentions_light:
-            return "Précise la pièce — par exemple : « allume la lumière du salon »."
+        elif wants_all:
+            entity_ids = self._ha.entities_by_domain("light")
+            where = "de toute la maison"
         else:
-            return None
+            return "Précise la pièce — par exemple : « allume la lumière du salon »."
 
         if not entity_ids:
             return f"Je ne trouve pas de lumière {where} dans Nova."
@@ -319,8 +339,4 @@ class LocalIntents:
         return f"Il est {now.hour} heures {now.minute:02d}."
 
     def _date_reply(self) -> str:
-        now = self._now()
-        jours = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-        mois = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-                "août", "septembre", "octobre", "novembre", "décembre"]
-        return f"Nous sommes le {jours[now.weekday()]} {now.day} {mois[now.month - 1]} {now.year}."
+        return f"Nous sommes le {date_francaise(self._now())}."

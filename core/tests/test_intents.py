@@ -142,3 +142,25 @@ async def test_proposition_sensible_refusee_a_la_voix(home):
 async def test_phrase_ordinaire_part_au_llm(home):
     assert await home.intents.handle("Raconte-moi une histoire", "voice") is None
     assert await home.intents.handle("allume la télévision de mamie", "voice") is None
+
+
+async def test_verbe_et_piece_sans_mot_lumiere(home):
+    # « allume le salon » = lumières ; « coupe la musique dans le salon » = LLM
+    reply = await home.intents.handle("allume le salon", "voice")
+    assert reply == "Allumé : Plafonnier salon."
+
+    assert await home.intents.handle("coupe la musique dans le salon", "voice") is None
+    assert len(home.calls) == 1  # seul le premier ordre a agi
+
+
+async def test_la_piece_prime_sur_toutes(home):
+    reply = await home.intents.handle("Éteins toutes les lumières de la chambre", "voice")
+    assert reply == "Éteint : Lampe chambre."
+    assert home.calls[0][3] == {"entity_id": ["light.chambre"]}
+
+
+async def test_regler_la_temperature_part_au_llm(home):
+    assert await home.intents.handle("Mets la température du salon à 21", "voice") is None
+    assert await home.intents.handle("baisse la température de la chambre", "voice") is None
+    assert await home.intents.handle("quelle température fait-il dehors ?", "voice") is None
+    assert home.calls == []

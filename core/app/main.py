@@ -187,6 +187,11 @@ class Sentinel:
                 task = self._turn_task
                 if task and not task.done():
                     await asyncio.wait({task}, timeout=30)  # laisser finir le tour
+                    if not task.done():
+                        # Toujours occupé : on ne superpose pas deux voix — le
+                        # texte est déjà dans le fil et la bannière.
+                        log.warning("Annonce vocale sautée (tour encore en cours) : %s", text)
+                        return
             speakable = markdown_to_speech(text)
             if not speakable:
                 return
@@ -209,7 +214,9 @@ class Sentinel:
                 if started:
                     for c in clients:
                         await self.hub.send(c, {"type": "speak_end"})
-                await self.set_state("idle")
+                # Ne pas écraser l'état d'un tour démarré pendant l'annonce
+                if not (self._turn_task and not self._turn_task.done()):
+                    await self.set_state("idle")
 
     # ── États diffusés ────────────────────────────────────────────────────
 

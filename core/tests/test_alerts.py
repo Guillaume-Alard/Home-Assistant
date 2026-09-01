@@ -33,6 +33,13 @@ ALERTS_YML = """\
 - id: invalide-sans-message
   vers: ["on"]
   gravite: info
+
+- id: condition-sans-etats
+  entites: [binary_sensor.piege]
+  vers: ["on"]
+  gravite: info
+  message: "ne doit jamais charger"
+  condition: { entite: alarm_control_panel.maison }
 """
 
 
