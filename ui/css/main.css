@@ -21,6 +21,10 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 
+/* Indispensable : nos display:flex écraseraient sinon l'attribut hidden,
+   rendant panneau et bannière impossibles à fermer. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background:
@@ -94,15 +98,17 @@ body.online.nova-on .conn-dot.nova { background: #59d78c; box-shadow: 0 0 8px rg
 /* ── Bannière d'alerte ────────────────────────────────────────────────── */
 
 .alert-banner {
+  /* En surimpression sous le bandeau : ne participe pas à la grille de la page */
+  position: fixed; top: 58px; left: 50%; translate: -50%;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   width: min(820px, calc(100% - 24px));
-  margin: 8px auto 0;
   padding: 10px 14px;
   border-radius: 10px;
   border: 1px solid var(--panel-edge);
   border-left: 3px solid var(--accent);
   background: var(--bg-raised);
   font-size: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   z-index: 30;
 }
 .alert-banner.warning { border-left-color: var(--warn); }
