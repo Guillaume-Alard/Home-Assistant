@@ -268,7 +268,12 @@ class Toolbox:
             },
             {
                 "name": "etat_taches_dev",
-                "description": "Liste les tâches de développement (statut, dépôt, branche).",
+                "description": (
+                    "État de l'atelier de développement : tâches (statut, dépôt, "
+                    "branche) et configuration — authentification de Claude Code "
+                    "(abonnement/jeton OAuth ou clé API), push GitHub possible ou "
+                    "non, dépôts autorisés."
+                ),
                 "input_schema": {"type": "object", "properties": {}},
             },
             {
