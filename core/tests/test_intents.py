@@ -169,6 +169,13 @@ async def test_sante_des_systemes_sans_llm(home):
     assert reply is not None and "Nova : connectée" in reply
     assert home.calls == []  # lecture pure
 
+    reply = await home.intents.handle("fais-moi le rapport du matin", "voice")
+    assert reply is not None and "Nova" in reply
+
+    # Parler DU rapport (le configurer, le désactiver) part au LLM
+    assert await home.intents.handle("désactive le rapport du matin", "voice") is None
+    assert await home.intents.handle("à quelle heure est le rapport quotidien ?", "voice") is None
+
 
 async def test_regler_la_temperature_part_au_llm(home):
     assert await home.intents.handle("Mets la température du salon à 21", "voice") is None

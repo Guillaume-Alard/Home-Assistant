@@ -70,12 +70,15 @@ Point de passage **unique** des écritures — PLAN §5, appliqué techniquement
 
 ## Surveillance (`core/app/monitors/`) — Phase 3A
 
-- **Docker** (`docker.py`) via `sentinel-dockerproxy` (tecnativa/docker-socket-proxy,
-  aucun port LAN) : lecture (conteneurs, stats mémoire, logs démultiplexés) ;
-  l'unique écriture, `restart_container`, est autorisée par `ALLOW_RESTARTS` côté
-  proxy et n'est appelable que par l'exécuteur `docker.restart` — enregistré
-  `direct=False`, donc **proposition obligatoire**. L'invariant statique couvre
-  aussi ce chemin (`test_invariant.py`).
+- **Docker** (`docker.py`) via DEUX proxys tecnativa (aucun port LAN, socket
+  jamais monté dans core) : `sentinel-dockerproxy` en lecture pure (tous les
+  POST refusés — conteneurs, stats mémoire, logs démultiplexés) et
+  `sentinel-dockerproxy-restart` qui n'expose QUE la route de redémarrage
+  (`CONTAINERS=0` + `ALLOW_RESTARTS` : pas de liste, pas de création, pas
+  d'exec). `restart_container` refuse de toucher Sentinel lui-même et n'est
+  appelable que par l'exécuteur `docker.restart` — `direct=False`, donc
+  **proposition obligatoire**. L'invariant statique couvre ce chemin
+  (`test_invariant.py`).
 - **Système** (`system.py`) : charge et RAM de l'hôte via `/proc`. Limite assumée :
   disques/SMART de l'array Unraid inaccessibles sans privilèges — passeront par
   les capteurs de Nova si une intégration les expose.

@@ -22,7 +22,7 @@ import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -144,7 +144,9 @@ class Sentinel:
             log.warning("HA_URL/HA_TOKEN absents : domotique désactivée (conversation seule).")
 
         self._docker = (
-            DockerMonitor(settings.docker_proxy_url) if settings.docker_proxy_url else None
+            DockerMonitor(settings.docker_proxy_url, settings.docker_restart_url or None)
+            if settings.docker_proxy_url
+            else None
         )
         atrium = AtriumMonitor(settings.atrium_url) if settings.atrium_url else None
         self.health = HealthService(settings, self.ha, self._docker, atrium)
@@ -211,16 +213,19 @@ class Sentinel:
         log.info("Rapport quotidien planifié à %02d:%02d (%s)", hour, minute, self.settings.tz)
 
     async def _daily_report_loop(self, hour: int, minute: int) -> None:
+        # Sondage à la minute plutôt que sleep-until : insensible aux changements
+        # d'heure (DST) et aux dérives d'horloge.
         try:
             tz = ZoneInfo(self.settings.tz)
         except Exception:
             tz = None
+        last_fired_on = None
         while True:
+            await asyncio.sleep(30)
             now = datetime.now(tz)
-            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if target <= now:
-                target += timedelta(days=1)
-            await asyncio.sleep((target - now).total_seconds())
+            if now.hour != hour or now.minute != minute or last_fired_on == now.date():
+                continue
+            last_fired_on = now.date()
             try:
                 pending = await self.store.list_proposals("pending")
                 deferred = await self.store.list_proposals("deferred")
@@ -228,7 +233,6 @@ class Sentinel:
                 await self.announce(text, "info", speak=False)
             except Exception:
                 log.exception("Rapport quotidien en échec")
-            await asyncio.sleep(61)  # ne pas redéclencher dans la même minute
 
     async def stop_background(self) -> None:
         if self._report_task:

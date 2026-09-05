@@ -368,6 +368,8 @@ class Toolbox:
     # Écriture (via le moteur uniquement) ─────────────────────────────────
 
     async def _tool_redemarrer_conteneur(self, args, _utt, _src):
+        if self._docker is None:
+            return "La surveillance Docker n'est pas configurée (DOCKER_PROXY_URL).", True
         if self._engine is None:
             return self._MOTEUR_ABSENT, True
         nom = str(args.get("nom") or "").strip()

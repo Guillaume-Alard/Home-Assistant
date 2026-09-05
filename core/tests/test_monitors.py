@@ -51,7 +51,21 @@ async def test_restart_et_garde_fous(docker, fake_docker):
 
     with pytest.raises(DockerError):  # jamais soi-même
         await docker.restart_container("sentinel-core")
+
+    fake_docker.containers.append({
+        "Id": "ddd444ddd444", "Names": ["/sentinel-dockerproxy"], "State": "running",
+        "Status": "Up 1 day", "Image": "tecnativa/docker-socket-proxy", "Ports": [],
+    })
+    with pytest.raises(DockerError):  # ni ses proxys
+        await docker.restart_container("sentinel-dockerproxy")
     assert fake_docker.restarts == ["plex"]
+
+
+def test_demux_flux_brut_court():
+    from app.monitors.docker import _demux_logs
+
+    assert _demux_logs(b"ok\n") == "ok\n"  # flux TTY plus court qu'un en-tête
+    assert _demux_logs(b"") == ""
 
 
 def test_lecture_systeme():

@@ -7,6 +7,7 @@ rapport quotidien. Lecture pure — aucune écriture ici.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -94,7 +95,7 @@ class HealthService:
         ]
         ports = sorted({p for c in containers for p in c["ports_publies"]})
         try:
-            memoire = await self._docker.memory_usage()
+            memoire = await self._docker.memory_usage(containers)
         except DockerError:
             memoire = {}
         top_memoire = dict(sorted(memoire.items(), key=lambda kv: -kv[1])[:5])
@@ -110,16 +111,22 @@ class HealthService:
         data: dict = {"genere_le": self._now().isoformat(timespec="seconds")}
         data["nova"] = self._nova()
         data["systeme"] = read_system()
+        # Docker et Atrium s'interrogent en parallèle
+        tasks: dict[str, object] = {}
         if self._docker:
-            data["docker"] = await self._docker_section()
+            tasks["docker"] = self._docker_section()
         if self._atrium:
-            data["atrium"] = await self._atrium.check()
+            tasks["atrium"] = self._atrium.check()
+        if tasks:
+            results = await asyncio.gather(*tasks.values())
+            data.update(dict(zip(tasks.keys(), results)))
         return data
 
     # ── Résumé prononçable ───────────────────────────────────────────────
 
-    async def resume_texte(self) -> str:
-        snap = await self.snapshot()
+    async def resume_texte(self, snap: dict | None = None) -> str:
+        if snap is None:
+            snap = await self.snapshot()
         parts: list[str] = []
         souci = False
 
@@ -174,8 +181,9 @@ class HealthService:
 
     # ── Audit déterministe ───────────────────────────────────────────────
 
-    async def audit(self) -> dict:
-        snap = await self.snapshot()
+    async def audit(self, snap: dict | None = None) -> dict:
+        if snap is None:
+            snap = await self.snapshot()
         constats: list[dict] = []
 
         def add(gravite: str, sujet: str, detail: str, action: str | None = None):
@@ -237,8 +245,9 @@ class HealthService:
     # ── Rapport quotidien ────────────────────────────────────────────────
 
     async def rapport_quotidien(self, propositions_en_attente: int) -> str:
-        resume = await self.resume_texte()
-        audit = await self.audit()
+        snap = await self.snapshot()  # un seul instantané pour le résumé ET l'audit
+        resume = await self.resume_texte(snap)
+        audit = await self.audit(snap)
         lines = [f"Rapport du {date_francaise(self._now())}.", resume]
         importants = [c for c in audit["constats"] if c["gravite"] != "info"]
         for c in importants[:5]:

@@ -34,15 +34,24 @@ def _demux_logs(data: bytes) -> str:
             i += 8 + size
         else:
             return data.decode("utf-8", "replace")  # flux TTY brut, pas de trames
+    if not out and data:
+        return data.decode("utf-8", "replace")  # brut plus court qu'un en-tête (« ok\n »)
     return b"".join(out).decode("utf-8", "replace")
 
 
 class DockerMonitor:
-    def __init__(self, base_url: str, timeout: float = 8.0):
+    def __init__(self, base_url: str, restart_url: str | None = None, timeout: float = 8.0):
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
+        # Le redémarrage passe par un proxy séparé qui n'expose QUE cette route
+        # (le proxy de lecture refuse tous les POST) — voir docker-compose.yml.
+        self._restart_client = (
+            httpx.AsyncClient(base_url=restart_url, timeout=timeout) if restart_url else None
+        )
 
     async def close(self) -> None:
         await self._client.aclose()
+        if self._restart_client:
+            await self._restart_client.aclose()
 
     async def _get(self, path: str, **params) -> httpx.Response:
         try:
@@ -86,9 +95,16 @@ class DockerMonitor:
             })
         return sorted(out, key=lambda c: c["nom"])
 
-    async def memory_usage(self, max_containers: int = 20) -> dict[str, int]:
-        """Mémoire (Mo) des conteneurs en marche — {nom: Mo}."""
-        running = [c for c in await self.containers() if c["etat"] == "running"]
+    async def memory_usage(
+        self, containers: list[dict] | None = None, max_containers: int = 20
+    ) -> dict[str, int]:
+        """Mémoire (Mo) des conteneurs en marche — {nom: Mo}.
+
+        `containers` évite un second listage quand l'appelant en a déjà un.
+        """
+        if containers is None:
+            containers = await self.containers()
+        running = [c for c in containers if c["etat"] == "running"]
         semaphore = asyncio.Semaphore(5)
 
         async def one(c: dict) -> tuple[str, int] | None:
@@ -101,7 +117,8 @@ class DockerMonitor:
                     if usage is None:
                         return None
                     return (c["nom"], round(usage / 1_048_576))
-                except DockerError:
+                except Exception:  # un conteneur en vrac ne doit pas casser le snapshot
+                    log.debug("Stats indisponibles pour %s", c["nom"], exc_info=True)
                     return None
 
         results = await asyncio.gather(*(one(c) for c in running[:max_containers]))
@@ -133,10 +150,13 @@ class DockerMonitor:
         container = await self.find(name)
         if container is None:
             raise DockerError(f"Conteneur introuvable ou ambigu : « {name} ».")
-        if container["nom"].startswith("sentinel-core"):
-            raise DockerError("Je ne me redémarre pas moi-même — fais-le depuis Unraid.")
+        if container["nom"].startswith(("sentinel-core", "sentinel-dockerproxy")):
+            raise DockerError(
+                "Je ne redémarre ni mon propre cœur ni mes proxys Docker — fais-le depuis Unraid."
+            )
+        client = self._restart_client or self._client
         try:
-            resp = await self._client.post(f"/containers/{container['id']}/restart", params={"t": 10})
+            resp = await client.post(f"/containers/{container['id']}/restart", params={"t": 10})
         except httpx.HTTPError as exc:
             raise DockerError("Le proxy Docker est injoignable.") from exc
         if resp.status_code not in (204, 200):

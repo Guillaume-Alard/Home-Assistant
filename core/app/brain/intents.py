@@ -49,12 +49,18 @@ _PROPOSAL_RE = re.compile(
 _LIST_PROPOSALS_RE = re.compile(r"\b(liste|montre|affiche|donne)\b.*\bpropositions?\b|\bpropositions? en attente\b")
 _CONFIRM_RE = re.compile(r"^(sentinel )?(je )?confirme$")
 _CANCEL_RE = re.compile(r"^(sentinel )?annule( tout)?$|^laisse tomber$")
+# Formulations de DEMANDE uniquement : « désactive le rapport du matin » ou
+# « à quelle heure est le rapport ? » doivent partir au LLM, pas déclencher le résumé.
 _HEALTH_RE = re.compile(
     r"comment vont les systemes|comment va la maison|sante des systemes"
-    r"|etat des systemes|rapport (systeme|sante|quotidien|du matin)"
-    r"|donne( |-)?(moi )?le rapport|fais( |-)?(moi )?le rapport"
+    r"|etat des systemes"
+    r"|(donne|fais|montre)( |-)?(moi )?(le |un )?rapport( systeme| sante| quotidien| du matin)?$"
 )
-_TIME_RE = re.compile(r"\bquelle heure\b|\bl heure\b$")
+# Demande DE l'heure uniquement — « à quelle heure est le rapport ? » n'en est pas une
+_TIME_RE = re.compile(
+    r"\bquelle heure est[- ]il\b|^quelle heure$|\bil est quelle heure\b"
+    r"|^(sentinel )?(donne|dis)[- ]?(moi )?l heure$"
+)
 _DATE_RE = re.compile(r"\bquel jour\b|\bquelle date\b|\bla date\b$")
 _TEMP_RE = re.compile(r"\btemperature\b|\bcombien fait[- ]il\b|\bil fait combien\b")
 _TEMP_SET_VERBS = {"mets", "met", "regle", "regles", "monte", "baisse", "augmente", "diminue", "chauffe", "passe"}

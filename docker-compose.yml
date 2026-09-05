@@ -18,6 +18,7 @@ services:
       PIPER_HOST: sentinel-piper
       PIPER_PORT: "10200"
       DOCKER_PROXY_URL: http://sentinel-dockerproxy:2375
+      DOCKER_RESTART_URL: http://sentinel-dockerproxy-restart:2375
     ports:
       # Seul service exposé sur le LAN
       - "${SENTINEL_PORT:-8443}:8443"
@@ -59,11 +60,10 @@ services:
     volumes:
       - piper-voices:/data
 
-  # Accès Docker en LECTURE pour la surveillance (Phase 3A). Le socket n'est
-  # jamais monté dans sentinel-core. Seule écriture autorisée : redémarrer/
-  # arrêter/démarrer un conteneur (ALLOW_RESTARTS) — et côté Sentinel, un
-  # redémarrage n'arrive que par une proposition que tu approuves. Pas d'exec,
-  # pas de création, pas de suppression.
+  # Surveillance Docker (Phase 3A) : le socket n'est JAMAIS monté dans
+  # sentinel-core. Deux proxys aux rôles disjoints, aucun port publié sur le LAN :
+  #
+  # 1) Lecture pure — tous les POST sont refusés (liste, stats, logs).
   sentinel-dockerproxy:
     image: tecnativa/docker-socket-proxy:latest
     container_name: sentinel-dockerproxy
@@ -74,11 +74,25 @@ services:
       INFO: 1
       PING: 1
       VERSION: 1
-      ALLOW_RESTARTS: 1
       POST: 0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    # aucun port publié : accessible uniquement depuis le réseau interne compose
+
+  # 2) Redémarrage seul — CONTAINERS=0 : la SEULE route autorisée est celle
+  # d'ALLOW_RESTARTS (restart/stop/start), rien d'autre ne matche : pas de
+  # liste, pas de création, pas d'exec, pas de suppression. Côté Sentinel, un
+  # redémarrage n'existe que comme proposition que tu approuves.
+  sentinel-dockerproxy-restart:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: sentinel-dockerproxy-restart
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 0
+      POST: 1
+      ALLOW_RESTARTS: 1
+      PING: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
 volumes:
   whisper-models:

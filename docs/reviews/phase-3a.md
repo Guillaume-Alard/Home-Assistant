@@ -37,6 +37,33 @@
    l'hôte, mais pas les disques — la limite est documentée ; une meilleure source
    simple (sans privilèges) t'évoque-t-elle quelque chose sur Unraid ?
 
+## Addendum — revue interne du 01/09 (8 constats, tous corrigés)
+
+1. **Bloquant (vérifié contre le haproxy.cfg upstream)** : `POST: 0` refusait
+   tous les POST AVANT la règle `ALLOW_RESTARTS` → le redémarrage approuvé
+   aurait toujours échoué en 403 ; et `POST: 1` aurait ouvert create/exec.
+   → **Deux proxys** : lecture pure (POST refusés) + un proxy « restart »
+   minimal (`CONTAINERS=0` + `ALLOW_RESTARTS` : seule cette route matche).
+2. `_HEALTH_RE` détournait « désactive le rapport du matin » → seules les
+   formulations de demande déclenchent le résumé ; parler DU rapport va au LLM.
+   Même famille (pré-existant, débusqué par les tests) : « à quelle heure est le
+   rapport ? » déclenchait l'intent *heure* — regex resserré.
+3. Rapport quotidien : 4 listages Docker et ~40 stats par rapport → un seul
+   snapshot partagé résumé/audit, liste passée à `memory_usage`, sections
+   Docker/Atrium interrogées en parallèle.
+4. `_demux_logs` rendait « » pour un flux TTY < 8 octets → cas couvert + testé.
+5. `redemarrer_conteneur` sans Docker configuré → message clair (plus d'erreur
+   de registre interne).
+6. Garde-fou restart étendu aux proxys eux-mêmes (pas d'auto-décapitation de la
+   surveillance).
+7. Une stats non-JSON d'un seul conteneur faisait tomber tout le snapshot →
+   tolérance par conteneur.
+8. Planificateur : sleep-until remplacé par un sondage à la minute, insensible
+   aux changements d'heure (DST).
+
+91 tests après correctifs. Les points de doute ci-dessus restent ouverts
+(le n°1 est résolu par le design à deux proxys — reste l'avis sur son élégance).
+
 ## Comment tester
 
 ```bash
