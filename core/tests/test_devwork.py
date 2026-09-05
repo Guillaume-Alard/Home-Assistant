@@ -42,6 +42,21 @@ async def test_client_et_liste_blanche(env):
         await env.client.start_task("https://github.com/evil/repo", "pwn")
 
 
+async def test_journal_en_direct_incremental(env):
+    task = await env.client.start_task("loggia", "x")
+    env.fake.add_log(task["id"], "Clone de loggia…", "▸ modifie README.md")
+
+    data = await env.client.get_log(task["id"])
+    assert [entry["line"] for entry in data["lines"]] == ["Clone de loggia…", "▸ modifie README.md"]
+    assert data["next"] == 2 and data["status"] == "queued"
+
+    # Lecture incrémentale : seules les nouvelles lignes reviennent
+    env.fake.finish_task(task["id"], ["README.md"])
+    data2 = await env.client.get_log(task["id"], after=data["next"])
+    assert len(data2["lines"]) == 1 and "✔" in data2["lines"][0]["line"]
+    assert data2["status"] == "done"
+
+
 async def test_lancement_par_ordre_direct_journalise(env):
     outcome = await env.engine.run_direct(
         "dev.task", {"repo": "atrium", "instruction": "Ajoute un footer"},

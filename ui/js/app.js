@@ -37,8 +37,28 @@ const els = {
   alertText: document.getElementById('alert-text'),
   alertClose: document.getElementById('alert-close'),
   panel: document.getElementById('proposals-panel'),
-  panelClose: document.getElementById('panel-close'),
   proposalsList: document.getElementById('proposals-list'),
+  atelierBtn: document.getElementById('atelier-btn'),
+  devLive: document.getElementById('dev-live'),
+  santeBtn: document.getElementById('sante-btn'),
+  historyBtn: document.getElementById('history-btn'),
+  atelierStatus: document.getElementById('atelier-status'),
+  atelierTasks: document.getElementById('atelier-tasks'),
+  atelierToolbar: document.getElementById('atelier-toolbar'),
+  atelierBranch: document.getElementById('atelier-branch'),
+  atelierViewBtn: document.getElementById('atelier-view-btn'),
+  atelierLog: document.getElementById('atelier-log'),
+  atelierDiff: document.getElementById('atelier-diff'),
+  atelierEmpty: document.getElementById('atelier-empty'),
+  santeBody: document.getElementById('sante-body'),
+  historyBody: document.getElementById('history-body'),
+};
+
+const panels = {
+  proposals: document.getElementById('proposals-panel'),
+  atelier: document.getElementById('atelier-panel'),
+  sante: document.getElementById('sante-panel'),
+  history: document.getElementById('history-panel'),
 };
 
 const ws = new WSClient();
@@ -199,6 +219,7 @@ ws.addEventListener('event', (e) => {
       st.server = msg.state || 'idle';
       els.connNova.hidden = !msg.ha_configured;
       setNova(!!msg.ha_connected);
+      els.atelierBtn.hidden = !msg.dev_configured;
       st.proposals.clear();
       (msg.proposals || []).forEach((p) => st.proposals.set(p.num, p));
       renderProposals();
@@ -249,6 +270,24 @@ ws.addEventListener('event', (e) => {
     case 'error':
       thread.error(msg.text);
       toast(msg.text);
+      break;
+    case 'dev_status':
+      setDevRunning(msg.running);
+      break;
+    case 'dev_tasks':
+      onDevTasks(msg);
+      break;
+    case 'dev_log':
+      onDevLog(msg);
+      break;
+    case 'dev_diff':
+      onDevDiff(msg);
+      break;
+    case 'sante':
+      renderSante(msg);
+      break;
+    case 'historique':
+      renderHistory(msg);
       break;
     default:
       break;
@@ -349,14 +388,442 @@ function renderProposals() {
   }
 }
 
-els.proposalsBtn.addEventListener('click', () => {
-  els.panel.hidden = false;
-  renderProposals();
+// ── Panneaux latéraux (un seul ouvert à la fois) ────────────────────────
+
+function anyPanelOpen() {
+  return Object.values(panels).some((p) => !p.hidden);
+}
+
+function openPanel(name) {
+  for (const [key, el] of Object.entries(panels)) el.hidden = key !== name;
+  panelsChanged();
+}
+
+function closePanels() {
+  for (const el of Object.values(panels)) el.hidden = true;
+  panelsChanged();
+}
+
+function panelsChanged() {
+  renderProposals(); // la visibilité du chip propositions dépend du panneau
+  setAtelierPolling(!panels.atelier.hidden);
+  setSantePolling(!panels.sante.hidden);
+  if (!panels.history.hidden) ws.sendJSON({ type: 'historique' });
+}
+
+els.proposalsBtn.addEventListener('click', () => openPanel('proposals'));
+els.atelierBtn.addEventListener('click', () => openPanel('atelier'));
+els.santeBtn.addEventListener('click', () => openPanel('sante'));
+els.historyBtn.addEventListener('click', () => openPanel('history'));
+document.querySelectorAll('.panel-x').forEach((btn) => btn.addEventListener('click', closePanels));
+
+// ── Console de l'atelier de développement ───────────────────────────────
+
+const DEV_STATUS_FR = { queued: 'en file', running: 'en cours', done: 'terminée', failed: 'échec' };
+
+const dev = {
+  tasks: [],        // dernière liste reçue (plus récente d'abord)
+  selected: null,   // id de la tâche affichée
+  next: 0,          // curseur de lecture incrémentale du journal
+  showDiff: false,
+  tasksTimer: null,
+  logTimer: null,
+};
+
+function setAtelierPolling(on) {
+  clearInterval(dev.tasksTimer); dev.tasksTimer = null;
+  clearInterval(dev.logTimer); dev.logTimer = null;
+  if (!on || els.atelierBtn.hidden) return;
+  ws.sendJSON({ type: 'dev_tasks' });
+  dev.tasksTimer = setInterval(() => ws.sendJSON({ type: 'dev_tasks' }), 5000);
+  dev.logTimer = setInterval(() => {
+    const task = dev.tasks.find((t) => t.id === dev.selected);
+    if (task && (task.status === 'running' || task.status === 'queued') && !dev.showDiff) {
+      ws.sendJSON({ type: 'dev_log', id: dev.selected, after: dev.next });
+    }
+  }, 2000);
+}
+
+function setDevRunning(running) {
+  els.devLive.hidden = !running;
+  els.atelierBtn.title = running
+    ? `Atelier au travail sur « ${running.repo} »`
+    : 'Atelier de développement';
+  if (!panels.atelier.hidden) ws.sendJSON({ type: 'dev_tasks' });
+}
+
+function onDevTasks(msg) {
+  if (msg.error) {
+    els.atelierStatus.textContent = msg.error;
+    return;
+  }
+  dev.tasks = msg.tasks || [];
+  const a = msg.atelier || {};
+  const seg = (text, cls) => {
+    const s = document.createElement('span');
+    s.textContent = text;
+    if (cls) s.className = cls;
+    return s;
+  };
+  els.atelierStatus.textContent = '';
+  els.atelierStatus.append(
+    seg(`auth : ${a.auth || '?'}`),
+    document.createTextNode('  ·  '),
+    seg(a.push_possible ? 'push prêt' : 'push : GITHUB_TOKEN absent',
+        a.push_possible ? 'ok' : 'ko'),
+    document.createTextNode('  ·  '),
+    seg(`dépôts : ${(a.repos || []).join(', ') || '—'}`),
+  );
+
+  if (dev.selected && !dev.tasks.some((t) => t.id === dev.selected)) dev.selected = null;
+  if (!dev.selected && dev.tasks.length) {
+    const active = dev.tasks.find((t) => t.status === 'running' || t.status === 'queued');
+    selectDevTask((active || dev.tasks[0]).id);
+  } else {
+    renderDevTasks();
+  }
+}
+
+function renderDevTasks() {
+  els.atelierTasks.textContent = '';
+  els.atelierEmpty.hidden = dev.tasks.length > 0;
+  if (!dev.tasks.length) {
+    els.atelierToolbar.hidden = true;
+    els.atelierLog.hidden = true;
+    els.atelierDiff.hidden = true;
+    return;
+  }
+  for (const t of dev.tasks) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'dev-task' + (t.id === dev.selected ? ' selected' : '');
+    const st = document.createElement('span');
+    st.className = `st ${t.status}`;
+    const repo = document.createElement('span');
+    repo.className = 'repo';
+    repo.textContent = t.repo;
+    const desc = document.createElement('span');
+    desc.className = 'desc';
+    desc.textContent = t.instruction || '';
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = fmtWhen(t.created_at);
+    row.append(st, repo, desc, when);
+    row.addEventListener('click', () => selectDevTask(t.id));
+    els.atelierTasks.appendChild(row);
+  }
+}
+
+function selectDevTask(id) {
+  dev.selected = id;
+  dev.next = 0;
+  dev.showDiff = false;
+  els.atelierLog.textContent = '';
+  els.atelierLog.hidden = false;
+  els.atelierDiff.hidden = true;
+  els.atelierViewBtn.textContent = 'Voir le diff';
+  renderDevTasks();
+  const task = dev.tasks.find((t) => t.id === id);
+  els.atelierToolbar.hidden = !task;
+  if (task) {
+    setBranchLabel(task);
+    ws.sendJSON({ type: 'dev_log', id, after: 0 });
+  }
+}
+
+function setBranchLabel(task) {
+  els.atelierBranch.textContent =
+    `${task.branch} · ${DEV_STATUS_FR[task.status] || task.status}`;
+}
+
+function appendLogRow(t, line, cls) {
+  const row = document.createElement('div');
+  row.className = 'log-row' + (cls ? ` ${cls}` : '');
+  const tEl = document.createElement('span');
+  tEl.className = 't';
+  tEl.textContent = t || '';
+  const lEl = document.createElement('span');
+  lEl.className = 'l';
+  lEl.textContent = line;
+  row.append(tEl, lEl);
+  els.atelierLog.appendChild(row);
+}
+
+function onDevLog(msg) {
+  if (msg.id !== dev.selected) return;
+  if (msg.error) {
+    appendLogRow('', msg.error, 'log-hint');
+    return;
+  }
+  const el = els.atelierLog;
+  const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  // Curseur revenu en arrière (atelier redémarré) : on repart de zéro
+  if (dev.next === 0 || (msg.next || 0) < dev.next) el.textContent = '';
+  for (const entry of msg.lines || []) appendLogRow(entry.t, entry.line);
+  dev.next = msg.next || 0;
+  if (!el.childElementCount) {
+    const task = dev.tasks.find((t) => t.id === msg.id);
+    const done = task && (task.status === 'done' || task.status === 'failed');
+    appendLogRow('', done
+      ? '(journal indisponible — il ne survit pas à un redémarrage de l’atelier)'
+      : 'en attente des premières lignes…', 'log-hint');
+  }
+  if (pinned) el.scrollTop = el.scrollHeight;
+  const task = dev.tasks.find((t) => t.id === msg.id);
+  if (task && msg.status && task.status !== msg.status) {
+    task.status = msg.status;
+    renderDevTasks();
+    setBranchLabel(task);
+  }
+}
+
+els.atelierViewBtn.addEventListener('click', () => {
+  if (!dev.selected) return;
+  dev.showDiff = !dev.showDiff;
+  els.atelierViewBtn.textContent = dev.showDiff ? 'Voir le journal' : 'Voir le diff';
+  els.atelierLog.hidden = dev.showDiff;
+  els.atelierDiff.hidden = !dev.showDiff;
+  if (dev.showDiff) {
+    els.atelierDiff.textContent = 'chargement du diff…';
+    ws.sendJSON({ type: 'dev_diff', id: dev.selected });
+  }
 });
-els.panelClose.addEventListener('click', () => {
-  els.panel.hidden = true;
-  renderProposals();
-});
+
+function diffClass(line) {
+  if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ')) return 'd-file';
+  if (line.startsWith('@@')) return 'd-hunk';
+  if (line.startsWith('+')) return 'd-add';
+  if (line.startsWith('-')) return 'd-del';
+  return 'd-ctx';
+}
+
+function onDevDiff(msg) {
+  if (msg.id !== dev.selected || !dev.showDiff) return;
+  els.atelierDiff.textContent = '';
+  if (msg.error) {
+    els.atelierDiff.textContent = msg.error;
+    return;
+  }
+  for (const line of String(msg.diff || '').split('\n')) {
+    const row = document.createElement('div');
+    row.className = `log-row ${diffClass(line)}`;
+    row.textContent = line || ' ';
+    els.atelierDiff.appendChild(row);
+  }
+}
+
+// ── Panneau santé ───────────────────────────────────────────────────────
+
+let santeTimer = null;
+
+function setSantePolling(on) {
+  clearInterval(santeTimer); santeTimer = null;
+  if (!on) return;
+  ws.sendJSON({ type: 'sante' });
+  santeTimer = setInterval(() => ws.sendJSON({ type: 'sante' }), 30000);
+}
+
+document.getElementById('sante-refresh')
+  .addEventListener('click', () => ws.sendJSON({ type: 'sante' }));
+
+function tile(name, dot, rows, note) {
+  const el = document.createElement('article');
+  el.className = 'tile';
+  const head = document.createElement('div');
+  head.className = 'tile-head';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'name';
+  nameEl.textContent = name;
+  const dotEl = document.createElement('span');
+  dotEl.className = `tile-dot${dot ? ` ${dot}` : ''}`;
+  head.append(nameEl, dotEl);
+  el.appendChild(head);
+  for (const [k, v] of rows) {
+    const kv = document.createElement('div');
+    kv.className = 'kv';
+    const kEl = document.createElement('span');
+    kEl.className = 'k';
+    kEl.textContent = k;
+    const vEl = document.createElement('span');
+    vEl.className = 'v';
+    vEl.textContent = v;
+    kv.append(kEl, vEl);
+    el.appendChild(kv);
+  }
+  if (note) {
+    const noteEl = document.createElement('p');
+    noteEl.className = 'tile-note';
+    noteEl.textContent = note;
+    el.appendChild(noteEl);
+  }
+  return el;
+}
+
+function emptyLine(text) {
+  const p = document.createElement('p');
+  p.className = 'panel-empty';
+  p.textContent = text;
+  return p;
+}
+
+const fmtNum = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
+
+function renderSante(msg) {
+  const body = els.santeBody;
+  body.textContent = '';
+  if (msg.error) {
+    body.appendChild(emptyLine(msg.error));
+    return;
+  }
+  const d = msg.data || {};
+
+  const nova = d.nova || {};
+  {
+    let dot = 'ok';
+    const rows = [];
+    let note = '';
+    if (!nova.configuree) {
+      dot = '';
+      rows.push(['état', 'non configurée']);
+    } else if (!nova.connectee) {
+      dot = 'bad';
+      rows.push(['état', 'déconnectée !']);
+    } else {
+      rows.push(['version', nova.version || '?']);
+      rows.push(['entités', String(nova.entites ?? '?')]);
+      if (nova.nb_indisponibles) {
+        dot = 'warn';
+        rows.push(['indisponibles', String(nova.nb_indisponibles)]);
+      }
+      const maj = nova.mises_a_jour || [];
+      if (maj.length) {
+        rows.push(['mises à jour', String(maj.length)]);
+        note = maj.slice(0, 6).join(', ') + (maj.length > 6 ? '…' : '');
+      }
+    }
+    body.appendChild(tile('Nova', dot, rows, note));
+  }
+
+  const sys = d.systeme || {};
+  if (sys.charge || sys.ram) {
+    let dot = 'ok';
+    const rows = [];
+    if (sys.charge) {
+      rows.push(['charge', `${fmtNum(sys.charge[0])} / ${sys.coeurs || '?'} cœurs`]);
+      if (sys.charge[0] > (sys.coeurs || 1)) dot = 'warn';
+    }
+    if (sys.ram) {
+      rows.push(['mémoire', `${sys.ram.utilisee_pct} %`]);
+      if (sys.ram.utilisee_pct >= 90) dot = 'warn';
+    }
+    body.appendChild(tile('Nebula', dot, rows));
+  }
+
+  const docker = d.docker;
+  if (docker) {
+    if (docker.erreur) {
+      body.appendChild(tile('Docker', 'bad', [['erreur', docker.erreur]]));
+    } else {
+      const problems = docker.problemes || [];
+      const rows = [['conteneurs', `${docker.en_marche} en marche / ${docker.total}`]];
+      for (const p of problems.slice(0, 4)) rows.push([p.nom, p.etat]);
+      const mem = Object.entries(docker.top_memoire_mo || {}).slice(0, 4)
+        .map(([n, mo]) => `${n} ${mo} Mo`).join(' · ');
+      body.appendChild(tile('Docker', problems.length ? 'warn' : 'ok', rows,
+        mem ? `Mémoire : ${mem}` : ''));
+    }
+  }
+
+  const atrium = d.atrium;
+  if (atrium) {
+    body.appendChild(atrium.ok
+      ? tile('Atrium', 'ok', [['latence', `${atrium.latence_ms} ms`]])
+      : tile('Atrium', 'bad', [['état', 'injoignable !']]));
+  }
+
+  if (!body.childElementCount) body.appendChild(emptyLine('Aucun moniteur configuré.'));
+}
+
+// ── Panneau historique ──────────────────────────────────────────────────
+
+const OUTCOME_FR = {
+  ok: 'ok', refused: 'refusée', failed: 'échec',
+  needs_confirmation: 'à confirmer', created: 'créée', decided: 'décidée',
+};
+const PROP_STATUS_FR = {
+  done: 'exécutée', rejected: 'refusée', refused: 'refusée',
+  failed: 'échec', expired: 'expirée', approved: 'approuvée',
+};
+
+function fmtWhen(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString()
+    ? hm
+    : `${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} ${hm}`;
+}
+
+const clip = (text, n) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
+
+function histRow(when, label, labelCls, badgeText, badgeCls, lines) {
+  const row = document.createElement('article');
+  row.className = 'j-row';
+  const top = document.createElement('div');
+  top.className = 'j-top';
+  const whenEl = document.createElement('span');
+  whenEl.className = 'when';
+  whenEl.textContent = when;
+  const labelEl = document.createElement('span');
+  if (labelCls) labelEl.className = labelCls;
+  labelEl.textContent = label;
+  const badge = document.createElement('span');
+  badge.className = `badge ${badgeCls}`;
+  badge.textContent = badgeText;
+  top.append(whenEl, labelEl, badge);
+  row.appendChild(top);
+  for (const [cls, text] of lines) {
+    if (!text) continue;
+    const div = document.createElement('div');
+    div.className = cls;
+    div.textContent = clip(text, 170);
+    row.appendChild(div);
+  }
+  return row;
+}
+
+function renderHistory(msg) {
+  const body = els.historyBody;
+  body.textContent = '';
+  const title = (text) => {
+    const h = document.createElement('h3');
+    h.className = 'hist-title';
+    h.textContent = text;
+    return h;
+  };
+
+  body.appendChild(title('Journal des actions'));
+  const journal = msg.journal || [];
+  if (!journal.length) body.appendChild(emptyLine('Journal vide pour l’instant.'));
+  for (const e of journal) {
+    body.appendChild(histRow(
+      fmtWhen(e.ts), e.action_id, 'act',
+      OUTCOME_FR[e.outcome] || e.outcome, e.outcome,
+      [['j-auth', e.authorization], ['j-detail', e.detail]],
+    ));
+  }
+
+  body.appendChild(title('Propositions passées'));
+  const props = msg.proposals || [];
+  if (!props.length) body.appendChild(emptyLine('Aucune proposition passée.'));
+  for (const p of props) {
+    body.appendChild(histRow(
+      fmtWhen(p.decided_at || p.created_at), `n°${p.num} — ${p.title}`, '',
+      PROP_STATUS_FR[p.status] || p.status, p.status,
+      [['j-detail', p.result || p.error]],
+    ));
+  }
+}
 
 // ── Interactions ────────────────────────────────────────────────────────
 
@@ -375,9 +842,8 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     micAction();
   } else if (e.key === 'Escape') {
-    if (!els.panel.hidden) {
-      els.panel.hidden = true;
-      renderProposals();
+    if (anyPanelOpen()) {
+      closePanels();
       return;
     }
     if (st.listening) stopListening(false);

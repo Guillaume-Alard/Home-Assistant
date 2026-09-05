@@ -1,4 +1,4 @@
-# Architecture — état courant (fin de Phase 3B)
+# Architecture — état courant (fin de Phase 4)
 
 > Document vivant : mis à jour à chaque phase. La cible globale est décrite dans
 > [PLAN.md](PLAN.md) ; ici, seulement ce qui **existe** et pourquoi.
@@ -124,13 +124,21 @@ qui a parlé.
 | `audio_cancel` | — | Abandon de la capture (rien n'est transcrit) |
 | `cancel` | — | Interrompt le tour en cours (LLM + voix) |
 | `proposal_decision` | `{id, decision}` | `approve` · `reject` · `defer` depuis l'UI |
+| `dev_tasks` | — | Panneau atelier : liste des tâches + état (auth, push, dépôts) |
+| `dev_log` | `{id, after}` | Journal en direct d'une tâche (incrémental : `after` = dernier `next` reçu) |
+| `dev_diff` | `{id}` | Diff complet d'une tâche |
+| `sante` | — | Instantané santé (panneau santé) |
+| `historique` | — | Journal des actions + propositions passées |
 | `ping` | — | Maintien de connexion (le serveur répond `pong`) |
+
+Les cinq requêtes de panneau sont de la **lecture pure** (aucune action possible par
+ce chemin) et reçoivent leur réponse du même type, adressée au seul demandeur.
 
 ### Serveur → client(s)
 
 | Message | Payload | Rôle |
 |---|---|---|
-| `hello` | `{version, state, history, ha_configured, ha_connected, proposals, protocols}` | À la connexion : état + 50 derniers messages + file de propositions |
+| `hello` | `{version, state, history, ha_configured, ha_connected, dev_configured, proposals, protocols}` | À la connexion : état + 50 derniers messages + file de propositions |
 | `status` | `{state}` | `idle` · `listening` · `transcribing` · `thinking` · `speaking` |
 | `message` | `{message}` | Message persisté (`source: text\|voice\|alert`) |
 | `ha_status` | `{connected}` | Connexion à Nova (pastille de l'UI) |
@@ -146,6 +154,8 @@ qui a parlé.
 | `speak_end` | — | Fin du flux vocal — *origine seulement* |
 | `notice` | `{text}` | Information non bloquante (« Je n'ai rien entendu. ») |
 | `error` | `{text}` | Erreur à afficher (clé API absente, service injoignable…) |
+| `dev_status` | `{running}` | Tâche de dev en cours (`{id, repo}` ou `null`) — pastille ⚒ |
+| `dev_tasks` · `dev_log` · `dev_diff` · `sante` · `historique` | *(réponses)* | Réponses aux requêtes de panneau (`error` en cas d'échec) — *demandeur seulement* |
 
 ## Audio
 
@@ -235,9 +245,16 @@ pour des fils multiples futurs, sans migration.
   (clones jetables). Tourne en non-root (exigé par le mode headless).
 - **Flux d'une tâche** : `POST /tasks` (dépôt de la liste blanche uniquement,
   une tâche à la fois) → clone `--depth 50` → branche `sentinel/<id>` →
-  `claude -p … --output-format json --dangerously-skip-permissions` (acceptable
-  car le conteneur EST le bac à sable) → commit → `diff.patch` + résumé.
-  Persistance `tasks.json`, secrets purgés de toute sortie, 30 tâches gardées.
+  `claude -p … --output-format stream-json --dangerously-skip-permissions`
+  (acceptable car le conteneur EST le bac à sable) → commit → `diff.patch` +
+  résumé. Persistance `tasks.json`, secrets purgés de toute sortie, 30 tâches
+  gardées.
+- **Journal en direct (Phase 4)** : la sortie `stream-json` est traduite ligne à
+  ligne en français (`worker/streamlog.py` : « ▸ modifie README.md », texte de
+  l'assistant, résultat final) dans un tampon mémoire borné par tâche, servi par
+  `GET /tasks/{id}/log?after=N` (lecture incrémentale). La console de l'atelier
+  dans l'UI le sonde toutes les 2 s pendant qu'une tâche tourne. Le tampon ne
+  survit pas à un redémarrage du worker — le résumé et le diff, si.
 - **Côté core** (`app/devwork/`) : `WorkerClient` (lecture libre ; `start_task`
   et `push_branch` réservés aux exécuteurs — invariant testé) ; actions au
   registre : `dev.task` (**direct, risque faible** : n'écrit que dans le bac à

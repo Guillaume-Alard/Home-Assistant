@@ -22,6 +22,14 @@
               aria-label="Propositions en attente">
         ▤ <span id="prop-count">0</span>
       </button>
+      <button id="atelier-btn" class="chip" type="button" hidden
+              title="Atelier de développement" aria-label="Atelier de développement">
+        ⚒<span id="dev-live" class="live-dot" hidden aria-hidden="true"></span>
+      </button>
+      <button id="sante-btn" class="chip" type="button"
+              title="Santé des systèmes" aria-label="Santé des systèmes">✚</button>
+      <button id="history-btn" class="chip" type="button"
+              title="Historique et journal" aria-label="Historique et journal">↺</button>
       <div class="conn" id="conn-nova" title="Nova (Home Assistant)" hidden>
         <span class="conn-dot nova" id="nova-dot" aria-hidden="true"></span>
         <span>nova</span>
@@ -41,13 +49,51 @@
   <aside id="proposals-panel" class="panel" hidden aria-label="Centre de propositions">
     <header class="panel-head">
       <h2>Propositions</h2>
-      <button id="panel-close" type="button" aria-label="Fermer">✕</button>
+      <button class="panel-x" type="button" aria-label="Fermer">✕</button>
     </header>
     <div id="proposals-list" class="panel-list"></div>
     <p class="panel-hint">
       À la voix : « approuve / refuse / reporte la proposition N ».
       Les propositions <em>sensibles</em> ne s'approuvent qu'ici.
     </p>
+  </aside>
+
+  <aside id="atelier-panel" class="panel wide" hidden aria-label="Atelier de développement">
+    <header class="panel-head">
+      <h2>Atelier</h2>
+      <button class="panel-x" type="button" aria-label="Fermer">✕</button>
+    </header>
+    <p id="atelier-status" class="panel-status">connexion à l'atelier…</p>
+    <div id="atelier-tasks" class="atelier-tasks"></div>
+    <div class="atelier-detail">
+      <div class="atelier-toolbar" id="atelier-toolbar" hidden>
+        <span id="atelier-branch" class="mono-chip"></span>
+        <button id="atelier-view-btn" type="button" class="mini-btn">Voir le diff</button>
+      </div>
+      <div id="atelier-log" class="atelier-log" hidden></div>
+      <div id="atelier-diff" class="atelier-log diff" hidden></div>
+      <p id="atelier-empty" class="panel-empty">Aucune tâche pour l'instant.<br>
+        Dis à Sentinel : « Lance une tâche de dev sur loggia : … »</p>
+    </div>
+  </aside>
+
+  <aside id="sante-panel" class="panel" hidden aria-label="Santé des systèmes">
+    <header class="panel-head">
+      <h2>Santé</h2>
+      <div class="panel-head-actions">
+        <button id="sante-refresh" type="button" aria-label="Actualiser">↻</button>
+        <button class="panel-x" type="button" aria-label="Fermer">✕</button>
+      </div>
+    </header>
+    <div id="sante-body" class="panel-list"></div>
+  </aside>
+
+  <aside id="history-panel" class="panel" hidden aria-label="Historique et journal">
+    <header class="panel-head">
+      <h2>Historique</h2>
+      <button class="panel-x" type="button" aria-label="Fermer">✕</button>
+    </header>
+    <div id="history-body" class="panel-list"></div>
   </aside>
 
   <main class="layout">

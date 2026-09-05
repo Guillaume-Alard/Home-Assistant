@@ -106,6 +106,7 @@ services:
     container_name: sentinel-worker
     restart: unless-stopped
     environment:
+      TZ: ${TZ:-Europe/Paris}  # horodatage du journal en direct de la console
       DEV_REPOS: ${DEV_REPOS:-https://github.com/Alardware/atrium https://github.com/Alardware/loggia}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

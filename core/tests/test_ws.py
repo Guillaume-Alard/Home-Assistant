@@ -57,6 +57,18 @@ def _write_config(tmp_path):
 
 
 @pytest.fixture()
+def client_dev(fake_wyoming, fake_worker, tmp_path, monkeypatch):
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("WORKER_URL", f"http://127.0.0.1:{fake_worker.port}")
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture()
 def fake_brain(monkeypatch):
     from app.brain.llm import Brain
 
@@ -246,3 +258,83 @@ def test_decision_proposition_via_ws(client_ha, fake_ha):
         events, _ = _drain(ws, {"notice"})
     notice = next(e for e in events if e["type"] == "notice")
     assert "999" in notice["text"]
+
+
+# ── Panneaux Phase 4 : atelier, santé, historique ────────────────────────
+
+
+def test_console_atelier_via_ws(client_dev, fake_worker):
+    import httpx
+
+    with client_dev.websocket_connect("/ws") as ws:
+        hello = json.loads(ws.receive()["text"])
+        assert hello["dev_configured"] is True
+
+        # Liste + état de l'atelier (vide au départ)
+        ws.send_text(json.dumps({"type": "dev_tasks"}))
+        events, _ = _drain(ws, {"dev_tasks"})
+        reply = next(e for e in events if e["type"] == "dev_tasks")
+        assert reply["tasks"] == []
+        assert reply["atelier"]["auth"] == "clé API"
+        assert reply["atelier"]["repos"] == ["atrium", "loggia"]
+
+        # Une tâche démarre côté worker : journal en direct puis diff
+        task = httpx.post(
+            f"http://127.0.0.1:{fake_worker.port}/tasks",
+            json={"repo": "loggia", "instruction": "Corrige le README"},
+        ).json()
+        fake_worker.add_log(task["id"], "Clone de loggia…", "▸ modifie README.md")
+
+        ws.send_text(json.dumps({"type": "dev_log", "id": task["id"], "after": 0}))
+        events, _ = _drain(ws, {"dev_log"})
+        logmsg = next(e for e in events if e["type"] == "dev_log")
+        assert logmsg["id"] == task["id"] and logmsg["next"] == 2
+        assert logmsg["lines"][1]["line"] == "▸ modifie README.md"
+
+        # Lecture incrémentale : rien de neuf → aucune ligne
+        ws.send_text(json.dumps({"type": "dev_log", "id": task["id"], "after": 2}))
+        events, _ = _drain(ws, {"dev_log"})
+        assert next(e for e in events if e["type"] == "dev_log")["lines"] == []
+
+        ws.send_text(json.dumps({"type": "dev_diff", "id": task["id"]}))
+        events, _ = _drain(ws, {"dev_diff"})
+        diff = next(e for e in events if e["type"] == "dev_diff")
+        assert "+correctif" in diff["diff"]
+
+
+def test_atelier_non_configure(client):
+    with client.websocket_connect("/ws") as ws:
+        hello = json.loads(ws.receive()["text"])
+        assert hello["dev_configured"] is False
+        ws.send_text(json.dumps({"type": "dev_tasks"}))
+        events, _ = _drain(ws, {"dev_tasks"})
+        assert "WORKER_URL" in next(e for e in events if e["type"] == "dev_tasks")["error"]
+
+
+def test_panneau_sante_via_ws(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.receive()  # hello
+        ws.send_text(json.dumps({"type": "sante"}))
+        events, _ = _drain(ws, {"sante"})
+    sante = next(e for e in events if e["type"] == "sante")
+    assert sante["data"]["nova"] == {"configuree": False}
+    assert "systeme" in sante["data"]
+
+
+def test_panneau_historique_via_ws(client_ha, fake_ha, brain_interdit):
+    """Après un ordre direct, le journal des actions est consultable dans l'UI."""
+    _wait_ha(client_ha)
+    with client_ha.websocket_connect("/ws") as ws:
+        ws.receive()  # hello
+        ws.send_text(json.dumps({"type": "chat", "text": "Allume la lumière du salon"}))
+        _drain(ws, {"assistant_end"})
+
+        ws.send_text(json.dumps({"type": "historique"}))
+        events, _ = _drain(ws, {"historique"})
+
+    hist = next(e for e in events if e["type"] == "historique")
+    entry = hist["journal"][0]
+    assert entry["action_id"] == "ha.turn_on"
+    assert entry["outcome"] == "ok"
+    assert "Allume la lumière du salon".lower() in entry["authorization"].lower()
+    assert hist["proposals"] == []

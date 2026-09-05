@@ -25,11 +25,14 @@ class DevWatcher:
         engine: ActionEngine | None,
         announce: Callable[..., Awaitable[None]],  # (texte, gravité, speak=)
         interval: float = 15.0,
+        on_running_change: Callable[[dict | None], Awaitable[None]] | None = None,
     ):
         self._worker = worker
         self._engine = engine
         self._announce = announce
         self._interval = interval
+        self._on_running_change = on_running_change
+        self._last_running: str | None = None  # id de la tâche en cours (pastille UI)
 
     async def run(self) -> None:
         while True:
@@ -46,6 +49,7 @@ class DevWatcher:
             tasks = await self._worker.list_tasks()
         except WorkerError:
             return
+        await self._notify_running(tasks)
         for summary in tasks:
             if summary.get("announced") or summary.get("status") not in ("done", "failed"):
                 continue
@@ -57,6 +61,21 @@ class DevWatcher:
                 await self._handle_finished(task)
             except Exception:
                 log.exception("Annonce de la tâche %s impossible", task["id"])
+
+    async def _notify_running(self, tasks: list[dict]) -> None:
+        """Signale à l'UI (pastille + console) qu'une tâche démarre ou se termine."""
+        running = next(
+            (t for t in tasks if t.get("status") in ("queued", "running")), None
+        )
+        running_id = running["id"] if running else None
+        if running_id == self._last_running:
+            return
+        self._last_running = running_id
+        if self._on_running_change:
+            try:
+                await self._on_running_change(running)
+            except Exception:
+                log.exception("Notification du statut de l'atelier impossible")
 
     async def _handle_finished(self, task: dict) -> None:
         task_id, repo = task["id"], task["repo"]

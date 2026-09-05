@@ -181,6 +181,146 @@ body.online.nova-on .conn-dot.nova { background: #59d78c; box-shadow: 0 0 8px rg
 .prop button.defer:hover { border-color: var(--warn); color: var(--warn); }
 .prop.deferred { opacity: 0.75; }
 
+/* ── Panneaux Phase 4 : atelier, santé, historique ────────────────────── */
+
+.panel.wide { width: min(620px, 100vw); }
+
+.panel-head-actions { display: flex; align-items: center; gap: 4px; }
+.panel-head-actions button {
+  border: none; background: none; color: var(--muted); cursor: pointer; font-size: 15px;
+}
+
+.live-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--warn); margin-left: 6px; vertical-align: 1px;
+  animation: livepulse 1.2s ease-in-out infinite;
+}
+@keyframes livepulse { 50% { opacity: 0.25; } }
+
+.panel-status {
+  margin: 0; padding: 10px 18px;
+  font-size: 12.5px; color: var(--muted);
+  border-bottom: 1px solid var(--panel-edge);
+  line-height: 1.5;
+}
+.panel-status .ok { color: #59d78c; }
+.panel-status .ko { color: var(--warn); }
+
+/* Console de l'atelier */
+.atelier-tasks {
+  max-height: 32%; overflow-y: auto;
+  border-bottom: 1px solid var(--panel-edge);
+  scrollbar-width: thin; scrollbar-color: var(--panel-edge) transparent;
+}
+.dev-task {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 9px 18px;
+  border: none; background: none; color: var(--text);
+  font-family: inherit; font-size: 13px; cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-edge) 45%, transparent);
+}
+.dev-task:hover { background: var(--panel); }
+.dev-task.selected { background: var(--user-bubble); }
+.dev-task .st {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--muted);
+}
+.dev-task .st.running { background: var(--warn); animation: livepulse 1.2s infinite; }
+.dev-task .st.done { background: #59d78c; }
+.dev-task .st.failed { background: var(--danger); }
+.dev-task .repo { font-weight: 600; }
+.dev-task .desc {
+  flex: 1; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.dev-task .when { color: var(--muted); font-size: 11.5px; flex: none; }
+
+.atelier-detail {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.atelier-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--panel-edge);
+}
+.mono-chip {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mini-btn {
+  border: 1px solid var(--panel-edge); border-radius: 8px;
+  background: var(--panel); color: var(--accent);
+  padding: 4px 12px; font-size: 12px; font-family: inherit; cursor: pointer;
+  flex: none;
+}
+.mini-btn:hover { background: var(--user-bubble); }
+
+.atelier-log {
+  flex: 1; min-height: 0; overflow: auto;
+  padding: 10px 18px 16px;
+  font-family: var(--mono); font-size: 12px; line-height: 1.6;
+  scrollbar-width: thin; scrollbar-color: var(--panel-edge) transparent;
+  overscroll-behavior: contain;
+}
+.log-row { display: flex; gap: 10px; }
+.log-row .t { color: var(--accent-dim); flex: none; }
+.log-row .l { white-space: pre-wrap; word-break: break-word; }
+.log-hint { color: var(--muted); font-style: italic; }
+
+.atelier-log.diff .log-row { display: block; white-space: pre-wrap; word-break: break-word; }
+.d-add { color: #59d78c; }
+.d-del { color: var(--danger); }
+.d-hunk { color: var(--accent); }
+.d-file { color: var(--warn); font-weight: 600; }
+.d-ctx { color: var(--text); opacity: 0.85; }
+
+/* Tuiles santé */
+.tile {
+  border: 1px solid var(--panel-edge); background: var(--panel);
+  border-radius: 12px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.tile-head { display: flex; align-items: center; justify-content: space-between; }
+.tile-head .name {
+  font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
+  font-weight: 600; color: var(--text);
+}
+.tile-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.tile-dot.ok { background: #59d78c; box-shadow: 0 0 8px rgba(89, 215, 140, 0.5); }
+.tile-dot.warn { background: var(--warn); }
+.tile-dot.bad { background: var(--danger); box-shadow: 0 0 8px rgba(255, 107, 107, 0.5); }
+.kv { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.kv .k { color: var(--muted); }
+.kv .v { text-align: right; overflow-wrap: anywhere; }
+.tile-note { font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+/* Historique : journal + propositions passées */
+.hist-title {
+  margin: 4px 0 0; font-size: 11.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--muted); font-weight: 600;
+}
+.j-row {
+  border: 1px solid var(--panel-edge); background: var(--panel);
+  border-radius: 10px; padding: 9px 12px;
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 12.5px;
+}
+.j-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.j-top .when { color: var(--muted); font-size: 11.5px; }
+.j-top .act { font-family: var(--mono); font-size: 12px; }
+.badge {
+  padding: 0 7px; border-radius: 999px; font-size: 10.5px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  border: 1px solid var(--panel-edge); margin-left: auto;
+}
+.badge.ok, .badge.done { color: #59d78c; border-color: rgba(89, 215, 140, 0.4); }
+.badge.refused, .badge.rejected, .badge.expired { color: var(--warn); border-color: rgba(255, 180, 84, 0.4); }
+.badge.failed { color: var(--danger); border-color: rgba(255, 107, 107, 0.45); }
+.j-auth { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.j-detail { color: var(--text); opacity: 0.85; overflow-wrap: anywhere; }
+
 /* ── Disposition centrale ─────────────────────────────────────────── */
 
 .layout {

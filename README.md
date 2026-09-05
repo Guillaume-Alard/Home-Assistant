@@ -120,6 +120,25 @@ appui-pour-parler d'ici là), la surveillance du PC.
    parlée quand la question était vocale.
 5. **Échap** (ou clic pendant que Sentinel parle/réfléchit) : interruption.
 
+## Les panneaux de l'interface (Phase 4)
+
+En haut à droite, quatre boutons ouvrent des panneaux latéraux (Échap referme) :
+
+- **▤ Propositions** — la file « propose puis approuve » : approuver, refuser ou
+  reporter chaque proposition ; les actions *sensibles* ne s'approuvent qu'ici.
+- **⚒ Atelier** — la console des tâches de développement **en direct** : liste
+  des tâches, journal ligne à ligne pendant que Claude Code travaille
+  (« ▸ modifie README.md », commandes lancées, résumé final) et visionneuse de
+  diff colorée. Une pastille orange pulse sur le bouton quand une tâche tourne.
+  Lecture seule : lancer ou pousser passe toujours par la conversation et les
+  propositions.
+- **✚ Santé** — l'état des systèmes en tuiles : Nova (entités, mises à jour),
+  Nebula (charge, mémoire), Docker (conteneurs à surveiller), Atrium.
+  Actualisation automatique tant que le panneau est ouvert.
+- **↺ Historique** — le **journal des actions** (qui a autorisé quoi, quand,
+  avec quel résultat — la piste d'audit du moteur d'actions) et les propositions
+  passées.
+
 ## Configuration (`.env`)
 
 | Variable | Défaut | Rôle |

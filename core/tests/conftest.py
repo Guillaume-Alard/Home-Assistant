@@ -378,6 +378,7 @@ class FakeWorker:
     def __init__(self):
         self.port: int | None = None
         self.tasks: dict[str, dict] = {}
+        self.logs: dict[str, list[dict]] = {}
         self.pushes: list[str] = []
         self.push_possible = True
         self._counter = 0
@@ -386,11 +387,18 @@ class FakeWorker:
         self._ready = threading.Event()
 
     # Pilotage depuis les tests
+    def add_log(self, task_id: str, *lines: str) -> None:
+        self.logs.setdefault(task_id, []).extend(
+            {"t": "10:00:00", "line": line} for line in lines
+        )
+
     def finish_task(self, task_id: str, files: list[str], summary: str = "Travail terminé.") -> None:
         self.tasks[task_id].update(status="done", files_changed=files, summary=summary)
+        self.add_log(task_id, f"✔ Tâche terminée — {len(files)} fichier(s) modifié(s).")
 
     def fail_task(self, task_id: str, error: str) -> None:
         self.tasks[task_id].update(status="failed", error=error)
+        self.add_log(task_id, f"✖ Échec : {error}")
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -429,7 +437,7 @@ class FakeWorker:
             while len(body) < length:
                 body += await reader.read(4096)
             method, target, _ = headers.split("\r\n", 1)[0].split(" ", 2)
-            status, payload = self._route(method, target.split("?", 1)[0], body)
+            status, payload = self._route(method, target, body)
             raw = payload if isinstance(payload, bytes) else _json.dumps(payload).encode()
             ctype = "text/plain" if isinstance(payload, bytes) else "application/json"
             writer.write((
@@ -442,10 +450,16 @@ class FakeWorker:
         finally:
             writer.close()
 
-    def _route(self, method: str, path: str, body: bytes):
+    def _route(self, method: str, target: str, body: bytes):
+        path, _, query = target.partition("?")
         if path == "/health":
-            return 200, {"status": "ok", "repos": ["atrium", "loggia"], "busy": False,
-                         "auth": "clé API", "push_possible": self.push_possible}
+            active = next(
+                (t["id"] for t in self.tasks.values() if t["status"] in ("queued", "running")),
+                None,
+            )
+            return 200, {"status": "ok", "repos": ["atrium", "loggia"], "busy": active is not None,
+                         "active_task": active, "auth": "clé API",
+                         "push_possible": self.push_possible}
         if path == "/tasks" and method == "POST":
             req = _json.loads(body or b"{}")
             alias = str(req.get("repo", "")).rsplit("/", 1)[-1].removesuffix(".git").lower()
@@ -470,6 +484,15 @@ class FakeWorker:
                 return 200, task
             if parts[2] == "diff":
                 return 200, b"diff --git a/x b/x\n+correctif"
+            if parts[2] == "log":
+                after = 0
+                for pair in query.split("&"):
+                    if pair.startswith("after=") and pair[6:].isdigit():
+                        after = int(pair[6:])
+                lines = self.logs.get(parts[1], [])
+                start = min(max(after, 0), len(lines))
+                return 200, {"lines": lines[start:], "next": len(lines),
+                             "status": task["status"]}
             if parts[2] == "announced" and method == "POST":
                 task["announced"] = True
                 return 200, {"ok": True}

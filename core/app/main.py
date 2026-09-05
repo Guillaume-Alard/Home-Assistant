@@ -2,11 +2,18 @@
 
 Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
 
-  Client → serveur (JSON) : chat, audio_start, audio_end, audio_cancel, cancel, ping
+  Client → serveur (JSON) : chat, audio_start, audio_end, audio_cancel, cancel,
+                            proposal_decision, ping — et les requêtes de lecture
+                            des panneaux : dev_tasks, dev_log, dev_diff, sante,
+                            historique
   Client → serveur (binaire) : PCM 16 bits mono (entre audio_start et audio_end)
   Serveur → clients (JSON) : hello, status, message, assistant_start,
                              assistant_delta, assistant_end, speak_start,
-                             speak_end, notice, error, pong
+                             speak_end, notice, error, alert, ha_status,
+                             activity, proposal_new, proposal_update,
+                             dev_status, pong — et les réponses de panneaux
+                             (dev_tasks, dev_log, dev_diff, sante, historique,
+                             au seul client demandeur)
   Serveur → client d'origine (binaire) : PCM de la voix de Sentinel
 
 Le fil de conversation est unique et partagé : chaque événement de conversation
@@ -36,7 +43,7 @@ from .brain.llm import Brain, LLMUnavailable
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.toolbox import Toolbox
 from .config import Settings, find_ui_dir
-from .devwork import DevWatcher, WorkerClient
+from .devwork import DevWatcher, WorkerClient, WorkerError
 from .ha.alerts import AlertEngine, load_rules
 from .ha.client import HAClient
 from .ha.protocols import ProtocolBook
@@ -246,9 +253,19 @@ class Sentinel:
     def start_dev_watcher(self) -> None:
         if self._worker is None:
             return
-        watcher = DevWatcher(self._worker, self.engine, self.announce)
+        watcher = DevWatcher(
+            self._worker, self.engine, self.announce,
+            on_running_change=self._on_dev_running,
+        )
         self._devwatch_task = asyncio.create_task(watcher.run())
         log.info("Veilleur des tâches de développement actif (%s)", self.settings.worker_url)
+
+    async def _on_dev_running(self, running: dict | None) -> None:
+        """Pastille « atelier au travail » de l'UI, mise à jour par le veilleur."""
+        payload: dict = {"type": "dev_status", "running": None}
+        if running:
+            payload["running"] = {"id": running.get("id"), "repo": running.get("repo")}
+        await self.hub.broadcast(payload)
 
     async def stop_background(self) -> None:
         for task in (self._report_task, self._devwatch_task):
@@ -555,6 +572,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "history": await sentinel.store.recent_messages(50),
             "ha_connected": bool(sentinel.ha and sentinel.ha.connected),
             "ha_configured": sentinel.ha is not None,
+            "dev_configured": sentinel._worker is not None,
             "proposals": sorted(pending + deferred, key=lambda p: p["num"]),
             "protocols": [
                 {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
@@ -652,8 +670,106 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
         _, message = await sentinel.engine.decide(num, decision, via="ui")
         await sentinel.hub.send(client, {"type": "notice", "text": message})
 
+    elif mtype == "dev_tasks":
+        await _reply_dev_tasks(sentinel, client)
+
+    elif mtype == "dev_log":
+        await _reply_dev_log(sentinel, client, msg)
+
+    elif mtype == "dev_diff":
+        await _reply_dev_diff(sentinel, client, msg)
+
+    elif mtype == "sante":
+        await _reply_sante(sentinel, client)
+
+    elif mtype == "historique":
+        await _reply_historique(sentinel, client)
+
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
+
+
+# ── Requêtes de lecture des panneaux (réponse au seul client demandeur) ──
+
+_WORKER_ABSENT = "L'atelier de développement n'est pas configuré (WORKER_URL)."
+
+
+async def _reply_dev_tasks(sentinel: Sentinel, client: Client) -> None:
+    if sentinel._worker is None:
+        await sentinel.hub.send(client, {"type": "dev_tasks", "error": _WORKER_ABSENT})
+        return
+    try:
+        tasks = await sentinel._worker.list_tasks()
+    except WorkerError as exc:
+        await sentinel.hub.send(client, {"type": "dev_tasks", "error": str(exc)})
+        return
+    health = await sentinel._worker.health() or {}
+    await sentinel.hub.send(client, {
+        "type": "dev_tasks",
+        "tasks": tasks,
+        "atelier": {
+            "auth": health.get("auth"),
+            "push_possible": bool(health.get("push_possible")),
+            "repos": health.get("repos") or [],
+            "active_task": health.get("active_task"),
+        },
+    })
+
+
+async def _reply_dev_log(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    task_id = str(msg.get("id") or "")
+    if sentinel._worker is None or not task_id:
+        return
+    try:
+        after = max(0, int(msg.get("after") or 0))
+    except (TypeError, ValueError):
+        after = 0
+    try:
+        data = await sentinel._worker.get_log(task_id, after)
+    except WorkerError as exc:
+        await sentinel.hub.send(
+            client, {"type": "dev_log", "id": task_id, "error": str(exc)}
+        )
+        return
+    await sentinel.hub.send(client, {"type": "dev_log", "id": task_id, **data})
+
+
+async def _reply_dev_diff(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    task_id = str(msg.get("id") or "")
+    if sentinel._worker is None or not task_id:
+        return
+    try:
+        diff = await sentinel._worker.get_diff(task_id)
+    except WorkerError as exc:
+        await sentinel.hub.send(
+            client, {"type": "dev_diff", "id": task_id, "error": str(exc)}
+        )
+        return
+    await sentinel.hub.send(client, {"type": "dev_diff", "id": task_id, "diff": diff})
+
+
+async def _reply_sante(sentinel: Sentinel, client: Client) -> None:
+    try:
+        snap = await sentinel.health.snapshot()
+    except Exception:
+        log.exception("Instantané santé impossible")
+        await sentinel.hub.send(
+            client,
+            {"type": "sante", "error": "Impossible de collecter l'état des systèmes."},
+        )
+        return
+    await sentinel.hub.send(client, {"type": "sante", "data": snap})
+
+
+async def _reply_historique(sentinel: Sentinel, client: Client) -> None:
+    journal = await sentinel.store.list_journal(80)
+    proposals = [
+        p for p in await sentinel.store.list_proposals(limit=60)
+        if p["status"] not in ("pending", "deferred")
+    ]
+    await sentinel.hub.send(
+        client, {"type": "historique", "journal": journal, "proposals": proposals[:40]}
+    )
 
 
 # L'UI statique en dernier : les routes déclarées avant restent prioritaires.

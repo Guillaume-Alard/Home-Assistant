@@ -17,7 +17,7 @@ RUN apt-get update \
 # tourner en root : on utilise l'utilisateur `node` (uid 1000) de l'image.
 RUN mkdir -p /workspace /opt/worker && chown -R node:node /workspace /opt/worker
 
-COPY worker/server.py /opt/worker/server.py
+COPY worker/server.py worker/streamlog.py /opt/worker/
 
 USER node
 WORKDIR /opt/worker

@@ -56,6 +56,12 @@ class WorkerClient:
     async def get_diff(self, task_id: str) -> str:
         return (await self._request("GET", f"/tasks/{task_id}/diff")).text
 
+    async def get_log(self, task_id: str, after: int = 0) -> dict:
+        """Journal en direct d'une tâche (lecture incrémentale : after = `next` reçu)."""
+        return (await self._request(
+            "GET", f"/tasks/{task_id}/log", params={"after": after}
+        )).json()
+
     async def mark_announced(self, task_id: str) -> None:
         await self._request("POST", f"/tasks/{task_id}/announced")
 

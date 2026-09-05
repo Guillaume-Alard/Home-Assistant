@@ -26,6 +26,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from streamlog import translate
+
 logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s worker: %(message)s")
 log = logging.getLogger("worker")
 
@@ -35,6 +37,7 @@ TASK_TIMEOUT = int(os.environ.get("DEV_TASK_TIMEOUT", "1800"))
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 DIFF_MAX_BYTES = 500_000
 KEEP_TASKS = 30
+LOG_MAX_LINES = 1000  # journal en direct par tâche (borné en mémoire)
 
 _SECRETS = [s for s in (
     GITHUB_TOKEN,
@@ -71,6 +74,23 @@ _tasks: dict[str, dict] = {}
 _busy_lock = asyncio.Lock()
 _active_task_id: str | None = None       # posé de façon SYNCHRONE à l'acceptation
 _background: set[asyncio.Task] = set()   # références fortes (sinon GC possible)
+
+# Journal en direct par tâche — en mémoire seulement (perdu au redémarrage,
+# comme la tâche en cours elle-même) : {"dropped": n, "lines": [{"t","line"}]}.
+# `dropped` garde des index absolus stables pour la lecture incrémentale (?after=).
+_task_logs: dict[str, dict] = {}
+
+
+def _append_log(task_id: str, *lines: str) -> None:
+    buf = _task_logs.setdefault(task_id, {"dropped": 0, "lines": []})
+    for line in lines:
+        if not line:
+            continue
+        buf["lines"].append({"t": time.strftime("%H:%M:%S"), "line": _scrub(line)[:400]})
+    extra = len(buf["lines"]) - LOG_MAX_LINES
+    if extra > 0:
+        del buf["lines"][:extra]
+        buf["dropped"] += extra
 
 
 def _save() -> None:
@@ -141,6 +161,76 @@ async def _run_cmd(
     return text
 
 
+async def _run_claude_live(repo_dir: Path, task_id: str, prompt: str, env: dict) -> str:
+    """Lance `claude` en mode streaming : chaque événement (outil utilisé, texte,
+    résultat) alimente le journal en direct de la tâche. Renvoie le résumé final.
+
+    Mêmes précautions que `_run_cmd(isolate_env=True)` : environnement STRICTEMENT
+    minimal (jamais GITHUB_TOKEN), groupe de processus dédié tué en entier au
+    timeout, secrets purgés de tout ce qui est journalisé.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "claude", "-p", prompt,
+        "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
+        cwd=str(repo_dir),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env={"PATH": os.environ.get("PATH", ""), **env},
+        start_new_session=True,
+        limit=8 * 1024 * 1024,  # une ligne stream-json peut être énorme (résultats d'outils)
+    )
+    state = {"summary": "", "tail": []}
+
+    def _keep_tail(text: str) -> None:
+        state["tail"].append(text.strip()[-500:])
+        del state["tail"][:-20]
+
+    async def _read_stdout() -> None:
+        while True:
+            try:
+                raw = await proc.stdout.readline()
+            except ValueError:  # ligne au-delà de la limite : on la saute
+                _append_log(task_id, "⚠ ligne de sortie trop longue — ignorée.")
+                continue
+            if not raw:
+                return
+            text = _scrub(raw.decode("utf-8", "replace"))
+            _keep_tail(text)
+            lines, summary = translate(text)
+            if lines:
+                _append_log(task_id, *lines)
+            if summary:
+                state["summary"] = summary
+
+    async def _read_stderr() -> None:
+        while True:
+            try:
+                raw = await proc.stderr.readline()
+            except ValueError:
+                continue
+            if not raw:
+                return
+            text = _scrub(raw.decode("utf-8", "replace")).strip()
+            if text:
+                _keep_tail(text)
+                _append_log(task_id, "⚠ " + text[:300])
+
+    try:
+        async with asyncio.timeout(TASK_TIMEOUT):
+            await asyncio.gather(_read_stdout(), _read_stderr())
+            await proc.wait()
+    except TimeoutError:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        _append_log(task_id, f"⏱ Délai maximal dépassé ({TASK_TIMEOUT} s) — tâche interrompue.")
+        raise RuntimeError("Commande trop longue : claude") from None
+    if proc.returncode != 0:
+        raise RuntimeError(f"claude a échoué : {' '.join(state['tail'])[-600:]}")
+    return state["summary"] or " ".join(state["tail"])[-2000:]
+
+
 def _task_public(task: dict, with_summary: bool = True) -> dict:
     fields = ["id", "repo", "instruction", "status", "branch", "files_changed",
               "created_at", "finished_at", "announced", "pushed"]
@@ -165,6 +255,7 @@ async def health() -> dict:
         "status": "ok",
         "repos": sorted(REPOS),
         "busy": _active_task_id is not None,
+        "active_task": _active_task_id,
         "auth": auth,
         "push_possible": bool(GITHUB_TOKEN),
     }
@@ -206,6 +297,19 @@ async def get_task(task_id: str) -> dict:
     if task is None:
         raise HTTPException(404, "Tâche inconnue.")
     return _task_public(task)
+
+
+@app.get("/tasks/{task_id}/log")
+async def get_log(task_id: str, after: int = 0) -> dict:
+    """Journal en direct, lecture incrémentale : `after` = index absolu déjà lu
+    (la valeur `next` de la réponse précédente). Vide après un redémarrage."""
+    task = _tasks.get(task_id)
+    if task is None:
+        raise HTTPException(404, "Tâche inconnue.")
+    buf = _task_logs.get(task_id) or {"dropped": 0, "lines": []}
+    total = buf["dropped"] + len(buf["lines"])
+    start = min(max(after - buf["dropped"], 0), len(buf["lines"]))
+    return {"lines": buf["lines"][start:], "next": total, "status": task["status"]}
 
 
 @app.get("/tasks/{task_id}/diff", response_class=PlainTextResponse)
@@ -268,10 +372,12 @@ async def _run_task(task_id: str) -> None:
             _prune_old_tasks()
             task_dir.mkdir(parents=True, exist_ok=True)
             log.info("Tâche %s : clone de %s", task_id, task["url"])
+            _append_log(task_id, f"Clone de {task['url']}…")
             await _run_cmd(task_dir, "git", "clone", "--depth", "50", task["url"], "repo",
                            timeout=300)
             base = (await _run_cmd(repo_dir, "git", "rev-parse", "HEAD")).strip()
             await _run_cmd(repo_dir, "git", "checkout", "-b", task["branch"])
+            _append_log(task_id, f"Dépôt cloné, branche {task['branch']} créée.")
 
             # HOME dédié : configuration git/claude isolée par tâche
             env = {"HOME": str(task_dir)}
@@ -295,17 +401,13 @@ async def _run_task(task_id: str) -> None:
                 "un court résumé en français de ce que tu as fait et pourquoi."
             )
             log.info("Tâche %s : lancement de Claude Code", task_id)
-            output = await _run_cmd(
-                repo_dir, "claude", "-p", prompt,
-                "--output-format", "json", "--dangerously-skip-permissions",
-                timeout=TASK_TIMEOUT, env=claude_env, isolate_env=True,
-            )
-            summary = _claude_summary(output)
+            summary = await _run_claude_live(repo_dir, task_id, prompt, claude_env)
 
             # Commit de tout ce qui a changé (Claude committe parfois lui-même, pas toujours)
             await _run_cmd(repo_dir, "git", "add", "-A")
             status = await _run_cmd(repo_dir, "git", "status", "--porcelain")
             if status.strip():
+                _append_log(task_id, "Commit des modifications…")
                 title = task["instruction"].splitlines()[0][:70]
                 await _run_cmd(repo_dir, "git", "commit", "-m", f"Sentinel : {title}", env=env)
 
@@ -324,26 +426,17 @@ async def _run_task(task_id: str) -> None:
             if not files:
                 task["summary"] += "\n(Aucun fichier modifié.)"
             task["status"] = "done"
+            _append_log(task_id, f"✔ Tâche terminée — {len(files)} fichier(s) modifié(s).")
             log.info("Tâche %s : terminée, %d fichier(s) modifié(s)", task_id, len(files))
         except Exception as exc:
             log.exception("Tâche %s en échec", task_id)
             task["status"] = "failed"
             task["error"] = _scrub(str(exc))[:1500]
+            _append_log(task_id, f"✖ Échec : {task['error'][:300]}")
         finally:
             task["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             _active_task_id = None
             _save()
-
-
-def _claude_summary(output: str) -> str:
-    """Sortie `--output-format json` : on veut le champ result, sinon la fin brute."""
-    try:
-        data = json.loads(output)
-        if isinstance(data, dict) and data.get("result"):
-            return str(data["result"])
-    except ValueError:
-        pass
-    return output[-2000:]
 
 
 def _prune_old_tasks() -> None:
@@ -355,3 +448,4 @@ def _prune_old_tasks() -> None:
     for task in done[:-KEEP_TASKS] if len(done) > KEEP_TASKS else []:
         shutil.rmtree(WORKSPACE / task["id"], ignore_errors=True)
         _tasks.pop(task["id"], None)
+        _task_logs.pop(task["id"], None)
