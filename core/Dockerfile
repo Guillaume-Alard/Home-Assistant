@@ -9,6 +9,11 @@ RUN apt-get update \
 
 WORKDIR /opt/sentinel
 
+# pip tourne en root dans l'image en construction : c'est la norme Docker —
+# on coupe l'avertissement (et la vérification de version) non pertinents ici
+ENV PIP_ROOT_USER_ACTION=ignore \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 COPY core/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
