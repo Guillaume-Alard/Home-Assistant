@@ -379,6 +379,7 @@ class FakeWorker:
         self.port: int | None = None
         self.tasks: dict[str, dict] = {}
         self.pushes: list[str] = []
+        self.push_possible = True
         self._counter = 0
         self._loop = None
         self._thread = None
@@ -444,7 +445,7 @@ class FakeWorker:
     def _route(self, method: str, path: str, body: bytes):
         if path == "/health":
             return 200, {"status": "ok", "repos": ["atrium", "loggia"], "busy": False,
-                         "auth": "clé API", "push_possible": True}
+                         "auth": "clé API", "push_possible": self.push_possible}
         if path == "/tasks" and method == "POST":
             req = _json.loads(body or b"{}")
             alias = str(req.get("repo", "")).rsplit("/", 1)[-1].removesuffix(".git").lower()

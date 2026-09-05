@@ -21,7 +21,9 @@ class WorkerClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def _request(self, method: str, path: str, **kwargs):
+    async def _request(self, method: str, path: str, timeout: float | None = None, **kwargs):
+        if timeout is not None:
+            kwargs["timeout"] = timeout
         try:
             resp = await self._client.request(method, path, **kwargs)
         except httpx.HTTPError as exc:
@@ -65,4 +67,6 @@ class WorkerClient:
         )).json()
 
     async def push_branch(self, task_id: str) -> dict:
-        return (await self._request("POST", f"/tasks/{task_id}/push")).json()
+        # Le push git côté worker peut prendre jusqu'à ~2 min : délai adapté,
+        # sinon un push lent serait marqué en échec alors qu'il a réussi.
+        return (await self._request("POST", f"/tasks/{task_id}/push", timeout=180.0)).json()

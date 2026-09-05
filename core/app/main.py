@@ -172,6 +172,12 @@ class Sentinel:
         self.brain = Brain(settings, toolbox, on_activity=self._on_activity)
         self._report_task: asyncio.Task | None = None
         self._devwatch_task: asyncio.Task | None = None
+        self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
 
     # ── Ponts vers l'UI ──────────────────────────────────────────────────
 
@@ -197,7 +203,7 @@ class Sentinel:
         await self.hub.broadcast({"type": "alert", "level": severity, "text": text})
         await self.hub.broadcast({"type": "message", "message": message})
         if speak:
-            asyncio.create_task(self._speak_announcement(text, severity))
+            self._spawn(self._speak_announcement(text, severity))
 
     # ── Rapport quotidien ────────────────────────────────────────────────
 

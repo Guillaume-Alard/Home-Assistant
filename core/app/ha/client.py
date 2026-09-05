@@ -59,6 +59,7 @@ class HAClient:
         self._closing = False
         self._msg_id = 0
         self._pending: dict[int, asyncio.Future] = {}
+        self._event_tasks: set[asyncio.Task] = set()  # références fortes anti-GC
 
         self.connected = False
         self.ha_version: str | None = None
@@ -188,7 +189,9 @@ class HAClient:
                     else:
                         self._states[entity_id] = new_state
             if self._on_event:
-                asyncio.get_running_loop().create_task(self._safe_event(event))
+                task = asyncio.get_running_loop().create_task(self._safe_event(event))
+                self._event_tasks.add(task)
+                task.add_done_callback(self._event_tasks.discard)
 
     async def _safe_event(self, event: dict) -> None:
         try:

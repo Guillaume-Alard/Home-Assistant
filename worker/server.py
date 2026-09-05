@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import time
 import uuid
 from pathlib import Path
@@ -68,6 +69,8 @@ app = FastAPI(title="sentinel-worker")
 
 _tasks: dict[str, dict] = {}
 _busy_lock = asyncio.Lock()
+_active_task_id: str | None = None       # posé de façon SYNCHRONE à l'acceptation
+_background: set[asyncio.Task] = set()   # références fortes (sinon GC possible)
 
 
 def _save() -> None:
@@ -110,16 +113,27 @@ def _resolve_repo(ref: str) -> tuple[str, str]:
     )
 
 
-async def _run_cmd(cwd: Path, *args: str, timeout: int = 120, env: dict | None = None) -> str:
+async def _run_cmd(
+    cwd: Path, *args: str, timeout: int = 120,
+    env: dict | None = None, isolate_env: bool = False,
+) -> str:
+    """`isolate_env=True` : l'environnement du processus est UNIQUEMENT `env`
+    (+PATH) — utilisé pour `claude`, qui ne doit jamais voir GITHUB_TOKEN."""
+    base = {"PATH": os.environ.get("PATH", "")} if isolate_env else dict(os.environ)
     proc = await asyncio.create_subprocess_exec(
         *args, cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ, **(env or {})},
+        env={**base, **(env or {})},
+        start_new_session=True,  # groupe de processus dédié → kill complet
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     except TimeoutError:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)  # tue aussi les sous-processus
+        except ProcessLookupError:
+            pass
+        await proc.wait()  # évite le zombie
         raise RuntimeError(f"Commande trop longue : {args[0]}")
     text = _scrub(out.decode("utf-8", "replace"))
     if proc.returncode != 0:
@@ -150,7 +164,7 @@ async def health() -> dict:
     return {
         "status": "ok",
         "repos": sorted(REPOS),
-        "busy": _busy_lock.locked(),
+        "busy": _active_task_id is not None,
         "auth": auth,
         "push_possible": bool(GITHUB_TOKEN),
     }
@@ -158,12 +172,14 @@ async def health() -> dict:
 
 @app.post("/tasks")
 async def create_task(req: TaskRequest) -> dict:
+    global _active_task_id
     if not req.instruction.strip():
         raise HTTPException(422, "Instruction vide.")
-    if _busy_lock.locked():
+    if _active_task_id is not None:
         raise HTTPException(409, "Une tâche est déjà en cours — une seule à la fois.")
     alias, url = _resolve_repo(req.repo)
     task_id = uuid.uuid4().hex[:8]
+    _active_task_id = task_id  # posé AVANT tout await : pas de course entre deux POST
     _tasks[task_id] = {
         "id": task_id, "repo": alias, "url": url,
         "instruction": req.instruction.strip()[:4000],
@@ -172,7 +188,9 @@ async def create_task(req: TaskRequest) -> dict:
         "announced": False, "pushed": False,
     }
     _save()
-    asyncio.get_running_loop().create_task(_run_task(task_id))
+    task = asyncio.get_running_loop().create_task(_run_task(task_id))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
     return _task_public(_tasks[task_id])
 
 
@@ -239,6 +257,7 @@ async def push_task(task_id: str) -> dict:
 # ── Exécution d'une tâche ────────────────────────────────────────────────
 
 async def _run_task(task_id: str) -> None:
+    global _active_task_id
     task = _tasks[task_id]
     async with _busy_lock:
         task["status"] = "running"
@@ -260,6 +279,13 @@ async def _run_task(task_id: str) -> None:
             await _run_cmd(repo_dir, "git", "config", "--global", "user.email",
                            "sentinel@nebula.local", env=env)
 
+            # Environnement MINIMAL pour claude : jamais GITHUB_TOKEN (un contenu
+            # piégé dans un dépôt ne doit pas pouvoir pousser ni exfiltrer le PAT)
+            claude_env = {"HOME": str(task_dir), "LANG": "C.UTF-8"}
+            for key in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
+                if os.environ.get(key, "").strip():
+                    claude_env[key] = os.environ[key]
+
             prompt = (
                 f"Tu travailles dans un clone jetable du dépôt « {task['repo']} », "
                 f"sur la branche {task['branch']}.\n"
@@ -272,7 +298,7 @@ async def _run_task(task_id: str) -> None:
             output = await _run_cmd(
                 repo_dir, "claude", "-p", prompt,
                 "--output-format", "json", "--dangerously-skip-permissions",
-                timeout=TASK_TIMEOUT, env=env,
+                timeout=TASK_TIMEOUT, env=claude_env, isolate_env=True,
             )
             summary = _claude_summary(output)
 
@@ -283,9 +309,13 @@ async def _run_task(task_id: str) -> None:
                 title = task["instruction"].splitlines()[0][:70]
                 await _run_cmd(repo_dir, "git", "commit", "-m", f"Sentinel : {title}", env=env)
 
-            files = (await _run_cmd(
-                repo_dir, "git", "diff", "--name-only", f"{base}..HEAD"
-            )).split()
+            files = [
+                line.strip()
+                for line in (await _run_cmd(
+                    repo_dir, "git", "diff", "--name-only", f"{base}..HEAD"
+                )).splitlines()
+                if line.strip()
+            ]
             diff = await _run_cmd(repo_dir, "git", "diff", f"{base}..HEAD")
             (task_dir / "diff.patch").write_text(diff[:DIFF_MAX_BYTES], encoding="utf-8")
 
@@ -301,6 +331,7 @@ async def _run_task(task_id: str) -> None:
             task["error"] = _scrub(str(exc))[:1500]
         finally:
             task["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            _active_task_id = None
             _save()
 
 

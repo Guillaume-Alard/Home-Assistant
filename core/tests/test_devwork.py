@@ -98,6 +98,17 @@ async def test_veilleur_annonce_et_propose(env):
     assert len(env.announced) == 1  # pas de double annonce
 
 
+async def test_veilleur_sans_github_token(env):
+    env.fake.push_possible = False
+    task = await env.client.start_task("loggia", "x")
+    env.fake.finish_task(task["id"], ["a.yaml"])
+    await env.watcher._tick()
+
+    # Annonce avec la marche à suivre, mais AUCUNE proposition morte-née
+    assert "GITHUB_TOKEN" in env.announced[0][0]
+    assert await env.store.list_proposals("pending") == []
+
+
 async def test_veilleur_echec_sans_proposition(env):
     task = await env.client.start_task("atrium", "x")
     env.fake.fail_task(task["id"], "npm introuvable")

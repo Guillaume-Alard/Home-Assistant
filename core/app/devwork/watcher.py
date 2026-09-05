@@ -50,8 +50,13 @@ class DevWatcher:
             if summary.get("announced") or summary.get("status") not in ("done", "failed"):
                 continue
             task = await self._worker.get_task(summary["id"])
-            await self._handle_finished(task)
+            # Marquer AVANT de traiter : au pire une annonce perdue (loggée),
+            # jamais une proposition de push en double.
             await self._worker.mark_announced(task["id"])
+            try:
+                await self._handle_finished(task)
+            except Exception:
+                log.exception("Annonce de la tâche %s impossible", task["id"])
 
     async def _handle_finished(self, task: dict) -> None:
         task_id, repo = task["id"], task["repo"]
@@ -80,6 +85,16 @@ class DevWatcher:
             f"Tâche de développement {task_id} sur « {repo} » terminée : "
             f"{len(files)} fichier(s) modifié(s) sur la branche {task['branch']}. {resume}"
         )
+        health = await self._worker.health() or {}
+        if not health.get("push_possible"):
+            # Sans GITHUB_TOKEN, une proposition de push échouerait à coup sûr
+            text += (
+                " Le diff est consultable (« montre-moi le diff de la tâche "
+                f"{task_id} ») ; ajoute GITHUB_TOKEN dans .env pour que je puisse "
+                "proposer le push."
+            )
+            await self._announce(text, "info", speak=False)
+            return
         if self._engine is not None:
             proposal, message = await self._engine.propose(
                 title=f"Pousser la branche {task['branch']} de {repo} sur GitHub",

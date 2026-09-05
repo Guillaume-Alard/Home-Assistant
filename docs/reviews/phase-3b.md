@@ -37,6 +37,29 @@
 5. **Parsing de `--output-format json`** : champ `result` avec repli sur la
    sortie brute — fragile face aux évolutions du CLI ?
 
+## Addendum — revue interne du 01/09 (8 constats, tous corrigés)
+
+1. **Sécurité (le plus grave)** : `claude` héritait de tout l'environnement,
+   dont `GITHUB_TOKEN` — un contenu piégé dans un dépôt pouvait pousser ou
+   exfiltrer le PAT sans approbation → environnement MINIMAL pour le CLI
+   (HOME, PATH, jeton Anthropic uniquement), le PAT ne sert qu'au /push.
+2. Veilleur : un échec entre l'annonce et le marquage dupliquait la proposition
+   de push → marquage AVANT traitement (au pire une annonce perdue, loggée).
+3. Tâches asyncio sans référence forte (GC possible → verrou bloqué à vie) →
+   ensembles de références côté worker ET côté core (annonces, événements HA).
+4. Course sur « une tâche à la fois » (deux POST rapides) → drapeau posé de
+   façon synchrone avant tout await.
+5. Timeout client (30 s) < budget du push git (120 s) → un push lent était
+   marqué en échec alors qu'il avait réussi → délai dédié 180 s.
+6. Sans GITHub_TOKEN, le veilleur créait une proposition morte-née → annonce
+   avec la marche à suivre, pas de proposition.
+7. Noms de fichiers à espaces cassés par `.split()` → `.splitlines()`.
+8. Timeout : kill du seul parent (zombies + sous-processus survivants) →
+   groupe de processus dédié tué en entier + `wait()`.
+
+102 tests après correctifs. Les points de doute restent ouverts pour un second
+avis (le n°1 est en partie traité par l'isolation d'environnement).
+
 ## Comment tester
 
 ```bash
