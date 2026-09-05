@@ -60,7 +60,7 @@ async def test_specs_stables_et_completes(box):
     names = [s["name"] for s in specs]
     assert names == [
         "etat_maison", "details_entite", "action_domotique", "lancer_protocole",
-        "creer_proposition", "lister_propositions", "liste_pieces",
+        "creer_proposition", "lister_propositions", "liste_pieces", "chercher_entites",
         "sante_systemes", "logs_conteneur", "audit_systemes", "redemarrer_conteneur",
     ]
     assert all(s["description"] for s in specs)
@@ -131,6 +131,30 @@ async def test_lancer_protocole_sensible_transmet_la_confirmation(box):
 async def test_outil_inconnu(box):
     content, is_error = await box.toolbox.run("hacker_le_pentagone", {}, utterance="", source="text")
     assert is_error
+
+
+async def test_chercher_entites_meme_hors_piece(box):
+    # Le capteur de porte n'a AUCUNE pièce assignée : la recherche le trouve quand même
+    content, is_error = await _run(box, "chercher_entites", {"recherche": "porte"})
+    assert not is_error
+    data = json.loads(content)
+    found = next(e for e in data if e["entity_id"] == "binary_sensor.capteur_porte_entree")
+    assert found["piece"] is None and found["device_class"] == "door"
+
+    # Recherche par device_class et filtre de domaine
+    content, _ = await _run(box, "chercher_entites", {"recherche": "door", "domaine": "binary_sensor"})
+    assert "capteur_porte_entree" in content
+
+    content, is_error = await _run(box, "chercher_entites", {"recherche": "licorne"})
+    assert not is_error and "Aucune entité" in content
+
+
+async def test_apercu_montre_les_portes(box):
+    content, is_error = await _run(box, "etat_maison", {})
+    assert not is_error
+    data = json.loads(content)
+    hors_piece = data.get("(hors pièce)") or {}
+    assert any("fermé" in v for v in (hors_piece.get("notable") or {}).values())
 
 
 async def test_sante_et_logs(box):

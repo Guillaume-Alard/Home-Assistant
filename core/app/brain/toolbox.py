@@ -37,6 +37,7 @@ ACTIVITY_LABELS = {
     "lancer_protocole": "lance un protocole…",
     "creer_proposition": "rédige une proposition…",
     "lister_propositions": "relit ses propositions…",
+    "chercher_entites": "consulte Nova…",
     "sante_systemes": "ausculte les systèmes…",
     "logs_conteneur": "lit des journaux…",
     "audit_systemes": "audite les systèmes…",
@@ -176,6 +177,23 @@ class Toolbox:
                 "input_schema": {"type": "object", "properties": {}},
             },
             {
+                "name": "chercher_entites",
+                "description": (
+                    "Recherche des entités Nova par mots-clés (nom affiché, identifiant ou "
+                    "device_class, insensible aux accents), Y COMPRIS les entités sans pièce "
+                    "assignée. À utiliser quand etat_maison ne montre pas un capteur ou un "
+                    "appareil qui devrait exister — mots-clés courts (ex. « porte »)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "recherche": {"type": "string"},
+                        "domaine": {"type": "string", "description": "Filtre optionnel : binary_sensor, sensor, light…"},
+                    },
+                    "required": ["recherche"],
+                },
+            },
+            {
                 "name": "sante_systemes",
                 "description": (
                     "Instantané de santé des systèmes : Nova (entités indisponibles, mises à "
@@ -280,6 +298,11 @@ class Toolbox:
                 bucket["volets"].append(value)
             elif domain in ("climate", "lock", "alarm_control_panel", "media_player", "person"):
                 bucket["notable"][entity_id] = self._state_line(entity_id)
+            elif domain == "binary_sensor" and (state.get("attributes") or {}).get(
+                "device_class"
+            ) in ("door", "window", "opening", "garage_door"):
+                name = (state.get("attributes") or {}).get("friendly_name") or entity_id
+                bucket["notable"][entity_id] = f"{name} : {'ouvert' if value == 'on' else 'fermé'}"
             elif domain == "sensor" and (state.get("attributes") or {}).get("device_class") == "temperature":
                 bucket["notable"][entity_id] = f"{value} °C"
         return _compact(by_area)[:6000]
@@ -338,6 +361,41 @@ class Toolbox:
             }
             for p in items
         ]), False
+
+    async def _tool_chercher_entites(self, args, _utt, _src):
+        if self._ha is None or not self._ha.connected:
+            return self._NOVA_ABSENTE, True
+        from ..norm import normalize
+
+        query_words = normalize(str(args.get("recherche") or "")).split()
+        if not query_words:
+            return "Donne au moins un mot-clé de recherche.", True
+        domaine = str(args.get("domaine") or "").strip() or None
+
+        results = []
+        for entity_id, state in sorted(self._ha.states_snapshot().items()):
+            domain = entity_id.split(".", 1)[0]
+            if domaine and domain != domaine:
+                continue
+            attrs = state.get("attributes") or {}
+            haystack = normalize(
+                f"{entity_id} {attrs.get('friendly_name') or ''} {attrs.get('device_class') or ''}"
+            )
+            if not all(word in haystack for word in query_words):
+                continue
+            area_id = self._ha.entity_area(entity_id)
+            results.append({
+                "entity_id": entity_id,
+                "nom": attrs.get("friendly_name") or entity_id,
+                "etat": state.get("state"),
+                "device_class": attrs.get("device_class"),
+                "piece": self._ha.area_name(area_id) if area_id else None,
+            })
+            if len(results) >= 25:
+                break
+        if not results:
+            return f"Aucune entité ne correspond à « {' '.join(query_words)} ».", False
+        return _compact(results), False
 
     async def _tool_sante_systemes(self, args, _utt, _src):
         if self._health is None:

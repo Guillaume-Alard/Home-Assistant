@@ -136,6 +136,11 @@ def default_states() -> dict[str, dict]:
         "input_boolean.test_sentinel": {"entity_id": "input_boolean.test_sentinel",
                                         "state": "off",
                                         "attributes": {"friendly_name": "Test Sentinel"}},
+        # Volontairement SANS pièce assignée (cas réel : capteur oublié hors zone)
+        "binary_sensor.capteur_porte_entree": {"entity_id": "binary_sensor.capteur_porte_entree",
+                                               "state": "off",
+                                               "attributes": {"friendly_name": "Capteur porte d'entrée",
+                                                              "device_class": "door"}},
     }
 
 
