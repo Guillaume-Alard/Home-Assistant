@@ -12,8 +12,9 @@ conversation, synchronisé en temps réel entre tous les appareils connectés.
 |---|---|---|
 | 0 | Plan d'architecture ([docs/PLAN.md](docs/PLAN.md)) | ✅ validée |
 | 1 | Squelette voix ↔ LLM : je parle/j'écris dans le navigateur, Sentinel répond en voix et en texte | ✅ livrée |
-| **2** | **Domotique : Nova (Home Assistant), intents locaux, protocoles (Forteresse…), moteur « propose puis approuve », alertes proactives** | ✅ **livrée** |
-| 3A/3B | Copilote technique : santé des systèmes, audits, délégation de dev, maintenance Loggia/Atrium | ⏳ |
+| 2 | Domotique : Nova (Home Assistant), intents locaux, protocoles (Forteresse…), moteur « propose puis approuve », alertes proactives | ✅ livrée |
+| **3A** | **Copilote qui observe : santé Nebula/Docker/Nova/Atrium, diagnostics, audits, rapport quotidien** | ✅ **livrée** |
+| 3B | Copilote qui agit : délégation de dev (Claude Code), maintenance Loggia/Atrium | ⏳ |
 | 4 | UI/UX finale | ⏳ |
 | 5 | Mot d'éveil & satellites (ESP32, app HA via Assist) | ⏳ |
 
@@ -46,8 +47,21 @@ conversation, synchronisé en temps réel entre tous les appareils connectés.
   agit sur ta demande explicite, et **propose** pour tout ce qui dépasse la liste
   blanche — il ne peut techniquement pas la contourner.
 
-Pas encore là (et c'est voulu) : surveillance des serveurs et copilote de dev
-(Phase 3), mot d'éveil (Phase 5 — la PWA fonctionne en appui-pour-parler d'ici là).
+**Surveiller et diagnostiquer (Phase 3A)**
+- 🩺 **Santé des systèmes** : « comment vont les systèmes ? » → réponse immédiate
+  sans LLM (Nova, charge/RAM de Nebula, conteneurs Docker, Atrium). Le détail passe
+  par les outils du cerveau (`sante_systemes`).
+- 🔍 **Diagnostic guidé** : « pourquoi Plex ne répond plus ? » → Sentinel consulte
+  l'état des conteneurs, lit leurs journaux (lecture seule via un proxy Docker),
+  conclut, et **propose** un redémarrage — qui n'a lieu qu'après ton approbation.
+- 🧾 **Audit à la demande** : « fais un audit des systèmes » → constats classés
+  (critique/attention/info) : conteneurs en panne ou gourmands, charge, mises à
+  jour disponibles, entités mortes, ports exposés — avec actions suggérées.
+- 🌅 **Rapport quotidien** : chaque matin (heure configurable), un point complet
+  dans le fil de conversation.
+
+Pas encore là (et c'est voulu) : le copilote de dev — Atrium, Loggia, délégation à
+Claude Code (Phase 3B) — et le mot d'éveil (Phase 5 — appui-pour-parler d'ici là).
 
 ## Prérequis
 
@@ -112,8 +126,26 @@ Pas encore là (et c'est voulu) : surveillance des serveurs et copilote de dev
 | `LOG_LEVEL` | `INFO` | Verbosité des journaux |
 | `HA_URL` | — | URL de Nova, ex. `http://192.168.1.10:8123` |
 | `HA_TOKEN` | — | Jeton longue durée Home Assistant (voir ci-dessous) |
+| `ATRIUM_URL` | — | URL d'Atrium pour le contrôle de santé (vide = non surveillé) |
+| `SENTINEL_DAILY_REPORT` | `07:30` | Heure locale du rapport quotidien (vide = désactivé) |
+| `SENTINEL_CONTAINER_MEM_MO` | `1500` | Seuil mémoire d'un conteneur signalé par l'audit |
 
 Après modification : `docker compose up -d` (et `--build` si le code a changé).
+
+## Surveillance de Nebula (Phase 3A)
+
+`docker compose up -d` démarre aussi **sentinel-dockerproxy**, un proxy vers le
+socket Docker configuré au plus strict : lecture seule (liste, stats, logs) plus
+la seule écriture « redémarrer » — pas d'exec, pas de création, pas de
+suppression, aucun port publié sur le LAN. Côté Sentinel, un redémarrage de
+conteneur n'existe que comme **proposition à approuver**, journalisée.
+
+À tester :
+- « **Comment vont les systèmes ?** » → résumé instantané (sans LLM).
+- « **Pourquoi plex ne répond plus ?** » → diagnostic outillé : état du conteneur,
+  journaux, conclusion, proposition de redémarrage dans le panneau ▤.
+- « **Fais un audit des systèmes** » → constats classés par gravité.
+- Le **rapport quotidien** apparaît dans le fil à l'heure configurée.
 
 ## Connecter Nova (Home Assistant)
 
@@ -224,6 +256,7 @@ config/              # protocoles, alertes, alias d'intents (éditables à chaud
 core/                # serveur Python (FastAPI)
   app/actions/       #   LE moteur « propose puis approuve » : registre, exécuteurs
   app/ha/            #   client WebSocket Nova, protocoles, alertes
+  app/monitors/      #   santé : Docker (proxy RO), système, Atrium, audits, rapport
   app/brain/         #   LLM (Claude + outils), intents locaux FR, texte→parole
   app/voice/         #   clients Wyoming (whisper/piper) + sessions de capture
   app/store/         #   SQLite : conversation, propositions, journal

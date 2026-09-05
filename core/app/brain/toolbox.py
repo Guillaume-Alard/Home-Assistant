@@ -14,6 +14,8 @@ import logging
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
 from ..ha.client import HAClient
 from ..ha.protocols import ProtocolBook
+from ..monitors.docker import DockerError, DockerMonitor
+from ..monitors.health import HealthService
 from ..store import Store
 
 log = logging.getLogger("sentinel.toolbox")
@@ -35,6 +37,10 @@ ACTIVITY_LABELS = {
     "lancer_protocole": "lance un protocole…",
     "creer_proposition": "rédige une proposition…",
     "lister_propositions": "relit ses propositions…",
+    "sante_systemes": "ausculte les systèmes…",
+    "logs_conteneur": "lit des journaux…",
+    "audit_systemes": "audite les systèmes…",
+    "redemarrer_conteneur": "rédige une proposition…",
 }
 
 
@@ -43,11 +49,24 @@ def _compact(data) -> str:
 
 
 class Toolbox:
-    def __init__(self, ha: HAClient, engine: ActionEngine, protocols: ProtocolBook, store: Store):
+    def __init__(
+        self,
+        ha: HAClient | None,
+        engine: ActionEngine | None,
+        protocols: ProtocolBook,
+        store: Store,
+        health: HealthService | None = None,
+        docker: DockerMonitor | None = None,
+    ):
         self._ha = ha
         self._engine = engine
         self._protocols = protocols
         self._store = store
+        self._health = health
+        self._docker = docker
+
+    _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
+    _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova/Docker non configurés)."
 
     # ── Déclarations (ordre STABLE : le cache de prompt en dépend) ───────
 
@@ -156,6 +175,54 @@ class Toolbox:
                 "description": "Liste les pièces (areas) de Nova et ce qu'elles contiennent.",
                 "input_schema": {"type": "object", "properties": {}},
             },
+            {
+                "name": "sante_systemes",
+                "description": (
+                    "Instantané de santé des systèmes : Nova (entités indisponibles, mises à "
+                    "jour), Nebula (charge, RAM, conteneurs Docker, mémoire par conteneur), "
+                    "Atrium. À consulter AVANT tout diagnostic (« pourquoi X ne répond plus ? »)."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "logs_conteneur",
+                "description": (
+                    "Lit les dernières lignes de journal d'un conteneur Docker de Nebula "
+                    "(lecture seule) — pour diagnostiquer un service en panne."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "nom": {"type": "string", "description": "Nom (ou partie du nom) du conteneur"},
+                        "lignes": {"type": "integer", "description": "Nombre de lignes (défaut 50, max 300)"},
+                    },
+                    "required": ["nom"],
+                },
+            },
+            {
+                "name": "audit_systemes",
+                "description": (
+                    "Audit de sécurité et de performance : constats classés par gravité "
+                    "(critique/attention/info) avec actions suggérées. Présente les constats à "
+                    "Guillaume et crée des propositions pour les actions qu'il souhaite."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "redemarrer_conteneur",
+                "description": (
+                    "Crée une PROPOSITION de redémarrage d'un conteneur Docker (rien ne "
+                    "s'exécute avant l'approbation de Guillaume). À utiliser après diagnostic."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "nom": {"type": "string"},
+                        "justification": {"type": "string", "description": "Pourquoi ce redémarrage"},
+                    },
+                    "required": ["nom", "justification"],
+                },
+            },
         ]
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -174,8 +241,8 @@ class Toolbox:
     # Lecture ─────────────────────────────────────────────────────────────
 
     async def _tool_etat_maison(self, args, _utt, _src):
-        if not self._ha.connected:
-            return "Nova est injoignable pour l'instant.", True
+        if self._ha is None or not self._ha.connected:
+            return self._NOVA_ABSENTE, True
         zone = str(args.get("zone") or "").strip()
         domaine = str(args.get("domaine") or "").strip() or None
         if zone:
@@ -231,6 +298,8 @@ class Toolbox:
         return f"{name} : {value}{suffix}"
 
     async def _tool_details_entite(self, args, _utt, _src):
+        if self._ha is None:
+            return self._NOVA_ABSENTE, True
         entity_id = str(args.get("entity_id") or "")
         state = self._ha.get_state(entity_id)
         if state is None:
@@ -248,8 +317,8 @@ class Toolbox:
         })[:4000], False
 
     async def _tool_liste_pieces(self, args, _utt, _src):
-        if not self._ha.connected:
-            return "Nova est injoignable pour l'instant.", True
+        if self._ha is None or not self._ha.connected:
+            return self._NOVA_ABSENTE, True
         out = {}
         for area_id, name in self._ha.areas().items():
             entities = self._ha.entities_in_area(area_id)
@@ -270,9 +339,56 @@ class Toolbox:
             for p in items
         ]), False
 
+    async def _tool_sante_systemes(self, args, _utt, _src):
+        if self._health is None:
+            return "Aucun moniteur n'est configuré.", True
+        return _compact(await self._health.snapshot())[:6000], False
+
+    async def _tool_audit_systemes(self, args, _utt, _src):
+        if self._health is None:
+            return "Aucun moniteur n'est configuré.", True
+        return _compact(await self._health.audit())[:6000], False
+
+    async def _tool_logs_conteneur(self, args, _utt, _src):
+        if self._docker is None:
+            return "La surveillance Docker n'est pas configurée (DOCKER_PROXY_URL).", True
+        nom = str(args.get("nom") or "").strip()
+        if not nom:
+            return "Précise le nom du conteneur.", True
+        try:
+            lignes = int(args.get("lignes") or 50)
+        except (TypeError, ValueError):
+            lignes = 50
+        try:
+            logs = await self._docker.logs(nom, tail=lignes)
+        except DockerError as exc:
+            return str(exc), True
+        return (logs[-4000:] or "(journal vide)"), False
+
     # Écriture (via le moteur uniquement) ─────────────────────────────────
 
+    async def _tool_redemarrer_conteneur(self, args, _utt, _src):
+        if self._engine is None:
+            return self._MOTEUR_ABSENT, True
+        nom = str(args.get("nom") or "").strip()
+        if not nom:
+            return "Précise le nom du conteneur.", True
+        proposal, message = await self._engine.propose(
+            title=f"Redémarrer le conteneur {nom}",
+            description=f"docker restart {nom} (via le proxy, arrêt propre en 10 s)",
+            justification=str(args.get("justification") or ""),
+            risk="medium",
+            rollback="Le conteneur redémarre avec sa configuration actuelle ; "
+                     "aucun changement persistant.",
+            action_id="docker.restart",
+            params={"name": nom},
+            created_by="sentinel (LLM)",
+        )
+        return message, proposal is None
+
     async def _tool_action_domotique(self, args, utterance, source):
+        if self._ha is None or self._engine is None:
+            return self._NOVA_ABSENTE, True
         operation = str(args.get("operation") or "")
         entity_ids = args.get("entity_ids") or []
         zone = str(args.get("zone") or "").strip()
@@ -311,6 +427,8 @@ class Toolbox:
         return outcome.text, not outcome.ok
 
     async def _tool_lancer_protocole(self, args, utterance, source):
+        if self._engine is None:
+            return self._MOTEUR_ABSENT, True
         nom = str(args.get("nom") or "")
         if self._protocols.get(nom) is None:
             names = ", ".join(p.display for p in self._protocols.all()) or "aucun"
@@ -322,6 +440,8 @@ class Toolbox:
         return outcome.text, outcome.status in ("refused", "failed")
 
     async def _tool_creer_proposition(self, args, _utt, _src):
+        if self._engine is None:
+            return self._MOTEUR_ABSENT, True
         action = args.get("action") or {}
         if not action.get("domain") or not action.get("service"):
             return "L'action proposée doit préciser domain et service.", True

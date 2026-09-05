@@ -1,4 +1,4 @@
-# Architecture — état courant (fin de Phase 2)
+# Architecture — état courant (fin de Phase 3A)
 
 > Document vivant : mis à jour à chaque phase. La cible globale est décrite dans
 > [PLAN.md](PLAN.md) ; ici, seulement ce qui **existe** et pourquoi.
@@ -67,6 +67,28 @@ Point de passage **unique** des écritures — PLAN §5, appliqué techniquement
   anti-rebond par (règle, entité). Déclenchement → annonce (fil + bannière +
   voix sur tous les appareils ; « critique » interrompt Sentinel) + notification
   via le moteur.
+
+## Surveillance (`core/app/monitors/`) — Phase 3A
+
+- **Docker** (`docker.py`) via `sentinel-dockerproxy` (tecnativa/docker-socket-proxy,
+  aucun port LAN) : lecture (conteneurs, stats mémoire, logs démultiplexés) ;
+  l'unique écriture, `restart_container`, est autorisée par `ALLOW_RESTARTS` côté
+  proxy et n'est appelable que par l'exécuteur `docker.restart` — enregistré
+  `direct=False`, donc **proposition obligatoire**. L'invariant statique couvre
+  aussi ce chemin (`test_invariant.py`).
+- **Système** (`system.py`) : charge et RAM de l'hôte via `/proc`. Limite assumée :
+  disques/SMART de l'array Unraid inaccessibles sans privilèges — passeront par
+  les capteurs de Nova si une intégration les expose.
+- **Nova** (dans `health.py`) : entités indisponibles (domaines « bruit » filtrés),
+  entités `update.*` actives, version HA (get_config au bootstrap du client).
+- **Atrium** (`atrium.py`) : healthcheck HTTP + latence (`ATRIUM_URL`).
+- **`HealthService`** agrège le tout pour quatre consommateurs : l'outil LLM
+  `sante_systemes`, l'intent local « comment vont les systèmes », l'**audit**
+  déterministe (constats critique/attention/info + actions suggérées) et le
+  **rapport quotidien** (planificateur asyncio, heure locale `SENTINEL_DAILY_REPORT`,
+  publié dans le fil via `announce(speak=False)`).
+- Outils LLM ajoutés : `sante_systemes`, `logs_conteneur`, `audit_systemes`
+  (lecture) ; `redemarrer_conteneur` (crée une proposition, n'exécute jamais).
 
 ## Le routeur intents → LLM (`core/app/brain/`)
 
@@ -201,11 +223,13 @@ pour des fils multiples futurs, sans migration.
 | Rechargement de `config/` | au redémarrage du conteneur (2 s) | rechargement à chaud si le besoin se confirme |
 | `for:` (durée) dans les alertes | non géré (transition immédiate uniquement) | timers si un vrai cas l'exige |
 
-## Repères pour la Phase 3A
+## Repères pour la Phase 3B
 
-- Moniteurs (`core/app/monitors/`) : Docker via socket-proxy en lecture seule
-  (nouveau service compose), Atrium healthcheck HTTP, Nova (mises à jour,
-  entités indisponibles) via le client existant.
-- Les rapports/audits produisent des **propositions** via l'`ActionEngine`
-  existant — de nouvelles actions au registre (`docker.restart`…), `direct=False`.
-- Rapport quotidien : planificateur asyncio simple dans `main.py` + `announce()`.
+- Conteneur `sentinel-worker` : CLI Claude Code headless, volume `workspace/`
+  isolé (dépôts de travail git) — jamais montés sur la prod.
+- Flux : tâche de dev → le worker produit un **diff** → proposition (nouvelle
+  action au registre, `direct=False`) → approbation → application.
+- Maintenance Loggia : prérequis, la config YAML de Nova sous git (question
+  ouverte n°8 du PLAN) ; lint + comparaison entités/états via le client Nova.
+- Le Claude Code du worker peut s'authentifier avec l'abonnement Max de
+  Guillaume (couvert), l'API ne payant que la conversation.

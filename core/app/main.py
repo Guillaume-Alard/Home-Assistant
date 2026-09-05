@@ -22,6 +22,8 @@ import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +39,7 @@ from .config import Settings, find_ui_dir
 from .ha.alerts import AlertEngine, load_rules
 from .ha.client import HAClient
 from .ha.protocols import ProtocolBook
+from .monitors import AtriumMonitor, DockerMonitor, HealthService
 from .store import Store
 from .voice.session import CaptureSession
 from .voice.wyoming import PiperTTS, VoiceServiceError, WhisperSTT
@@ -127,31 +130,43 @@ class Sentinel:
         self._turn_lock = asyncio.Lock()
         self._announce_lock = asyncio.Lock()
 
-        # ── Domotique (Phase 2) — se dégrade proprement sans HA_URL/HA_TOKEN ──
+        # ── Domotique & surveillance — chaque brique se dégrade proprement ──
         self.protocols = ProtocolBook.load(settings.config_dir / "protocols.yml")
         self.ha: HAClient | None = None
         self.engine: ActionEngine | None = None
         self.alerts: AlertEngine | None = None
-        toolbox: Toolbox | None = None
         if settings.ha_url and settings.ha_token:
             self.ha = HAClient(
                 settings.ha_url, settings.ha_token,
                 on_event=self._on_ha_event, on_status=self._on_ha_status,
             )
-            registry = build_registry(self.ha, self.protocols)
-            self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
-            self.alerts = AlertEngine(
-                load_rules(settings.config_dir / "alerts.yml"), self.ha, self.engine, self.announce
-            )
-            toolbox = Toolbox(self.ha, self.engine, self.protocols, store)
         else:
             log.warning("HA_URL/HA_TOKEN absents : domotique désactivée (conversation seule).")
 
+        self._docker = (
+            DockerMonitor(settings.docker_proxy_url) if settings.docker_proxy_url else None
+        )
+        atrium = AtriumMonitor(settings.atrium_url) if settings.atrium_url else None
+        self.health = HealthService(settings, self.ha, self._docker, atrium)
+
+        if self.ha or self._docker:
+            registry = build_registry(self.ha, self.protocols, self._docker)
+            self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
+        if self.ha and self.engine:
+            self.alerts = AlertEngine(
+                load_rules(settings.config_dir / "alerts.yml"), self.ha, self.engine, self.announce
+            )
+
+        toolbox = Toolbox(
+            self.ha, self.engine, self.protocols, store,
+            health=self.health, docker=self._docker,
+        )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
-            settings.config_dir / "intents.yml", settings.tz,
+            settings.config_dir / "intents.yml", settings.tz, health=self.health,
         )
         self.brain = Brain(settings, toolbox, on_activity=self._on_activity)
+        self._report_task: asyncio.Task | None = None
 
     # ── Ponts vers l'UI ──────────────────────────────────────────────────
 
@@ -178,6 +193,50 @@ class Sentinel:
         await self.hub.broadcast({"type": "message", "message": message})
         if speak:
             asyncio.create_task(self._speak_announcement(text, severity))
+
+    # ── Rapport quotidien ────────────────────────────────────────────────
+
+    def start_daily_report(self) -> None:
+        hhmm = self.settings.daily_report
+        if not hhmm:
+            return
+        try:
+            hour, minute = (int(x) for x in hhmm.split(":", 1))
+            if not (0 <= hour < 24 and 0 <= minute < 60):
+                raise ValueError
+        except ValueError:
+            log.warning("SENTINEL_DAILY_REPORT invalide (%r) — rapport désactivé", hhmm)
+            return
+        self._report_task = asyncio.create_task(self._daily_report_loop(hour, minute))
+        log.info("Rapport quotidien planifié à %02d:%02d (%s)", hour, minute, self.settings.tz)
+
+    async def _daily_report_loop(self, hour: int, minute: int) -> None:
+        try:
+            tz = ZoneInfo(self.settings.tz)
+        except Exception:
+            tz = None
+        while True:
+            now = datetime.now(tz)
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+            try:
+                pending = await self.store.list_proposals("pending")
+                deferred = await self.store.list_proposals("deferred")
+                text = await self.health.rapport_quotidien(len(pending) + len(deferred))
+                await self.announce(text, "info", speak=False)
+            except Exception:
+                log.exception("Rapport quotidien en échec")
+            await asyncio.sleep(61)  # ne pas redéclencher dans la même minute
+
+    async def stop_background(self) -> None:
+        if self._report_task:
+            self._report_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._report_task
+            self._report_task = None
+        await self.health.close()
 
     async def _speak_announcement(self, text: str, severity: str) -> None:
         async with self._announce_lock:  # une annonce vocale à la fois
@@ -428,6 +487,7 @@ async def lifespan(app: FastAPI):
     app.state.sentinel = sentinel
     if sentinel.ha:
         await sentinel.ha.start()
+    sentinel.start_daily_report()
     log.info(
         "Sentinel %s démarré — modèle %s, effort %s, UI %s",
         __version__, settings.model, settings.effort, settings.ui_dir,
@@ -438,6 +498,7 @@ async def lifespan(app: FastAPI):
         )
     yield
     await sentinel.cancel_turn()
+    await sentinel.stop_background()
     if sentinel.ha:
         await sentinel.ha.stop()
     await store.close()

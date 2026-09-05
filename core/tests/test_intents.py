@@ -15,7 +15,11 @@ from app.store import Store
 
 
 @pytest.fixture()
-async def home(tmp_path):
+async def home(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENTINEL_DATA_DIR", str(tmp_path / "data"))
+    from app.config import Settings
+    from app.monitors.health import HealthService
+
     ha, calls = make_ha_stub()
     proto_path = tmp_path / "protocols.yml"
     proto_path.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
@@ -23,7 +27,8 @@ async def home(tmp_path):
     store = Store(tmp_path / "intents.db")
     await store.open()
     engine = ActionEngine(build_registry(ha, protocols), store)
-    intents = LocalIntents(ha, engine, protocols, store, None, "Europe/Paris")
+    health = HealthService(Settings.from_env(), ha)
+    intents = LocalIntents(ha, engine, protocols, store, None, "Europe/Paris", health=health)
     yield SimpleNamespace(
         ha=ha, calls=calls, engine=engine, intents=intents, store=store
     )
@@ -157,6 +162,12 @@ async def test_la_piece_prime_sur_toutes(home):
     reply = await home.intents.handle("Éteins toutes les lumières de la chambre", "voice")
     assert reply == "Éteint : Lampe chambre."
     assert home.calls[0][3] == {"entity_id": ["light.chambre"]}
+
+
+async def test_sante_des_systemes_sans_llm(home):
+    reply = await home.intents.handle("Comment vont les systèmes ?", "voice")
+    assert reply is not None and "Nova : connectée" in reply
+    assert home.calls == []  # lecture pure
 
 
 async def test_regler_la_temperature_part_au_llm(home):

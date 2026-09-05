@@ -15,17 +15,39 @@ from app.ha.protocols import ProtocolBook
 from app.store import Store
 
 
+class DockerStub:
+    """Moniteur Docker minimal pour les tests d'outils (lecture + restart tracé)."""
+
+    def __init__(self):
+        self.restarts: list[str] = []
+
+    async def restart_container(self, name: str) -> str:
+        self.restarts.append(name)
+        return f"Conteneur {name} redémarré."
+
+    async def logs(self, name: str, tail: int = 50) -> str:
+        return f"[{name}] ligne de log 1\n[{name}] ligne de log 2"
+
+
 @pytest.fixture()
-async def box(tmp_path):
+async def box(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENTINEL_DATA_DIR", str(tmp_path / "data"))
+    from app.config import Settings
+    from app.monitors.health import HealthService
+
     ha, calls = make_ha_stub()
     proto_path = tmp_path / "protocols.yml"
     proto_path.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
     protocols = ProtocolBook.load(proto_path)
     store = Store(tmp_path / "toolbox.db")
     await store.open()
-    engine = ActionEngine(build_registry(ha, protocols), store)
-    toolbox = Toolbox(ha, engine, protocols, store)
-    yield SimpleNamespace(ha=ha, calls=calls, toolbox=toolbox, store=store)
+    docker = DockerStub()
+    engine = ActionEngine(build_registry(ha, protocols, docker), store)
+    health = HealthService(Settings.from_env(), ha)
+    toolbox = Toolbox(ha, engine, protocols, store, health=health, docker=docker)
+    yield SimpleNamespace(
+        ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
+    )
     await store.close()
 
 
@@ -39,6 +61,7 @@ async def test_specs_stables_et_completes(box):
     assert names == [
         "etat_maison", "details_entite", "action_domotique", "lancer_protocole",
         "creer_proposition", "lister_propositions", "liste_pieces",
+        "sante_systemes", "logs_conteneur", "audit_systemes", "redemarrer_conteneur",
     ]
     assert all(s["description"] for s in specs)
 
@@ -108,6 +131,31 @@ async def test_lancer_protocole_sensible_transmet_la_confirmation(box):
 async def test_outil_inconnu(box):
     content, is_error = await box.toolbox.run("hacker_le_pentagone", {}, utterance="", source="text")
     assert is_error
+
+
+async def test_sante_et_logs(box):
+    content, is_error = await _run(box, "sante_systemes", {})
+    assert not is_error and '"nova"' in content
+
+    content, is_error = await _run(box, "logs_conteneur", {"nom": "plex", "lignes": 10})
+    assert not is_error and "ligne de log" in content
+
+
+async def test_redemarrage_conteneur_est_une_proposition(box):
+    content, is_error = await _run(box, "redemarrer_conteneur", {
+        "nom": "plex", "justification": "Le conteneur ne répond plus.",
+    })
+    assert not is_error and "n°" in content
+    assert box.docker.restarts == []  # RIEN n'a redémarré : proposition seulement
+
+    pending = (await box.store.list_proposals("pending"))[0]
+    assert pending["action_id"] == "docker.restart"
+    assert pending["params"] == {"name": "plex"}
+
+    # L'approbation exécute réellement le redémarrage, journalisé
+    updated, msg = await box.engine.decide(pending["num"], "approve", via="ui")
+    assert updated["status"] == "done"
+    assert box.docker.restarts == ["plex"]
 
 
 async def test_proposition_de_service_sensible_escaladee(box):

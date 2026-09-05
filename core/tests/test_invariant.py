@@ -66,3 +66,16 @@ def test_les_outils_llm_n_importent_pas_le_client_nova_en_ecriture():
     toolbox = (APP_DIR / "brain" / "toolbox.py").read_text(encoding="utf-8")
     assert ".call_service(" not in toolbox
     assert "_send_wait(" not in toolbox
+    assert ".restart_container(" not in toolbox
+
+
+def test_restart_docker_uniquement_dans_les_executeurs():
+    """Le redémarrage de conteneur (écriture Docker) suit la même règle que Nova :
+    appelable uniquement par les exécuteurs, défini uniquement dans le moniteur."""
+    for path in _python_files():
+        rel = path.relative_to(APP_DIR).as_posix()
+        src = path.read_text(encoding="utf-8")
+        if ".restart_container(" in src and rel not in ("actions/executors.py", "monitors/docker.py"):
+            raise AssertionError(f"écriture Docker hors du moteur d'actions : {rel}")
+        if "def restart_container(" in src and rel != "monitors/docker.py":
+            raise AssertionError(f"restart_container redéfini hors monitors/docker.py : {rel}")

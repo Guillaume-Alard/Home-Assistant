@@ -49,6 +49,11 @@ _PROPOSAL_RE = re.compile(
 _LIST_PROPOSALS_RE = re.compile(r"\b(liste|montre|affiche|donne)\b.*\bpropositions?\b|\bpropositions? en attente\b")
 _CONFIRM_RE = re.compile(r"^(sentinel )?(je )?confirme$")
 _CANCEL_RE = re.compile(r"^(sentinel )?annule( tout)?$|^laisse tomber$")
+_HEALTH_RE = re.compile(
+    r"comment vont les systemes|comment va la maison|sante des systemes"
+    r"|etat des systemes|rapport (systeme|sante|quotidien|du matin)"
+    r"|donne( |-)?(moi )?le rapport|fais( |-)?(moi )?le rapport"
+)
 _TIME_RE = re.compile(r"\bquelle heure\b|\bl heure\b$")
 _DATE_RE = re.compile(r"\bquel jour\b|\bquelle date\b|\bla date\b$")
 _TEMP_RE = re.compile(r"\btemperature\b|\bcombien fait[- ]il\b|\bil fait combien\b")
@@ -64,12 +69,14 @@ class LocalIntents:
         store: Store,
         config_path: Path | None = None,
         tz: str = "Europe/Paris",
+        health=None,  # HealthService (lecture seule)
     ):
         self._ha = ha
         self._engine = engine
         self._protocols = protocols
         self._store = store
         self._tz = tz
+        self._health = health
         self._aliases: dict[str, str] = {}
         if config_path and config_path.is_file():
             try:
@@ -103,6 +110,10 @@ class LocalIntents:
             return self._time_reply()
         if _DATE_RE.search(norm):
             return self._date_reply()
+
+        # 2 bis) Santé des systèmes — résumé déterministe, sans LLM
+        if self._health is not None and _HEALTH_RE.search(norm):
+            return await self._health.resume_texte()
 
         # 3) Gestion des propositions
         match = _PROPOSAL_RE.search(norm)

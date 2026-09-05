@@ -61,6 +61,7 @@ class HAClient:
         self._pending: dict[int, asyncio.Future] = {}
 
         self.connected = False
+        self.ha_version: str | None = None
         self._states: dict[str, dict] = {}
         self._areas: dict[str, str] = {}          # area_id → nom
         self._entity_area: dict[str, str] = {}    # entity_id → area_id
@@ -131,6 +132,12 @@ class HAClient:
     async def _bootstrap(self) -> None:
         states = await self._send_wait({"type": "get_states"})
         self._states = {s["entity_id"]: s for s in states}
+
+        try:
+            config = await self._send_wait({"type": "get_config"})
+            self.ha_version = (config or {}).get("version")
+        except HAError:
+            self.ha_version = None
 
         # Registres : nécessitent un jeton d'utilisateur administrateur ; en cas
         # de refus on continue sans résolution de pièces (mode dégradé).

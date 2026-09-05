@@ -268,6 +268,104 @@ def make_ha_stub():
     return ha, calls
 
 
+# ── Faux proxy Docker (HTTP minimal, mêmes chemins que l'API Docker) ─────
+
+_FRAME1 = b"\x01\x00\x00\x00" + (11).to_bytes(4, "big") + b"ligne info\n"
+_FRAME2 = b"\x02\x00\x00\x00" + (13).to_bytes(4, "big") + b"ligne erreur\n"
+
+
+class FakeDockerProxy:
+    def __init__(self):
+        self.port: int | None = None
+        self.restarts: list[str] = []
+        self.containers = [
+            {"Id": "aaa111aaa111", "Names": ["/plex"], "State": "exited",
+             "Status": "Exited (1) 2 hours ago", "Image": "plex:latest", "Ports": []},
+            {"Id": "bbb222bbb222", "Names": ["/frigate"], "State": "running",
+             "Status": "Up 5 days (unhealthy)", "Image": "frigate",
+             "Ports": [{"IP": "0.0.0.0", "PublicPort": 5000, "PrivatePort": 5000}]},
+            {"Id": "ccc333ccc333", "Names": ["/sentinel-core"], "State": "running",
+             "Status": "Up 2 days", "Image": "sentinel",
+             "Ports": [{"IP": "0.0.0.0", "PublicPort": 8443, "PrivatePort": 8443}]},
+        ]
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        assert self._ready.wait(5), "faux proxy Docker non démarré"
+
+    def stop(self):
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+    def _run(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._start_server())
+        self._loop.run_forever()
+
+    async def _start_server(self):
+        server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = server.sockets[0].getsockname()[1]
+        self._ready.set()
+
+    async def _handle(self, reader, writer):
+        try:
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = await reader.read(4096)
+                if not chunk:
+                    return
+                data += chunk
+            method, target, _ = data.split(b"\r\n", 1)[0].decode().split(" ", 2)
+            status, ctype, body = self._route(method, target.split("?", 1)[0])
+            head = (
+                f"HTTP/1.1 {status} X\r\nContent-Type: {ctype}\r\n"
+                f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+            )
+            writer.write(head.encode() + body)
+            await writer.drain()
+        except Exception:
+            pass
+        finally:
+            writer.close()
+
+    def _find(self, cid: str):
+        return next((c for c in self.containers if c["Id"].startswith(cid)), None)
+
+    def _route(self, method: str, path: str):
+        if path == "/_ping":
+            return 200, "text/plain", b"OK"
+        if path == "/containers/json":
+            return 200, "application/json", _json.dumps(self.containers).encode()
+        parts = path.strip("/").split("/")
+        if len(parts) == 3 and parts[0] == "containers":
+            container = self._find(parts[1])
+            if container is None:
+                return 404, "text/plain", b"no such container"
+            if parts[2] == "stats":
+                return 200, "application/json", _json.dumps(
+                    {"memory_stats": {"usage": 200 * 1_048_576}}
+                ).encode()
+            if parts[2] == "logs":
+                return 200, "application/octet-stream", _FRAME1 + _FRAME2
+            if parts[2] == "restart" and method == "POST":
+                self.restarts.append(container["Names"][0].lstrip("/"))
+                return 204, "text/plain", b""
+        return 404, "text/plain", b"not found"
+
+
+@pytest.fixture()
+def fake_docker() -> FakeDockerProxy:
+    server = FakeDockerProxy()
+    server.start()
+    yield server
+    server.stop()
+
+
 PROTOCOLS_TEST_YML = """\
 test:
   nom: "Test"

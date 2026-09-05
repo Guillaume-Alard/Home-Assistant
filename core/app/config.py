@@ -59,6 +59,12 @@ class Settings:
     ha_url: str = ""
     ha_token: str = ""
 
+    # Surveillance (Phase 3A) — vides = moniteurs correspondants désactivés
+    docker_proxy_url: str = ""
+    atrium_url: str = ""
+    daily_report: str = ""            # "HH:MM" heure locale, vide = pas de rapport
+    container_mem_mo: int = 1500      # seuil mémoire signalé dans les audits
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -89,4 +95,8 @@ class Settings:
             log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
             ha_url=os.environ.get("HA_URL", "").strip().rstrip("/"),
             ha_token=os.environ.get("HA_TOKEN", "").strip(),
+            docker_proxy_url=os.environ.get("DOCKER_PROXY_URL", "").strip().rstrip("/"),
+            atrium_url=os.environ.get("ATRIUM_URL", "").strip().rstrip("/"),
+            daily_report=os.environ.get("SENTINEL_DAILY_REPORT", "").strip(),
+            container_mem_mo=_int(os.environ.get("SENTINEL_CONTAINER_MEM_MO"), 1500),
         )

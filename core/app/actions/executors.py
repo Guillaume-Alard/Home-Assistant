@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..ha.client import HAClient
+from ..monitors.docker import DockerError, DockerMonitor
 from .registry import ActionError, ActionRegistry, ActionSpec
 
 if TYPE_CHECKING:  # uniquement pour les annotations — pas d'import circulaire
@@ -44,8 +45,34 @@ def _friendly_list(ha: HAClient, entity_ids: list[str]) -> str:
     return ", ".join(ha.friendly_name(e) for e in entity_ids)
 
 
-def build_registry(ha: HAClient, protocols: "ProtocolBook | None" = None) -> ActionRegistry:
+def build_registry(
+    ha: HAClient | None,
+    protocols: "ProtocolBook | None" = None,
+    docker: DockerMonitor | None = None,
+) -> ActionRegistry:
     reg = ActionRegistry()
+
+    # ── Docker (Phase 3A) — jamais en ordre direct : proposition obligatoire ──
+
+    if docker is not None:
+
+        async def restart_docker(params: dict) -> str:
+            name = str(params.get("name") or "").strip()
+            if not name:
+                raise ActionError("Nom de conteneur manquant.")
+            try:
+                return await docker.restart_container(name)
+            except DockerError as exc:
+                raise ActionError(str(exc)) from None
+
+        reg.register(ActionSpec(
+            "docker.restart",
+            "Redémarrer un conteneur Docker de Nebula (réservé aux propositions approuvées)",
+            "medium", False, restart_docker,
+        ))
+
+    if ha is None:
+        return reg
 
     # ── Allumer / éteindre (domaines sûrs uniquement) ────────────────────
 
