@@ -93,6 +93,55 @@ async def test_push_via_proposition_approuvee(env):
     assert env.fake.pushes == [task["id"]]
 
 
+async def test_veilleur_pastille_atelier(env, monkeypatch):
+    """La pastille ⚒ suit la tâche en cours — et s'éteint si le worker disparaît."""
+    seen: list[str | None] = []
+
+    async def rec(running):
+        seen.append(running["id"] if running else None)
+
+    async def announce(text, severity, speak=True):
+        pass
+
+    watcher = DevWatcher(env.client, env.engine, announce, on_running_change=rec)
+
+    await watcher._tick()
+    assert seen == []  # rien ne tourne, rien à signaler
+
+    task = await env.client.start_task("loggia", "x")
+    await watcher._tick()
+    await watcher._tick()  # pas de changement → pas de re-notification
+    assert seen == [task["id"]]
+
+    env.fake.finish_task(task["id"], ["a.yaml"])
+    await watcher._tick()
+    assert seen == [task["id"], None]
+
+    # Worker injoignable pendant une « tâche en cours » : pastille éteinte
+    task2 = await env.client.start_task("loggia", "y")
+    await watcher._tick()
+    assert seen[-1] == task2["id"]
+
+    async def boom():
+        raise WorkerError("injoignable")
+
+    monkeypatch.setattr(env.client, "list_tasks", boom)
+    await watcher._tick()
+    assert seen[-1] is None
+
+
+async def test_reponse_worker_illisible(env, monkeypatch):
+    """Un worker qui répond du non-JSON donne une WorkerError propre, pas un crash."""
+    from types import SimpleNamespace as NS
+
+    async def bad_request(method, path, timeout=None, **kwargs):
+        return NS(json=lambda: (_ for _ in ()).throw(ValueError("bad")), status_code=200)
+
+    monkeypatch.setattr(env.client, "_request", bad_request)
+    with pytest.raises(WorkerError, match="illisible"):
+        await env.client.list_tasks()
+
+
 async def test_veilleur_annonce_et_propose(env):
     task = await env.client.start_task("loggia", "Corrige la carte météo")
     await env.watcher._tick()

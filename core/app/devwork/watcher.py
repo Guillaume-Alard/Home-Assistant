@@ -48,6 +48,9 @@ class DevWatcher:
         try:
             tasks = await self._worker.list_tasks()
         except WorkerError:
+            # Worker injoignable : rien d'observable ne tourne — la pastille
+            # « atelier au travail » ne doit pas rester allumée indéfiniment.
+            await self._notify_running([])
             return
         await self._notify_running(tasks)
         for summary in tasks:

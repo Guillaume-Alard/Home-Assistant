@@ -220,6 +220,7 @@ ws.addEventListener('event', (e) => {
       els.connNova.hidden = !msg.ha_configured;
       setNova(!!msg.ha_connected);
       els.atelierBtn.hidden = !msg.dev_configured;
+      setDevRunning(msg.dev_running || null);
       st.proposals.clear();
       (msg.proposals || []).forEach((p) => st.proposals.set(p.num, p));
       renderProposals();
@@ -428,6 +429,8 @@ const dev = {
   showDiff: false,
   tasksTimer: null,
   logTimer: null,
+  workerDown: false, // dernier dev_tasks en erreur → on suspend le sondage du journal
+  logPendingAt: 0,   // requête de journal en vol (anti-doublons, expire après 8 s)
 };
 
 function setAtelierPolling(on) {
@@ -435,10 +438,15 @@ function setAtelierPolling(on) {
   clearInterval(dev.logTimer); dev.logTimer = null;
   if (!on || els.atelierBtn.hidden) return;
   ws.sendJSON({ type: 'dev_tasks' });
+  // Rattrapage à la réouverture : la fin du journal a pu arriver panneau fermé
+  if (dev.selected) ws.sendJSON({ type: 'dev_log', id: dev.selected, after: dev.next });
   dev.tasksTimer = setInterval(() => ws.sendJSON({ type: 'dev_tasks' }), 5000);
   dev.logTimer = setInterval(() => {
+    if (dev.workerDown) return;
+    if (dev.logPendingAt && Date.now() - dev.logPendingAt < 8000) return;
     const task = dev.tasks.find((t) => t.id === dev.selected);
     if (task && (task.status === 'running' || task.status === 'queued') && !dev.showDiff) {
+      dev.logPendingAt = Date.now();
       ws.sendJSON({ type: 'dev_log', id: dev.selected, after: dev.next });
     }
   }, 2000);
@@ -453,10 +461,12 @@ function setDevRunning(running) {
 }
 
 function onDevTasks(msg) {
+  dev.workerDown = !!msg.error;
   if (msg.error) {
     els.atelierStatus.textContent = msg.error;
     return;
   }
+  const previous = dev.tasks;
   dev.tasks = msg.tasks || [];
   const a = msg.atelier || {};
   const seg = (text, cls) => {
@@ -475,7 +485,17 @@ function onDevTasks(msg) {
     seg(`dépôts : ${(a.repos || []).join(', ') || '—'}`),
   );
 
-  if (dev.selected && !dev.tasks.some((t) => t.id === dev.selected)) dev.selected = null;
+  // La tâche affichée vient de finir : rattraper les dernières lignes du journal
+  const sel = dev.tasks.find((t) => t.id === dev.selected);
+  const prevSel = previous.find((t) => t.id === dev.selected);
+  if (sel && prevSel && prevSel.status !== sel.status) {
+    setBranchLabel(sel);
+    if (sel.status === 'done' || sel.status === 'failed') {
+      ws.sendJSON({ type: 'dev_log', id: sel.id, after: dev.next });
+    }
+  }
+
+  if (dev.selected && !sel) dev.selected = null;
   if (!dev.selected && dev.tasks.length) {
     const active = dev.tasks.find((t) => t.status === 'running' || t.status === 'queued');
     selectDevTask((active || dev.tasks[0]).id);
@@ -517,6 +537,7 @@ function renderDevTasks() {
 function selectDevTask(id) {
   dev.selected = id;
   dev.next = 0;
+  dev.logPendingAt = 0;
   dev.showDiff = false;
   els.atelierLog.textContent = '';
   els.atelierLog.hidden = false;
@@ -551,20 +572,33 @@ function appendLogRow(t, line, cls) {
 
 function onDevLog(msg) {
   if (msg.id !== dev.selected) return;
+  dev.logPendingAt = 0;
+  const el = els.atelierLog;
   if (msg.error) {
-    appendLogRow('', msg.error, 'log-hint');
+    // Pas de spam : une seule ligne pour une même erreur répétée
+    const last = el.lastElementChild;
+    if (!last || last.textContent.trim() !== msg.error.trim()) {
+      appendLogRow('', msg.error, 'log-hint');
+    }
     return;
   }
-  const el = els.atelierLog;
   const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-  // Curseur revenu en arrière (atelier redémarré) : on repart de zéro
-  if (dev.next === 0 || (msg.next || 0) < dev.next) el.textContent = '';
-  for (const entry of msg.lines || []) appendLogRow(entry.t, entry.line);
-  dev.next = msg.next || 0;
+  let lines = msg.lines || [];
+  const total = msg.next || 0;
+  if (total < dev.next) { // l'atelier a redémarré : le journal est reparti de zéro
+    el.textContent = '';
+    dev.next = 0;
+  }
+  // Dédoublonnage : deux réponses peuvent se chevaucher (réponse lente + resélection)
+  const start = total - lines.length; // index absolu de la première ligne reçue
+  if (start < dev.next) lines = lines.slice(dev.next - start);
+  if (lines.length) el.querySelectorAll('.log-hint').forEach((n) => n.remove());
+  for (const entry of lines) appendLogRow(entry.t, entry.line);
+  dev.next = total;
   if (!el.childElementCount) {
     const task = dev.tasks.find((t) => t.id === msg.id);
-    const done = task && (task.status === 'done' || task.status === 'failed');
-    appendLogRow('', done
+    const finished = task && (task.status === 'done' || task.status === 'failed');
+    appendLogRow('', finished
       ? '(journal indisponible — il ne survit pas à un redémarrage de l’atelier)'
       : 'en attente des premières lignes…', 'log-hint');
   }
@@ -574,6 +608,10 @@ function onDevLog(msg) {
     task.status = msg.status;
     renderDevTasks();
     setBranchLabel(task);
+    if (task.status === 'done' || task.status === 'failed') {
+      // Fin découverte par le journal : une dernière lecture attrape la traîne
+      ws.sendJSON({ type: 'dev_log', id: task.id, after: dev.next });
+    }
   }
 }
 
@@ -753,6 +791,7 @@ const OUTCOME_FR = {
 const PROP_STATUS_FR = {
   done: 'exécutée', rejected: 'refusée', refused: 'refusée',
   failed: 'échec', expired: 'expirée', approved: 'approuvée',
+  executing: 'en cours',
 };
 
 function fmtWhen(ts) {

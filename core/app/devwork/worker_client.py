@@ -39,28 +39,35 @@ class WorkerClient:
             raise WorkerError(detail or f"Le worker a refusé la requête ({resp.status_code}).")
         return resp
 
+    @staticmethod
+    def _json(resp):
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise WorkerError("Le worker a renvoyé une réponse illisible.") from exc
+
     # ── Lecture (libre) ──────────────────────────────────────────────────
 
     async def health(self) -> dict | None:
         try:
-            return (await self._request("GET", "/health")).json()
+            return self._json(await self._request("GET", "/health"))
         except WorkerError:
             return None
 
     async def list_tasks(self) -> list[dict]:
-        return (await self._request("GET", "/tasks")).json()
+        return self._json(await self._request("GET", "/tasks"))
 
     async def get_task(self, task_id: str) -> dict:
-        return (await self._request("GET", f"/tasks/{task_id}")).json()
+        return self._json(await self._request("GET", f"/tasks/{task_id}"))
 
     async def get_diff(self, task_id: str) -> str:
         return (await self._request("GET", f"/tasks/{task_id}/diff")).text
 
     async def get_log(self, task_id: str, after: int = 0) -> dict:
         """Journal en direct d'une tâche (lecture incrémentale : after = `next` reçu)."""
-        return (await self._request(
+        return self._json(await self._request(
             "GET", f"/tasks/{task_id}/log", params={"after": after}
-        )).json()
+        ))
 
     async def mark_announced(self, task_id: str) -> None:
         await self._request("POST", f"/tasks/{task_id}/announced")
@@ -68,11 +75,11 @@ class WorkerClient:
     # ── Écriture (réservée aux exécuteurs du moteur d'actions) ───────────
 
     async def start_task(self, repo: str, instruction: str) -> dict:
-        return (await self._request(
+        return self._json(await self._request(
             "POST", "/tasks", json={"repo": repo, "instruction": instruction}
-        )).json()
+        ))
 
     async def push_branch(self, task_id: str) -> dict:
         # Le push git côté worker peut prendre jusqu'à ~2 min : délai adapté,
         # sinon un push lent serait marqué en échec alors qu'il a réussi.
-        return (await self._request("POST", f"/tasks/{task_id}/push", timeout=180.0)).json()
+        return self._json(await self._request("POST", f"/tasks/{task_id}/push", timeout=180.0))

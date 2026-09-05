@@ -179,6 +179,7 @@ class Sentinel:
         self.brain = Brain(settings, toolbox, on_activity=self._on_activity)
         self._report_task: asyncio.Task | None = None
         self._devwatch_task: asyncio.Task | None = None
+        self._dev_running: dict | None = None  # tâche de dev en cours (cache pour hello)
         self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
 
     def _spawn(self, coro) -> None:
@@ -262,10 +263,10 @@ class Sentinel:
 
     async def _on_dev_running(self, running: dict | None) -> None:
         """Pastille « atelier au travail » de l'UI, mise à jour par le veilleur."""
-        payload: dict = {"type": "dev_status", "running": None}
-        if running:
-            payload["running"] = {"id": running.get("id"), "repo": running.get("repo")}
-        await self.hub.broadcast(payload)
+        self._dev_running = (
+            {"id": running.get("id"), "repo": running.get("repo")} if running else None
+        )
+        await self.hub.broadcast({"type": "dev_status", "running": self._dev_running})
 
     async def stop_background(self) -> None:
         for task in (self._report_task, self._devwatch_task):
@@ -573,6 +574,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "ha_connected": bool(sentinel.ha and sentinel.ha.connected),
             "ha_configured": sentinel.ha is not None,
             "dev_configured": sentinel._worker is not None,
+            "dev_running": sentinel._dev_running,
             "proposals": sorted(pending + deferred, key=lambda p: p["num"]),
             "protocols": [
                 {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
@@ -598,7 +600,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 msg = json.loads(text)
             except ValueError:
                 continue
-            await _on_message(sentinel, client, msg)
+            try:
+                await _on_message(sentinel, client, msg)
+            except Exception:
+                # Un message ne doit jamais coûter sa connexion au client
+                log.exception("Traitement d'un message WS en échec (%s)", msg.get("type"))
     except WebSocketDisconnect:
         pass
     finally:
@@ -699,11 +705,13 @@ async def _reply_dev_tasks(sentinel: Sentinel, client: Client) -> None:
         await sentinel.hub.send(client, {"type": "dev_tasks", "error": _WORKER_ABSENT})
         return
     try:
-        tasks = await sentinel._worker.list_tasks()
+        tasks, health = await asyncio.gather(
+            sentinel._worker.list_tasks(), sentinel._worker.health()
+        )
     except WorkerError as exc:
         await sentinel.hub.send(client, {"type": "dev_tasks", "error": str(exc)})
         return
-    health = await sentinel._worker.health() or {}
+    health = health or {}
     await sentinel.hub.send(client, {
         "type": "dev_tasks",
         "tasks": tasks,
@@ -711,7 +719,6 @@ async def _reply_dev_tasks(sentinel: Sentinel, client: Client) -> None:
             "auth": health.get("auth"),
             "push_possible": bool(health.get("push_possible")),
             "repos": health.get("repos") or [],
-            "active_task": health.get("active_task"),
         },
     })
 

@@ -317,6 +317,7 @@ body.online.nova-on .conn-dot.nova { background: #59d78c; box-shadow: 0 0 8px rg
 }
 .badge.ok, .badge.done { color: #59d78c; border-color: rgba(89, 215, 140, 0.4); }
 .badge.refused, .badge.rejected, .badge.expired { color: var(--warn); border-color: rgba(255, 180, 84, 0.4); }
+.badge.executing { color: var(--accent); border-color: rgba(79, 216, 235, 0.4); }
 .badge.failed { color: var(--danger); border-color: rgba(255, 107, 107, 0.45); }
 .j-auth { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
 .j-detail { color: var(--text); opacity: 0.85; overflow-wrap: anywhere; }

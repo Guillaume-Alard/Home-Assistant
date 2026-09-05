@@ -269,6 +269,7 @@ def test_console_atelier_via_ws(client_dev, fake_worker):
     with client_dev.websocket_connect("/ws") as ws:
         hello = json.loads(ws.receive()["text"])
         assert hello["dev_configured"] is True
+        assert hello["dev_running"] is None  # état de la pastille ⚒ dès la connexion
 
         # Liste + état de l'atelier (vide au départ)
         ws.send_text(json.dumps({"type": "dev_tasks"}))

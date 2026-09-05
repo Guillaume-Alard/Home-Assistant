@@ -25,8 +25,8 @@
   (tuiles Nova/Nebula/Docker/Atrium, sondage 30 s panneau ouvert), historique
   (journal des actions = piste d'audit du moteur, propositions passées).
 - `TZ` transmis au worker (horodatages du journal en heure locale).
-- Tests : 112 (10 nouveaux — traduction du flux, `/log` incrémental, protocole
-  WS des panneaux de bout en bout sur les faux serveurs).
+- Tests : 114 (12 nouveaux — traduction du flux, `/log` incrémental, protocole
+  WS des panneaux de bout en bout sur les faux serveurs, pastille du veilleur).
 
 ## Points de doute — avis sollicité
 
@@ -44,10 +44,43 @@
    n'offre volontairement ni « lancer une tâche » ni « pousser » — bon choix, ou
    frustrant à l'usage ?
 
+## Addendum — revue interne du 05/09 (8 constats, tous corrigés)
+
+1. **Fin de journal manquée** : le sondage du journal s'arrêtait dès que la
+   liste passait la tâche en `done` — les dernières lignes (commit, résumé, ✔)
+   n'arrivaient jamais → lecture de rattrapage sur chaque transition
+   running→fini (découverte par la liste OU par le journal lui-même) et à la
+   réouverture du panneau.
+2. **Doublons** : une réponse `/log` lente + le tick suivant (même `after`)
+   dupliquaient des blocs entiers → dédoublonnage par index absolu
+   (`next - lines.length`) + garde anti-requêtes-en-vol (expire à 8 s).
+3. **Spam d'erreurs** : worker coupé, une ligne « injoignable » s'ajoutait
+   toutes les 2 s sans fin → suspension du sondage quand `dev_tasks` est en
+   erreur + une même erreur consécutive n'est écrite qu'une fois.
+4. Un client qui se (re)connecte en pleine tâche ne voyait jamais la pastille ⚒
+   (diffusée sur transition seulement) → état courant mis en cache côté core et
+   envoyé dans `hello` (`dev_running`).
+5. Une exception imprévue dans un gestionnaire WS (worker répondant du
+   non-JSON, erreur du store) fermait la connexion du client — qui re-sondait,
+   boucle de reconnexions → garde globale autour de `_on_message` (loggée,
+   connexion préservée) + réponses JSON du worker validées (`WorkerError«
+   réponse illisible »`).
+6. Worker injoignable en pleine tâche : la pastille restait allumée pour
+   toujours (le tick sortait avant la notification) → injoignable = « rien
+   d'observable ne tourne », pastille éteinte.
+7. Statut transitoire `executing` d'une proposition affiché brut en anglais
+   dans l'historique → libellé « en cours » + style.
+8. `dev_tasks` faisait deux allers-retours worker séquentiels et transportait
+   un champ (`active_task`) que l'UI ne lit pas → `asyncio.gather` + champ
+   retiré.
+
+114 tests après correctifs. Les points de doute restent ouverts pour un second
+avis.
+
 ## Comment tester
 
 ```bash
-cd core && pip install -r requirements-dev.txt && pytest -q   # 112 tests
+cd core && pip install -r requirements-dev.txt && pytest -q   # 114 tests
 ```
 
 Réel : `git pull && docker compose up -d --build`, ouvrir l'UI → ⚒, puis
