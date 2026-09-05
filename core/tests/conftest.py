@@ -371,6 +371,125 @@ def fake_docker() -> FakeDockerProxy:
     server.stop()
 
 
+# ── Faux worker de développement (HTTP minimal, même API que worker/server.py) ──
+
+
+class FakeWorker:
+    def __init__(self):
+        self.port: int | None = None
+        self.tasks: dict[str, dict] = {}
+        self.pushes: list[str] = []
+        self._counter = 0
+        self._loop = None
+        self._thread = None
+        self._ready = threading.Event()
+
+    # Pilotage depuis les tests
+    def finish_task(self, task_id: str, files: list[str], summary: str = "Travail terminé.") -> None:
+        self.tasks[task_id].update(status="done", files_changed=files, summary=summary)
+
+    def fail_task(self, task_id: str, error: str) -> None:
+        self.tasks[task_id].update(status="failed", error=error)
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        assert self._ready.wait(5), "faux worker non démarré"
+
+    def stop(self):
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+    def _run(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._start_server())
+        self._loop.run_forever()
+
+    async def _start_server(self):
+        server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = server.sockets[0].getsockname()[1]
+        self._ready.set()
+
+    async def _handle(self, reader, writer):
+        try:
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = await reader.read(4096)
+                if not chunk:
+                    return
+                data += chunk
+            head, _, body = data.partition(b"\r\n\r\n")
+            headers = head.decode(errors="replace")
+            length = 0
+            for line in headers.split("\r\n")[1:]:
+                if line.lower().startswith("content-length:"):
+                    length = int(line.split(":", 1)[1].strip())
+            while len(body) < length:
+                body += await reader.read(4096)
+            method, target, _ = headers.split("\r\n", 1)[0].split(" ", 2)
+            status, payload = self._route(method, target.split("?", 1)[0], body)
+            raw = payload if isinstance(payload, bytes) else _json.dumps(payload).encode()
+            ctype = "text/plain" if isinstance(payload, bytes) else "application/json"
+            writer.write((
+                f"HTTP/1.1 {status} X\r\nContent-Type: {ctype}\r\n"
+                f"Content-Length: {len(raw)}\r\nConnection: close\r\n\r\n"
+            ).encode() + raw)
+            await writer.drain()
+        except Exception:
+            pass
+        finally:
+            writer.close()
+
+    def _route(self, method: str, path: str, body: bytes):
+        if path == "/health":
+            return 200, {"status": "ok", "repos": ["atrium", "loggia"], "busy": False,
+                         "auth": "clé API", "push_possible": True}
+        if path == "/tasks" and method == "POST":
+            req = _json.loads(body or b"{}")
+            alias = str(req.get("repo", "")).rsplit("/", 1)[-1].removesuffix(".git").lower()
+            if alias not in ("atrium", "loggia"):
+                return 403, {"detail": f"Dépôt hors liste blanche : « {req.get('repo')} »."}
+            self._counter += 1
+            task_id = f"t{self._counter}"
+            self.tasks[task_id] = {
+                "id": task_id, "repo": alias, "instruction": req.get("instruction", ""),
+                "status": "queued", "branch": f"sentinel/{task_id}",
+                "created_at": "2026-09-01T10:00:00", "announced": False, "pushed": False,
+            }
+            return 200, self.tasks[task_id]
+        if path == "/tasks" and method == "GET":
+            return 200, list(self.tasks.values())
+        parts = path.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] == "tasks":
+            task = self.tasks.get(parts[1])
+            if task is None:
+                return 404, {"detail": "Tâche inconnue."}
+            if len(parts) == 2:
+                return 200, task
+            if parts[2] == "diff":
+                return 200, b"diff --git a/x b/x\n+correctif"
+            if parts[2] == "announced" and method == "POST":
+                task["announced"] = True
+                return 200, {"ok": True}
+            if parts[2] == "push" and method == "POST":
+                if task.get("status") != "done" or not task.get("files_changed"):
+                    return 409, {"detail": "Rien à pousser."}
+                self.pushes.append(task["id"])
+                task["pushed"] = True
+                return 200, {"ok": True, "branch": task["branch"],
+                             "compare_url": f"https://github.com/Alardware/{task['repo']}/compare/{task['branch']}"}
+        return 404, {"detail": "not found"}
+
+
+@pytest.fixture()
+def fake_worker() -> FakeWorker:
+    server = FakeWorker()
+    server.start()
+    yield server
+    server.stop()
+
+
 PROTOCOLS_TEST_YML = """\
 test:
   nom: "Test"

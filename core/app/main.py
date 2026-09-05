@@ -36,6 +36,7 @@ from .brain.llm import Brain, LLMUnavailable
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.toolbox import Toolbox
 from .config import Settings, find_ui_dir
+from .devwork import DevWatcher, WorkerClient
 from .ha.alerts import AlertEngine, load_rules
 from .ha.client import HAClient
 from .ha.protocols import ProtocolBook
@@ -150,9 +151,10 @@ class Sentinel:
         )
         atrium = AtriumMonitor(settings.atrium_url) if settings.atrium_url else None
         self.health = HealthService(settings, self.ha, self._docker, atrium)
+        self._worker = WorkerClient(settings.worker_url) if settings.worker_url else None
 
-        if self.ha or self._docker:
-            registry = build_registry(self.ha, self.protocols, self._docker)
+        if self.ha or self._docker or self._worker:
+            registry = build_registry(self.ha, self.protocols, self._docker, self._worker)
             self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
         if self.ha and self.engine:
             self.alerts = AlertEngine(
@@ -161,7 +163,7 @@ class Sentinel:
 
         toolbox = Toolbox(
             self.ha, self.engine, self.protocols, store,
-            health=self.health, docker=self._docker,
+            health=self.health, docker=self._docker, worker=self._worker,
         )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
@@ -169,6 +171,7 @@ class Sentinel:
         )
         self.brain = Brain(settings, toolbox, on_activity=self._on_activity)
         self._report_task: asyncio.Task | None = None
+        self._devwatch_task: asyncio.Task | None = None
 
     # ── Ponts vers l'UI ──────────────────────────────────────────────────
 
@@ -234,13 +237,24 @@ class Sentinel:
             except Exception:
                 log.exception("Rapport quotidien en échec")
 
+    def start_dev_watcher(self) -> None:
+        if self._worker is None:
+            return
+        watcher = DevWatcher(self._worker, self.engine, self.announce)
+        self._devwatch_task = asyncio.create_task(watcher.run())
+        log.info("Veilleur des tâches de développement actif (%s)", self.settings.worker_url)
+
     async def stop_background(self) -> None:
-        if self._report_task:
-            self._report_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._report_task
-            self._report_task = None
+        for task in (self._report_task, self._devwatch_task):
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._report_task = None
+        self._devwatch_task = None
         await self.health.close()
+        if self._worker:
+            await self._worker.close()
 
     async def _speak_announcement(self, text: str, severity: str) -> None:
         async with self._announce_lock:  # une annonce vocale à la fois
@@ -492,6 +506,7 @@ async def lifespan(app: FastAPI):
     if sentinel.ha:
         await sentinel.ha.start()
     sentinel.start_daily_report()
+    sentinel.start_dev_watcher()
     log.info(
         "Sentinel %s démarré — modèle %s, effort %s, UI %s",
         __version__, settings.model, settings.effort, settings.ui_dir,

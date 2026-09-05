@@ -69,6 +69,20 @@ def test_les_outils_llm_n_importent_pas_le_client_nova_en_ecriture():
     assert ".restart_container(" not in toolbox
 
 
+def test_ecritures_worker_uniquement_dans_les_executeurs():
+    """start_task (workspace) et push_branch (GitHub) suivent la même règle :
+    appelables uniquement par les exécuteurs, définis dans le client worker."""
+    for path in _python_files():
+        rel = path.relative_to(APP_DIR).as_posix()
+        src = path.read_text(encoding="utf-8")
+        for needle in (".start_task(", ".push_branch("):
+            if needle in src and rel not in ("actions/executors.py", "devwork/worker_client.py"):
+                raise AssertionError(f"écriture worker hors du moteur d'actions : {rel} ({needle})")
+        for needle in ("def start_task(", "def push_branch("):
+            if needle in src and rel != "devwork/worker_client.py":
+                raise AssertionError(f"{needle.removeprefix('def ')} redéfini hors devwork/worker_client.py : {rel}")
+
+
 def test_restart_docker_uniquement_dans_les_executeurs():
     """Le redémarrage de conteneur (écriture Docker) suit la même règle que Nova :
     appelable uniquement par les exécuteurs, défini uniquement dans le moniteur."""

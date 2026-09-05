@@ -62,6 +62,7 @@ async def test_specs_stables_et_completes(box):
         "etat_maison", "details_entite", "action_domotique", "lancer_protocole",
         "creer_proposition", "lister_propositions", "liste_pieces", "chercher_entites",
         "sante_systemes", "logs_conteneur", "audit_systemes", "redemarrer_conteneur",
+        "lancer_tache_dev", "etat_taches_dev", "lire_diff_dev",
     ]
     assert all(s["description"] for s in specs)
 

@@ -1,4 +1,4 @@
-# Architecture — état courant (fin de Phase 3A)
+# Architecture — état courant (fin de Phase 3B)
 
 > Document vivant : mis à jour à chaque phase. La cible globale est décrite dans
 > [PLAN.md](PLAN.md) ; ici, seulement ce qui **existe** et pourquoi.
@@ -226,13 +226,28 @@ pour des fils multiples futurs, sans migration.
 | Rechargement de `config/` | au redémarrage du conteneur (2 s) | rechargement à chaud si le besoin se confirme |
 | `for:` (durée) dans les alertes | non géré (transition immédiate uniquement) | timers si un vrai cas l'exige |
 
-## Repères pour la Phase 3B
+## Atelier de développement (Phase 3B)
 
-- Conteneur `sentinel-worker` : CLI Claude Code headless, volume `workspace/`
-  isolé (dépôts de travail git) — jamais montés sur la prod.
-- Flux : tâche de dev → le worker produit un **diff** → proposition (nouvelle
-  action au registre, `direct=False`) → approbation → application.
-- Maintenance Loggia : prérequis, la config YAML de Nova sous git (question
-  ouverte n°8 du PLAN) ; lint + comparaison entités/états via le client Nova.
-- Le Claude Code du worker peut s'authentifier avec l'abonnement Max de
-  Guillaume (couvert), l'API ne payant que la conversation.
+- **`sentinel-worker`** (conteneur dédié, `worker/`) : CLI Claude Code headless
+  + mini-API FastAPI interne (aucun port LAN). Isolation stricte : il ne reçoit
+  que `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY`, `GITHUB_TOKEN` et
+  `DEV_REPOS` — ni jeton Nova, ni socket Docker. Volume nommé `worker-workspace`
+  (clones jetables). Tourne en non-root (exigé par le mode headless).
+- **Flux d'une tâche** : `POST /tasks` (dépôt de la liste blanche uniquement,
+  une tâche à la fois) → clone `--depth 50` → branche `sentinel/<id>` →
+  `claude -p … --output-format json --dangerously-skip-permissions` (acceptable
+  car le conteneur EST le bac à sable) → commit → `diff.patch` + résumé.
+  Persistance `tasks.json`, secrets purgés de toute sortie, 30 tâches gardées.
+- **Côté core** (`app/devwork/`) : `WorkerClient` (lecture libre ; `start_task`
+  et `push_branch` réservés aux exécuteurs — invariant testé) ; actions au
+  registre : `dev.task` (**direct, risque faible** : n'écrit que dans le bac à
+  sable, journalisé avec la demande) et `dev.push` (**propositions uniquement** :
+  écriture GitHub) ; `DevWatcher` (boucle 15 s) annonce les fins de tâches et
+  crée automatiquement la proposition de push quand il y a un diff.
+- **Outils LLM** : `lancer_tache_dev` (demande explicite), `etat_taches_dev`,
+  `lire_diff_dev`.
+- **Authentification** : jeton OAuth du forfait Pro/Max (`claude setup-token`)
+  en priorité, clé API en repli — le gros des tokens de dev est donc couvert
+  par l'abonnement, l'API ne payant que la conversation vocale.
+- Déploiement : Guillaume merge la branche sur GitHub puis met à jour via HACS
+  (Loggia) ou l'image (Atrium) — la prod n'est jamais modifiée par Sentinel.

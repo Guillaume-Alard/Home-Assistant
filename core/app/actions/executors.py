@@ -12,6 +12,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from ..devwork.worker_client import WorkerClient, WorkerError
 from ..ha.client import HAClient
 from ..monitors.docker import DockerError, DockerMonitor
 from .registry import ActionError, ActionRegistry, ActionSpec
@@ -49,8 +50,53 @@ def build_registry(
     ha: HAClient | None,
     protocols: "ProtocolBook | None" = None,
     docker: DockerMonitor | None = None,
+    worker: WorkerClient | None = None,
 ) -> ActionRegistry:
     reg = ActionRegistry()
+
+    # ── Développement (Phase 3B) ─────────────────────────────────────────
+    # dev.task n'écrit QUE dans l'espace de travail jetable du worker : ordre
+    # direct autorisé (et journalisé). dev.push écrit sur GitHub : proposition.
+
+    if worker is not None:
+
+        async def dev_task(params: dict) -> str:
+            repo = str(params.get("repo") or "").strip()
+            instruction = str(params.get("instruction") or "").strip()
+            if not repo or not instruction:
+                raise ActionError("Dépôt et instruction sont obligatoires.")
+            try:
+                task = await worker.start_task(repo, instruction)
+            except WorkerError as exc:
+                raise ActionError(str(exc)) from None
+            return (
+                f"Tâche de développement {task['id']} lancée sur « {task['repo']} » "
+                f"(branche {task['branch']}). Je préviendrai quand elle sera terminée."
+            )
+
+        async def dev_push(params: dict) -> str:
+            task_id = str(params.get("task_id") or "").strip()
+            if not task_id:
+                raise ActionError("Identifiant de tâche manquant.")
+            try:
+                result = await worker.push_branch(task_id)
+            except WorkerError as exc:
+                raise ActionError(str(exc)) from None
+            return (
+                f"Branche {result['branch']} poussée sur GitHub. "
+                f"Comparer / ouvrir une PR : {result['compare_url']}"
+            )
+
+        reg.register(ActionSpec(
+            "dev.task",
+            "Lancer une tâche Claude Code dans l'atelier isolé (liste blanche de dépôts)",
+            "low", True, dev_task,
+        ))
+        reg.register(ActionSpec(
+            "dev.push",
+            "Pousser la branche d'une tâche sur GitHub (réservé aux propositions approuvées)",
+            "medium", False, dev_push,
+        ))
 
     # ── Docker (Phase 3A) — jamais en ordre direct : proposition obligatoire ──
 

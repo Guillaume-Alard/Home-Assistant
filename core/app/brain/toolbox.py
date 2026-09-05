@@ -12,6 +12,7 @@ import json
 import logging
 
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
+from ..devwork.worker_client import WorkerClient, WorkerError
 from ..ha.client import HAClient
 from ..ha.protocols import ProtocolBook
 from ..monitors.docker import DockerError, DockerMonitor
@@ -42,6 +43,9 @@ ACTIVITY_LABELS = {
     "logs_conteneur": "lit des journaux…",
     "audit_systemes": "audite les systèmes…",
     "redemarrer_conteneur": "rédige une proposition…",
+    "lancer_tache_dev": "délègue à l'atelier de dev…",
+    "etat_taches_dev": "consulte l'atelier de dev…",
+    "lire_diff_dev": "relit un diff…",
 }
 
 
@@ -58,6 +62,7 @@ class Toolbox:
         store: Store,
         health: HealthService | None = None,
         docker: DockerMonitor | None = None,
+        worker: WorkerClient | None = None,
     ):
         self._ha = ha
         self._engine = engine
@@ -65,6 +70,7 @@ class Toolbox:
         self._store = store
         self._health = health
         self._docker = docker
+        self._worker = worker
 
     _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
     _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova/Docker non configurés)."
@@ -239,6 +245,39 @@ class Toolbox:
                         "justification": {"type": "string", "description": "Pourquoi ce redémarrage"},
                     },
                     "required": ["nom", "justification"],
+                },
+            },
+            {
+                "name": "lancer_tache_dev",
+                "description": (
+                    "Confie une tâche de développement à l'atelier Claude Code isolé, sur un "
+                    "dépôt de la liste blanche (« atrium », « loggia »). UNIQUEMENT sur demande "
+                    "explicite de Guillaume, avec une instruction précise et autonome (contexte, "
+                    "fichiers si connus, résultat attendu). Le travail se fait dans un clone "
+                    "jetable ; le résultat revient en diff, et le push sera une proposition. "
+                    "Une seule tâche à la fois."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "depot": {"type": "string", "description": "atrium ou loggia"},
+                        "instruction": {"type": "string"},
+                    },
+                    "required": ["depot", "instruction"],
+                },
+            },
+            {
+                "name": "etat_taches_dev",
+                "description": "Liste les tâches de développement (statut, dépôt, branche).",
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "lire_diff_dev",
+                "description": "Lit le diff produit par une tâche de développement terminée.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
                 },
             },
         ]
@@ -445,6 +484,45 @@ class Toolbox:
             created_by="sentinel (LLM)",
         )
         return message, proposal is None
+
+    async def _tool_lancer_tache_dev(self, args, utterance, source):
+        if self._worker is None:
+            return "L'atelier de développement n'est pas configuré (WORKER_URL).", True
+        if self._engine is None:
+            return self._MOTEUR_ABSENT, True
+        outcome = await self._engine.run_direct(
+            "dev.task",
+            {"repo": str(args.get("depot") or ""), "instruction": str(args.get("instruction") or "")},
+            utterance=utterance, source=f"{source} (via LLM)",
+        )
+        return outcome.text, not outcome.ok
+
+    async def _tool_etat_taches_dev(self, args, _utt, _src):
+        if self._worker is None:
+            return "L'atelier de développement n'est pas configuré (WORKER_URL).", True
+        try:
+            tasks = await self._worker.list_tasks()
+            health = await self._worker.health() or {}
+        except WorkerError as exc:
+            return str(exc), True
+        return _compact({
+            "authentification": health.get("auth"),
+            "push_possible": health.get("push_possible"),
+            "depots": health.get("repos"),
+            "taches": tasks[:10],
+        }), False
+
+    async def _tool_lire_diff_dev(self, args, _utt, _src):
+        if self._worker is None:
+            return "L'atelier de développement n'est pas configuré (WORKER_URL).", True
+        task_id = str(args.get("id") or "").strip()
+        if not task_id:
+            return "Précise l'identifiant de la tâche.", True
+        try:
+            diff = await self._worker.get_diff(task_id)
+        except WorkerError as exc:
+            return str(exc), True
+        return (diff[:6000] or "(aucun diff)"), False
 
     async def _tool_action_domotique(self, args, utterance, source):
         if self._ha is None or self._engine is None:

@@ -19,6 +19,7 @@ services:
       PIPER_PORT: "10200"
       DOCKER_PROXY_URL: http://sentinel-dockerproxy:2375
       DOCKER_RESTART_URL: http://sentinel-dockerproxy-restart:2375
+      WORKER_URL: http://sentinel-worker:8400
     ports:
       # Seul service exposé sur le LAN
       - "${SENTINEL_PORT:-8443}:8443"
@@ -94,6 +95,27 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
+  # Atelier de développement (Phase 3B) : Claude Code headless, ISOLÉ.
+  # Ne connaît ni Nova, ni le socket Docker, ni les jetons de sentinel-core.
+  # Clones jetables dans son volume dédié ; le push GitHub n'a lieu qu'après
+  # une proposition approuvée dans Sentinel.
+  sentinel-worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: sentinel-worker
+    restart: unless-stopped
+    environment:
+      DEV_REPOS: ${DEV_REPOS:-https://github.com/Alardware/atrium https://github.com/Alardware/loggia}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      DEV_TASK_TIMEOUT: ${DEV_TASK_TIMEOUT:-1800}
+    volumes:
+      - worker-workspace:/workspace
+    # aucun port publié : joignable uniquement par sentinel-core en interne
+
 volumes:
   whisper-models:
   piper-voices:
+  worker-workspace:

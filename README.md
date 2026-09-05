@@ -13,8 +13,8 @@ conversation, synchronisé en temps réel entre tous les appareils connectés.
 | 0 | Plan d'architecture ([docs/PLAN.md](docs/PLAN.md)) | ✅ validée |
 | 1 | Squelette voix ↔ LLM : je parle/j'écris dans le navigateur, Sentinel répond en voix et en texte | ✅ livrée |
 | 2 | Domotique : Nova (Home Assistant), intents locaux, protocoles (Forteresse…), moteur « propose puis approuve », alertes proactives | ✅ livrée |
-| **3A** | **Copilote qui observe : santé Nebula/Docker/Nova/Atrium, diagnostics, audits, rapport quotidien** | ✅ **livrée** |
-| 3B | Copilote qui agit : délégation de dev (Claude Code), maintenance Loggia/Atrium | ⏳ |
+| 3A | Copilote qui observe : santé Nebula/Docker/Nova/Atrium, diagnostics, audits, rapport quotidien | ✅ livrée |
+| **3B** | **Copilote qui agit : atelier Claude Code isolé, maintenance Loggia/Atrium, diff → proposition → push** | ✅ **livrée** |
 | 4 | UI/UX finale | ⏳ |
 | 5 | Mot d'éveil & satellites (ESP32, app HA via Assist) | ⏳ |
 
@@ -60,8 +60,19 @@ conversation, synchronisé en temps réel entre tous les appareils connectés.
 - 🌅 **Rapport quotidien** : chaque matin (heure configurable), un point complet
   dans le fil de conversation.
 
-Pas encore là (et c'est voulu) : le copilote de dev — Atrium, Loggia, délégation à
-Claude Code (Phase 3B) — et le mot d'éveil (Phase 5 — appui-pour-parler d'ici là).
+**Développer (Phase 3B)**
+- 🛠️ **Atelier Claude Code isolé** : « corrige le thème sombre de Loggia » →
+  Sentinel délègue la tâche à un conteneur dédié qui clone le dépôt GitHub
+  (liste blanche : Atrium, Loggia), travaille sur une branche `sentinel/…`,
+  puis te prévient avec le résumé et le diff.
+- 📤 **Rien ne part sans toi** : le push vers GitHub est une **proposition** à
+  approuver ; tu merges ensuite sur GitHub et tu déploies comme d'habitude
+  (HACS pour Loggia). La prod n'est jamais touchée directement.
+- 💳 **Couvert par ton forfait** : le worker s'authentifie avec ton abonnement
+  Claude Pro/Max (`claude setup-token`), pas avec les crédits API.
+
+Pas encore là (et c'est voulu) : le mot d'éveil et les satellites (Phase 5 —
+appui-pour-parler d'ici là), la surveillance du PC.
 
 ## Prérequis
 
@@ -146,6 +157,37 @@ conteneur n'existe que comme **proposition à approuver**, journalisée.
   journaux, conclusion, proposition de redémarrage dans le panneau ▤.
 - « **Fais un audit des systèmes** » → constats classés par gravité.
 - Le **rapport quotidien** apparaît dans le fil à l'heure configurée.
+
+## Atelier de développement (Phase 3B)
+
+Un conteneur `sentinel-worker` isolé exécute Claude Code en mode headless : il ne
+connaît **ni Nova, ni le socket Docker, ni les jetons de Sentinel** — seulement
+ses clones jetables, l'API Anthropic et GitHub.
+
+**Configuration (2 minutes) :**
+
+1. **Authentification Claude — via ton forfait Pro/Max** (recommandé, aucun
+   crédit API consommé) : sur ton PC où Claude Code est installé et connecté,
+   lance `claude setup-token`, copie le jeton dans `.env` →
+   `CLAUDE_CODE_OAUTH_TOKEN=...`. (Sans lui, le worker retombe sur
+   `ANTHROPIC_API_KEY`.)
+2. **Push GitHub** (optionnel) : crée un *Personal Access Token* avec la portée
+   `repo` sur tes dépôts Alardware → `GITHUB_TOKEN=...` dans `.env`. Sans lui,
+   les diffs restent consultables mais rien ne peut être poussé.
+3. `docker compose up -d --build`.
+
+**Utilisation :** demande par écrit, précisément — par exemple :
+« *Lance une tâche de dev sur loggia : le thème sombre a un contraste trop
+faible sur les cartes météo, corrige les variables de couleur concernées.* »
+Sentinel confirme le lancement (journalisé), l'atelier travaille (quelques
+minutes), puis un message t'annonce le résultat : fichiers modifiés, résumé, et
+une **proposition « pousser la branche »** dans le panneau ▤. Tu peux lire le
+diff avant (« montre-moi le diff de la tâche X »), approuver, puis ouvrir la
+PR/merger sur GitHub et déployer via HACS.
+
+Garde-fous : liste blanche de dépôts (`DEV_REPOS`), une tâche à la fois, durée
+plafonnée (`DEV_TASK_TIMEOUT`), branche `sentinel/<id>` jamais poussée sans
+proposition approuvée, secrets purgés des journaux du worker.
 
 ## Connecter Nova (Home Assistant)
 
@@ -257,6 +299,7 @@ core/                # serveur Python (FastAPI)
   app/actions/       #   LE moteur « propose puis approuve » : registre, exécuteurs
   app/ha/            #   client WebSocket Nova, protocoles, alertes
   app/monitors/      #   santé : Docker (proxy RO), système, Atrium, audits, rapport
+  app/devwork/       #   client de l'atelier de dev + veilleur de tâches
   app/brain/         #   LLM (Claude + outils), intents locaux FR, texte→parole
   app/voice/         #   clients Wyoming (whisper/piper) + sessions de capture
   app/store/         #   SQLite : conversation, propositions, journal
