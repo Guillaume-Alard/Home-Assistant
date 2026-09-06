@@ -17,6 +17,9 @@ services:
       WHISPER_PORT: "10300"
       PIPER_HOST: sentinel-piper
       PIPER_PORT: "10200"
+      # Affichage seul dans les Paramètres (mêmes valeurs que les conteneurs Wyoming)
+      WHISPER_MODEL: ${WHISPER_MODEL:-small-int8}
+      PIPER_VOICE: ${PIPER_VOICE:-fr_FR-siwis-medium}
       DOCKER_PROXY_URL: http://sentinel-dockerproxy:2375
       DOCKER_RESTART_URL: http://sentinel-dockerproxy-restart:2375
       WORKER_URL: http://sentinel-worker:8400

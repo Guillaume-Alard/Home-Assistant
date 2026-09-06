@@ -81,6 +81,20 @@ const els = {
   alertBanner: document.getElementById('alert-banner'),
   alertText: document.getElementById('alert-text'),
   alertClose: document.getElementById('alert-close'),
+  // paramètres
+  setConnexions: document.getElementById('set-connexions'),
+  setWakeword: document.getElementById('set-wakeword'),
+  setWakeavail: document.getElementById('set-wakeavail'),
+  setWakeToggle: document.getElementById('set-wake-toggle'),
+  setVoice: document.getElementById('set-voice'),
+  setModel: document.getElementById('set-model'),
+  setEffort: document.getElementById('set-effort'),
+  setMaxtok: document.getElementById('set-maxtok'),
+  setStt: document.getElementById('set-stt'),
+  setTts: document.getElementById('set-tts'),
+  setReport: document.getElementById('set-report'),
+  setTz: document.getElementById('set-tz'),
+  setProtocols: document.getElementById('set-protocols'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -122,6 +136,8 @@ let viewerTab = 'vite';   // 'vite' | 'code'
 let wakeWord = 'hey jarvis';
 let liveLevel = 0;         // niveau audio courant (0..1) → amplitude de l'orbe
 let turnCount = 0;
+let lastHello = null;      // dernier message hello (moteur/config) pour les Paramètres
+let devAtelier = null;     // dernières infos atelier (auth/push/dépôts)
 
 try { st.wakeArmed = localStorage.getItem('sentinel-wake') === '1'; } catch { /* privé */ }
 
@@ -272,6 +288,7 @@ ws.addEventListener('event', (e) => {
   const msg = e.detail;
   switch (msg.type) {
     case 'hello':
+      lastHello = msg;
       thread.clear();
       turnCount = 0;
       (msg.history || []).forEach((m) => { thread.addMessage(m); if (m.role === 'user') turnCount += 1; });
@@ -290,6 +307,7 @@ ws.addEventListener('event', (e) => {
       (msg.proposals || []).forEach((p) => st.proposals.set(p.num, p));
       renderProposals();
       updateChatMeta();
+      renderSettings();
       refreshUi();
       break;
     case 'ha_status': setNova(!!msg.connected); break;
@@ -424,6 +442,7 @@ function setView(view) {
   els.viewSettings.hidden = view !== 'settings';
   els.tabCockpit.setAttribute('aria-selected', String(view === 'cockpit'));
   els.tabSettings.setAttribute('aria-selected', String(view === 'settings'));
+  if (view === 'settings') renderSettings();
 }
 els.tabCockpit.addEventListener('click', () => setView('cockpit'));
 els.tabSettings.addEventListener('click', () => setView('settings'));
@@ -526,6 +545,7 @@ function onDevTasks(msg) {
   const previous = dev.tasks;
   dev.tasks = msg.tasks || [];
   const a = msg.atelier || {};
+  devAtelier = a;
   // en-tête concis + liaison GitHub
   const auth = a.auth ? `auth ${a.auth}` : 'auth ?';
   const nrepos = (a.repos || []).length;
@@ -551,6 +571,7 @@ function onDevTasks(msg) {
   } else {
     renderDevTasks();
   }
+  if (currentView === 'settings') renderSettings();
 }
 
 function renderDevTasks() {
@@ -841,6 +862,122 @@ function renderHistory(msg) {
   }
 }
 
+// ── Page Paramètres (réel + feuille de route) ─────────────────────────────
+function renderSettings() {
+  const h = lastHello || {};
+  const eng = h.engine || {};
+  const cfg = h.config || {};
+  els.setWakeword.textContent = `« ${wakeWord} »`;
+  els.setWakeavail.textContent = h.wake_available ? 'actif' : 'indisponible';
+  els.setWakeToggle.setAttribute('aria-checked', String(st.wakeArmed));
+  els.setWakeToggle.disabled = !h.wake_available;
+  els.setVoice.textContent = eng.piper_voice || '—';
+  els.setModel.textContent = eng.model || '—';
+  els.setEffort.textContent = eng.effort || '—';
+  els.setMaxtok.textContent = eng.max_tokens ? String(eng.max_tokens) : '—';
+  els.setStt.textContent = eng.whisper_model ? `${eng.whisper_model} · faster-whisper` : '—';
+  els.setTts.textContent = eng.piper_voice ? `${eng.piper_voice} · Piper` : '—';
+  els.setReport.textContent = cfg.daily_report ? cfg.daily_report : 'désactivé';
+  els.setTz.textContent = eng.tz || '—';
+  renderProtocols(h.protocols || []);
+  renderConnexions(h, cfg);
+}
+
+function renderProtocols(list) {
+  els.setProtocols.textContent = '';
+  if (!list.length) {
+    const s = document.createElement('span');
+    s.className = 'set-note';
+    s.textContent = 'Aucun protocole reconnu.';
+    els.setProtocols.appendChild(s);
+    return;
+  }
+  for (const p of list) {
+    const c = document.createElement('span');
+    c.className = `set-proto ${p.risque || ''}`;
+    c.textContent = p.nom;
+    els.setProtocols.appendChild(c);
+  }
+}
+
+function svcCard(o) {
+  const card = document.createElement('div');
+  card.className = 'svc' + (o.soon ? ' soon' : '');
+  const top = document.createElement('div');
+  top.className = 'svc-top';
+  const icon = document.createElement('div');
+  icon.className = 'svc-ic';
+  icon.textContent = o.ic;
+  const mid = document.createElement('div');
+  mid.style.flex = '1';
+  mid.style.minWidth = '0';
+  const nm = document.createElement('div');
+  nm.className = 'svc-name';
+  nm.textContent = o.name;
+  const status = document.createElement('div');
+  status.className = `svc-status ${o.statusCls || ''}`;
+  status.textContent = o.status;
+  mid.append(nm, status);
+  top.append(icon, mid);
+  if (o.badge) {
+    const b = document.createElement('span');
+    b.className = 'svc-badge';
+    b.textContent = o.badge;
+    top.appendChild(b);
+  }
+  card.appendChild(top);
+  if (o.desc) {
+    const d = document.createElement('div');
+    d.className = 'svc-desc';
+    d.textContent = o.desc;
+    card.appendChild(d);
+  }
+  return card;
+}
+
+function renderConnexions(h, cfg) {
+  const grid = els.setConnexions;
+  grid.textContent = '';
+  const at = devAtelier || {};
+  const real = [
+    { ic: 'HA', name: 'Home Assistant (Nova)',
+      status: h.ha_configured ? (h.ha_connected ? 'Connecté' : 'Déconnecté') : 'Non configuré',
+      statusCls: h.ha_configured ? (h.ha_connected ? 'on' : 'warn') : '',
+      desc: 'Lumières, chauffage, volets, scènes, capteurs.' },
+    { ic: 'GH', name: 'GitHub (atelier de dev)',
+      status: h.dev_configured ? (at.push_possible ? `push prêt${at.auth ? ' · ' + at.auth : ''}` : 'jeton absent') : 'désactivé',
+      statusCls: h.dev_configured ? (at.push_possible ? 'on' : 'warn') : '',
+      desc: 'Branches, diffs, push après proposition approuvée.' },
+    { ic: 'IA', name: 'Cerveau (Anthropic)',
+      status: cfg.anthropic ? 'Actif' : 'Clé absente',
+      statusCls: cfg.anthropic ? 'on' : 'warn',
+      desc: 'Compréhension, dialogue et décisions.' },
+    { ic: 'AS', name: 'Agent Assist (Nova)',
+      status: cfg.assist ? 'Actif' : 'Désactivé',
+      statusCls: cfg.assist ? 'on' : '',
+      desc: 'Sentinel comme agent conversationnel de Home Assistant.' },
+  ];
+  if (cfg.docker) real.push({ ic: 'DK', name: 'Surveillance Docker', status: 'Active · lecture', statusCls: 'on', desc: 'État des conteneurs, mémoire, redémarrage sur proposition.' });
+  if (cfg.atrium) real.push({ ic: 'AT', name: 'Atrium', status: 'Surveillé', statusCls: 'on', desc: 'Disponibilité et latence du service.' });
+  for (const s of real) grid.appendChild(svcCard(s));
+
+  const soon = [
+    { ic: 'SP', name: 'Spotify', desc: 'Lecture, volume, transfert entre pièces.' },
+    { ic: 'GM', name: 'Gmail', desc: 'Résumés, brouillons, tri automatique.' },
+    { ic: 'CA', name: 'Google Agenda', desc: 'Créneaux, invitations, rappels vocaux.' },
+    { ic: 'DR', name: 'Google Drive', desc: 'Recherche documentaire et pièces jointes.' },
+    { ic: 'NO', name: 'Notion', desc: 'Notes de réunion et base de tâches.' },
+    { ic: 'ME', name: 'Météo & trafic', desc: 'Briefing du matin, alertes trajet.' },
+  ];
+  for (const s of soon) grid.appendChild(svcCard({ ...s, status: 'Bientôt', badge: 'bientôt', soon: true }));
+}
+
+function setSettingsSection(name) {
+  document.querySelectorAll('.set-navitem').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.sec === name)));
+  document.querySelectorAll('.set-sec').forEach((s) => { s.hidden = s.dataset.sec !== name; });
+}
+document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
+
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────
 let wakeRetryTimer = null;
 let gestureHooked = false;
@@ -850,6 +987,7 @@ function renderWakeBtn() {
   els.wakeBtn.title = st.wakeArmed
     ? `Veille active — dis « ${wakeWord} » (cliquer pour couper)`
     : `Activer la veille au mot d'éveil (« ${wakeWord} »)`;
+  els.setWakeToggle.setAttribute('aria-checked', String(st.wakeArmed));
 }
 function saveWakePref() { try { localStorage.setItem('sentinel-wake', st.wakeArmed ? '1' : '0'); } catch { /* privé */ } }
 
@@ -922,7 +1060,9 @@ function chime() {
   osc.start(now); osc.stop(now + 0.3);
 }
 
-els.wakeBtn.addEventListener('click', () => { st.wakeArmed = !st.wakeArmed; saveWakePref(); renderWakeBtn(); syncWake(); });
+function toggleWake() { st.wakeArmed = !st.wakeArmed; saveWakePref(); renderWakeBtn(); syncWake(); }
+els.wakeBtn.addEventListener('click', toggleWake);
+els.setWakeToggle.addEventListener('click', () => { if (!els.setWakeToggle.disabled) toggleWake(); });
 document.addEventListener('visibilitychange', () => syncWake());
 
 // ── Transcript (texte sous l'orbe) ────────────────────────────────────────

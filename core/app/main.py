@@ -745,6 +745,25 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "protocols": [
                 {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
             ],
+            # Infos moteur et capacités (affichage seul) pour la page Paramètres.
+            "engine": {
+                "model": sentinel.settings.model,
+                "effort": sentinel.settings.effort,
+                "max_tokens": sentinel.settings.max_tokens,
+                "whisper_model": sentinel.settings.whisper_model,
+                "piper_voice": sentinel.settings.piper_voice,
+                "wake_model": sentinel.settings.wake_model,
+                "tz": sentinel.settings.tz,
+            },
+            "config": {
+                "ha": bool(sentinel.settings.ha_url),
+                "worker": bool(sentinel.settings.worker_url),
+                "atrium": bool(sentinel.settings.atrium_url),
+                "docker": bool(sentinel.settings.docker_proxy_url),
+                "assist": bool(sentinel.settings.assist_token),
+                "anthropic": bool(sentinel.settings.anthropic_api_key),
+                "daily_report": sentinel.settings.daily_report,
+            },
         },
     )
 

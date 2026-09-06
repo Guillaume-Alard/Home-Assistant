@@ -169,11 +169,84 @@
     </section>
   </main>
 
-  <!-- ── Vue PARAMÈTRES (étoffée en phase 4) ─────────────────────────────── -->
+  <!-- ── Vue PARAMÈTRES ──────────────────────────────────────────────────── -->
   <main id="view-settings" class="settings" hidden>
-    <div class="settings-placeholder">
-      <div class="head-title">Paramètres</div>
-      <p class="pane-empty">Connexions, voix &amp; réveil, moteur, confidentialité — bientôt.</p>
+    <nav class="set-nav" aria-label="Sections des paramètres">
+      <div class="set-nav-title">Paramètres</div>
+      <button class="set-navitem" type="button" data-sec="connexions" aria-selected="true">Connexions</button>
+      <button class="set-navitem" type="button" data-sec="voix" aria-selected="false">Voix &amp; réveil</button>
+      <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false">Moteur &amp; mémoire</button>
+      <button class="set-navitem" type="button" data-sec="securite" aria-selected="false">Confidentialité</button>
+      <div class="set-nav-note">Sentinel tourne en local.<br>Aucune donnée n'est envoyée sans ton accord.</div>
+    </nav>
+
+    <div class="set-content">
+      <section class="set-sec" data-sec="connexions">
+        <div class="set-title">Connexions</div>
+        <div class="set-sub">Ce que Sentinel peut lire, écrire et piloter à ta place.</div>
+        <div class="set-grid" id="set-connexions"></div>
+      </section>
+
+      <section class="set-sec" data-sec="voix" hidden>
+        <div class="set-title">Voix &amp; réveil</div>
+        <div class="set-cards">
+          <div class="set-card">
+            <div class="set-card-h">Mot de réveil</div>
+            <div class="set-row"><span class="set-k">Mot</span><span class="set-v" id="set-wakeword">—</span></div>
+            <div class="set-row"><span class="set-k">Détecteur</span><span class="set-v" id="set-wakeavail">—</span></div>
+            <div class="set-toggle-row">
+              <span>Veille sur cet appareil</span>
+              <button id="set-wake-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-label="Veille au mot d'éveil"></button>
+            </div>
+            <p class="set-note">Bientôt : « Luna » (prononcé « Louna ») comme mot de réveil.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-card-h">Voix de Sentinel</div>
+            <div class="set-row"><span class="set-k">Moteur</span><span class="set-v">Piper · local</span></div>
+            <div class="set-row"><span class="set-k">Voix</span><span class="set-v" id="set-voice">—</span></div>
+            <p class="set-note">Bientôt : voix féminine dédiée à Luna.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="moteur" hidden>
+        <div class="set-title">Moteur &amp; mémoire</div>
+        <div class="set-cards">
+          <div class="set-card">
+            <div class="set-card-h">Intelligence</div>
+            <div class="set-row"><span class="set-k">LLM</span><span class="set-v" id="set-model">—</span></div>
+            <div class="set-row"><span class="set-k">Effort de réflexion</span><span class="set-v" id="set-effort">—</span></div>
+            <div class="set-row"><span class="set-k">Tokens max / réponse</span><span class="set-v" id="set-maxtok">—</span></div>
+          </div>
+          <div class="set-card">
+            <div class="set-card-h">Voix &amp; système (local)</div>
+            <div class="set-row"><span class="set-k">Reconnaissance (STT)</span><span class="set-v" id="set-stt">—</span></div>
+            <div class="set-row"><span class="set-k">Synthèse (TTS)</span><span class="set-v" id="set-tts">—</span></div>
+            <div class="set-row"><span class="set-k">Rapport quotidien</span><span class="set-v" id="set-report">—</span></div>
+            <div class="set-row"><span class="set-k">Fuseau</span><span class="set-v" id="set-tz">—</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="securite" hidden>
+        <div class="set-title">Confidentialité &amp; sécurité</div>
+        <div class="set-sub">Sentinel te propose, tu décides. Rien de sensible ne s'exécute sans ton accord.</div>
+        <div class="set-cards">
+          <div class="set-card">
+            <div class="set-card-h">Garde-fous</div>
+            <ul class="set-list">
+              <li>Actions sensibles (serrures, alarme, désarmement) : approbation <b>uniquement dans cette interface</b>, jamais à la voix. <span class="lock">verrouillé</span></li>
+              <li>Chaque action passe par une <b>proposition</b> que tu approuves, refuses ou reportes.</li>
+              <li>L'atelier de dev est <b>isolé</b> : il ne voit ni Nova, ni le socket Docker, ni tes jetons.</li>
+              <li>Fonctionnement <b>local</b> sur le réseau ; aucune donnée envoyée à un tiers.</li>
+            </ul>
+          </div>
+          <div class="set-card">
+            <div class="set-card-h">Protocoles reconnus</div>
+            <div id="set-protocols" class="set-protos"><span class="set-note">—</span></div>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
 

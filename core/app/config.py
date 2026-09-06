@@ -46,6 +46,10 @@ class Settings:
     whisper_port: int
     piper_host: str
     piper_port: int
+    # Affichage seul (le modèle STT et la voix TTS sont passés aux conteneurs
+    # Wyoming ; on les reçoit ici uniquement pour l'afficher dans les Paramètres)
+    whisper_model: str
+    piper_voice: str
     # Mot d'éveil (Phase 5A) — WAKE_HOST vide = désactivé
     wake_host: str
     wake_port: int
@@ -98,6 +102,8 @@ class Settings:
             whisper_port=_int(os.environ.get("WHISPER_PORT"), 10300),
             piper_host=os.environ.get("PIPER_HOST", "sentinel-piper"),
             piper_port=_int(os.environ.get("PIPER_PORT"), 10200),
+            whisper_model=os.environ.get("WHISPER_MODEL", "small-int8").strip() or "small-int8",
+            piper_voice=os.environ.get("PIPER_VOICE", "fr_FR-siwis-medium").strip() or "fr_FR-siwis-medium",
             wake_host=os.environ.get("WAKE_HOST", "").strip(),
             wake_port=_int(os.environ.get("WAKE_PORT"), 10400),
             wake_model=os.environ.get("WAKEWORD_MODEL", "hey_jarvis").strip() or "hey_jarvis",
