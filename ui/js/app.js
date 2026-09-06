@@ -97,6 +97,12 @@ const els = {
   setReport: document.getElementById('set-report'),
   setTz: document.getElementById('set-tz'),
   setProtocols: document.getElementById('set-protocols'),
+  // mémoire (Paramètres)
+  memoireForm: document.getElementById('memoire-form'),
+  memoireCat: document.getElementById('memoire-cat'),
+  memoireInput: document.getElementById('memoire-input'),
+  memoireList: document.getElementById('memoire-list'),
+  memoireCount: document.getElementById('memoire-count'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -344,6 +350,7 @@ ws.addEventListener('event', (e) => {
     case 'dev_diff': onDevDiff(msg); break;
     case 'sante': renderSante(msg); break;
     case 'historique': renderHistory(msg); break;
+    case 'memoires': renderMemoires(msg); break;
     default: break;
   }
 });
@@ -983,8 +990,62 @@ function renderConnexions(h, cfg) {
 function setSettingsSection(name) {
   document.querySelectorAll('.set-navitem').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.sec === name)));
   document.querySelectorAll('.set-sec').forEach((s) => { s.hidden = s.dataset.sec !== name; });
+  if (name === 'memoire' && ws.alive) ws.sendJSON({ type: 'memoires' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
+
+// ── Mémoire (Paramètres › Mémoire) ────────────────────────────────────────
+const MEM_CATS = {
+  preference: 'Préférences', habitude: 'Habitudes',
+  style: 'Style de langage', fait: 'À savoir',
+};
+
+function renderMemoires(msg) {
+  const mems = msg.memories || [];
+  els.memoireCount.textContent = mems.length ? String(mems.length) : '';
+  els.memoireList.textContent = '';
+  if (!mems.length) {
+    els.memoireList.appendChild(emptyLine('Luna n’a encore rien retenu.'));
+    return;
+  }
+  const byCat = {};
+  for (const m of mems) (byCat[m.category] || (byCat[m.category] = [])).push(m);
+  for (const [cat, label] of Object.entries(MEM_CATS)) {
+    const items = byCat[cat];
+    if (!items) continue;
+    const head = document.createElement('div');
+    head.className = 'mem-cat';
+    head.textContent = label;
+    els.memoireList.appendChild(head);
+    for (const m of items) {
+      const row = document.createElement('div');
+      row.className = 'mem-row';
+      const text = document.createElement('span');
+      text.className = 'mem-text';
+      text.textContent = m.content;
+      const src = document.createElement('span');
+      src.className = 'mem-src';
+      src.textContent = m.source === 'manuel' ? 'ajouté' : 'appris';
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'mem-del';
+      del.textContent = '✕';
+      del.title = 'Oublier ce souvenir';
+      del.setAttribute('aria-label', `Oublier : ${m.content}`);
+      del.addEventListener('click', () => ws.sendJSON({ type: 'memoire_delete', id: m.id }));
+      row.append(text, src, del);
+      els.memoireList.appendChild(row);
+    }
+  }
+}
+
+els.memoireForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const content = els.memoireInput.value.trim();
+  if (!content || !ws.alive) return;
+  ws.sendJSON({ type: 'memoire_add', content, category: els.memoireCat.value });
+  els.memoireInput.value = '';
+});
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────
 let wakeRetryTimer = null;

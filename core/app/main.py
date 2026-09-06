@@ -4,17 +4,18 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
 
   Client → serveur (JSON) : chat, audio_start, audio_end, audio_cancel, cancel,
                             proposal_decision, wake_start, wake_stop, ping —
-                            et les requêtes de lecture des panneaux :
-                            dev_tasks, dev_log, dev_diff, sante, historique
+                            les requêtes de lecture des panneaux (dev_tasks,
+                            dev_log, dev_diff, sante, historique, memoires) et la
+                            gestion de la mémoire (memoire_add, memoire_delete)
   Client → serveur (binaire) : PCM 16 bits mono (entre audio_start et audio_end)
   Serveur → clients (JSON) : hello, status, message, assistant_start,
                              assistant_delta, assistant_end, speak_start,
                              speak_end, notice, error, alert, ha_status,
                              activity, proposal_new, proposal_update,
-                             dev_status, wake, wake_error, pong — et les
-                             réponses de panneaux
-                             (dev_tasks, dev_log, dev_diff, sante, historique,
-                             au seul client demandeur)
+                             dev_status, wake, wake_error, pong — les réponses de
+                             panneaux (dev_tasks, dev_log, dev_diff, sante,
+                             historique, au seul client demandeur) et memoires
+                             (rediffusé à tous après un changement de mémoire)
   Serveur → client d'origine (binaire) : PCM de la voix de Sentinel
 
 Le fil de conversation est unique et partagé : chaque événement de conversation
@@ -44,6 +45,7 @@ from .actions.engine import ActionEngine
 from .actions.executors import build_registry
 from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
+from .brain.memory import format_profile, normalize_category
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.toolbox import Toolbox
 from .config import Settings, find_ui_dir
@@ -204,12 +206,16 @@ class Sentinel:
         toolbox = Toolbox(
             self.ha, self.engine, self.protocols, store,
             health=self.health, docker=self._docker, worker=self._worker,
+            on_memory_change=self._broadcast_memoires,
         )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
             settings.config_dir / "intents.yml", settings.tz, health=self.health,
         )
-        self.brain = Brain(settings, toolbox, on_activity=self._on_activity)
+        self.brain = Brain(
+            settings, toolbox,
+            on_activity=self._on_activity, memory_provider=self._memory_context,
+        )
         self._report_task: asyncio.Task | None = None
         self._devwatch_task: asyncio.Task | None = None
         self._dev_running: dict | None = None  # tâche de dev en cours (cache pour hello)
@@ -235,6 +241,27 @@ class Sentinel:
     async def _on_proposal_change(self, change: str, proposal: dict) -> None:
         kind = "proposal_new" if change == "new" else "proposal_update"
         await self.hub.broadcast({"type": kind, "proposal": proposal})
+
+    # ── Mémoire persistante (Phase 1) ────────────────────────────────────
+
+    async def _memory_context(self) -> str:
+        """Bloc « ce que je sais de toi » injecté dans le prompt (vide si coupée)."""
+        if not self.settings.memory_enabled:
+            return ""
+        try:
+            mems = await self.store.list_memories(limit=self.settings.memory_window)
+        except Exception:
+            log.exception("Lecture de la mémoire impossible")
+            return ""
+        return format_profile(mems)
+
+    async def _memoires_payload(self) -> dict:
+        mems = await self.store.list_memories(limit=500)
+        return {"type": "memoires", "enabled": self.settings.memory_enabled, "memories": mems}
+
+    async def _broadcast_memoires(self) -> None:
+        """Rafraîchit Paramètres › Mémoire sur tous les appareils connectés."""
+        await self.hub.broadcast(await self._memoires_payload())
 
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
@@ -781,6 +808,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "assist": bool(sentinel.settings.assist_token),
                 "anthropic": bool(sentinel.settings.anthropic_api_key),
                 "daily_report": sentinel.settings.daily_report,
+                "memory": sentinel.settings.memory_enabled,
             },
         },
     )
@@ -922,6 +950,15 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "historique":
         await _reply_historique(sentinel, client)
 
+    elif mtype == "memoires":
+        await sentinel.hub.send(client, await sentinel._memoires_payload())
+
+    elif mtype == "memoire_add":
+        await _memoire_add(sentinel, msg)
+
+    elif mtype == "memoire_delete":
+        await _memoire_delete(sentinel, msg)
+
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
 
@@ -1045,6 +1082,33 @@ async def _reply_historique(sentinel: Sentinel, client: Client) -> None:
     await sentinel.hub.send(
         client, {"type": "historique", "journal": journal, "proposals": proposals[:40]}
     )
+
+
+# ── Mémoire : ajout/suppression manuels par Guillaume (Paramètres › Mémoire) ──
+#
+# La mémoire est un simple enrichissement de contexte : rien n'agit sur le monde
+# réel, donc pas de passage par le moteur « propose puis approuve ». Guillaume
+# garde le contrôle direct (il voit, ajoute et supprime), ce qui EST le garde-fou
+# pour cette capacité. Après chaque changement, la liste est rediffusée à tous.
+
+
+async def _memoire_add(sentinel: Sentinel, msg: dict) -> None:
+    content = str(msg.get("content") or "").strip()[:500]
+    if not content:
+        return
+    category = normalize_category(msg.get("category"))
+    await sentinel.store.add_memory(
+        content, category=category, subject="guillaume", source="manuel"
+    )
+    await sentinel._broadcast_memoires()
+
+
+async def _memoire_delete(sentinel: Sentinel, msg: dict) -> None:
+    mem_id = str(msg.get("id") or "").strip()
+    if not mem_id:
+        return
+    await sentinel.store.delete_memory(mem_id)
+    await sentinel._broadcast_memoires()
 
 
 # L'UI statique en dernier : les routes déclarées avant restent prioritaires.

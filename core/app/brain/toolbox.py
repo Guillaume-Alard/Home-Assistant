@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
 from ..devwork.worker_client import WorkerClient, WorkerError
@@ -46,6 +47,9 @@ ACTIVITY_LABELS = {
     "lancer_tache_dev": "délègue à l'atelier de dev…",
     "etat_taches_dev": "consulte l'atelier de dev…",
     "lire_diff_dev": "relit un diff…",
+    "memoriser": "note quelque chose…",
+    "lister_souvenirs": "relit ce qu'elle sait…",
+    "oublier": "met à jour sa mémoire…",
 }
 
 
@@ -63,6 +67,7 @@ class Toolbox:
         health: HealthService | None = None,
         docker: DockerMonitor | None = None,
         worker: WorkerClient | None = None,
+        on_memory_change: Callable[[], Awaitable[None]] | None = None,
     ):
         self._ha = ha
         self._engine = engine
@@ -71,6 +76,9 @@ class Toolbox:
         self._health = health
         self._docker = docker
         self._worker = worker
+        # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
+        # quelque chose. Optionnel : absent en test unitaire.
+        self._on_memory_change = on_memory_change
 
     _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
     _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova/Docker non configurés)."
@@ -279,6 +287,54 @@ class Toolbox:
             {
                 "name": "lire_diff_dev",
                 "description": "Lit le diff produit par une tâche de développement terminée.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
+                },
+            },
+            {
+                "name": "memoriser",
+                "description": (
+                    "Mémorise durablement une information utile sur Guillaume pour "
+                    "personnaliser tes futures réponses : une préférence, une habitude, "
+                    "la façon dont il aime qu'on lui parle, ou un fait stable de sa vie. "
+                    "Enrichissement de contexte UNIQUEMENT — n'agit jamais sur la maison. "
+                    "Ne mémorise pas de banalités ni rien de sensible (mots de passe, "
+                    "codes, données bancaires). Guillaume voit et peut supprimer chaque "
+                    "souvenir dans Paramètres › Mémoire."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "contenu": {
+                            "type": "string",
+                            "description": "Le fait à retenir, court et clair, à la 3e personne "
+                            "(ex. « Préfère des réponses très courtes »).",
+                        },
+                        "categorie": {
+                            "type": "string",
+                            "enum": ["preference", "habitude", "style", "fait"],
+                            "description": "preference | habitude | style (de langage) | fait",
+                        },
+                    },
+                    "required": ["contenu"],
+                },
+            },
+            {
+                "name": "lister_souvenirs",
+                "description": (
+                    "Liste ce que tu as retenu de Guillaume, avec l'identifiant de chaque "
+                    "souvenir (utile pour en oublier un précis)."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "oublier",
+                "description": (
+                    "Oublie (supprime définitivement) un souvenir précis, sur demande de "
+                    "Guillaume. Donne son `id` — consulte lister_souvenirs si tu ne l'as pas."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"id": {"type": "string"}},
@@ -604,3 +660,50 @@ class Toolbox:
             created_by="sentinel (LLM)",
         )
         return message, proposal is None
+
+    # Mémoire (enrichissement de contexte — JAMAIS le moteur d'actions) ────
+
+    async def _notify_memory_change(self) -> None:
+        if self._on_memory_change is not None:
+            try:
+                await self._on_memory_change()
+            except Exception:
+                log.exception("Notification de changement de mémoire impossible")
+
+    async def _tool_memoriser(self, args, _utt, _src):
+        from ..norm import normalize
+        from .memory import normalize_category
+
+        contenu = str(args.get("contenu") or "").strip()[:500]
+        if not contenu:
+            return "Précise ce que je dois retenir.", True
+        category = normalize_category(args.get("categorie"))
+        # Anti-doublon : on ne réécrit pas ce qu'on sait déjà (comparaison sans accents/casse)
+        target = normalize(contenu)
+        for m in await self._store.list_memories(subject="guillaume", limit=200):
+            if normalize(m.get("content") or "") == target:
+                return "C'est déjà noté.", False
+        await self._store.add_memory(
+            contenu, category=category, subject="guillaume", source="luna"
+        )
+        await self._notify_memory_change()
+        return "C'est noté.", False
+
+    async def _tool_lister_souvenirs(self, _args, _utt, _src):
+        mems = await self._store.list_memories(subject="guillaume", limit=200)
+        if not mems:
+            return "Je n'ai encore rien retenu de particulier.", False
+        return _compact([
+            {"id": m["id"], "categorie": m["category"], "contenu": m["content"]}
+            for m in mems
+        ]), False
+
+    async def _tool_oublier(self, args, _utt, _src):
+        mem_id = str(args.get("id") or "").strip()
+        if not mem_id:
+            return "Précise l'identifiant du souvenir à oublier.", True
+        removed = await self._store.delete_memory(mem_id)
+        if not removed:
+            return "Je n'ai pas trouvé ce souvenir.", True
+        await self._notify_memory_change()
+        return "C'est oublié.", False

@@ -58,6 +58,22 @@ CREATE TABLE IF NOT EXISTS journal (
     outcome       TEXT NOT NULL,      -- ok | refused | failed | needs_confirmation | created | decided
     detail        TEXT NOT NULL DEFAULT ''
 );
+
+-- Mémoire persistante (Phase 1) : ce que Luna apprend de l'utilisateur pour
+-- personnaliser ses réponses. ENRICHISSEMENT DE CONTEXTE UNIQUEMENT — aucune
+-- action sur le monde réel n'en découle jamais. `subject` est prêt pour la
+-- reconnaissance de locuteur (Phase 2) sans migration.
+CREATE TABLE IF NOT EXISTS memories (
+    id          TEXT PRIMARY KEY,
+    subject     TEXT NOT NULL DEFAULT 'guillaume',
+    category    TEXT NOT NULL DEFAULT 'fait',   -- preference | habitude | style | fait
+    content     TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'luna',    -- luna | manuel
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memories_subject
+    ON memories (subject, created_at);
 """
 
 
@@ -215,3 +231,72 @@ class Store:
             "SELECT * FROM journal ORDER BY id DESC LIMIT ?", (limit,)
         )
         return [dict(r) for r in await cursor.fetchall()]
+
+    # ── Mémoire persistante (Phase 1) ────────────────────────────────────
+
+    async def add_memory(
+        self,
+        content: str,
+        *,
+        category: str = "fait",
+        subject: str = "guillaume",
+        source: str = "luna",
+    ) -> dict:
+        assert self._db is not None, "Store non ouvert"
+        now = _now_iso()
+        record = {
+            "id": uuid.uuid4().hex[:12],
+            "subject": subject,
+            "category": category,
+            "content": content,
+            "source": source,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self._db.execute(
+            "INSERT INTO memories (id, subject, category, content, source, created_at, updated_at)"
+            " VALUES (:id, :subject, :category, :content, :source, :created_at, :updated_at)",
+            record,
+        )
+        await self._db.commit()
+        return record
+
+    async def list_memories(self, subject: str | None = None, limit: int = 200) -> list[dict]:
+        """Les `limit` souvenirs les plus récents, en ordre chronologique."""
+        assert self._db is not None, "Store non ouvert"
+        if subject:
+            cursor = await self._db.execute(
+                "SELECT * FROM memories WHERE subject = ?"
+                " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (subject, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM memories ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (limit,),
+            )
+        return [dict(r) for r in reversed(await cursor.fetchall())]
+
+    async def get_memory(self, mem_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT * FROM memories WHERE id = ?", (mem_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_memory(self, mem_id: str, **fields) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        fields = {k: v for k, v in fields.items() if k in ("content", "category", "subject")}
+        if fields:
+            fields["updated_at"] = _now_iso()
+            keys = ", ".join(f"{k} = ?" for k in fields)
+            await self._db.execute(
+                f"UPDATE memories SET {keys} WHERE id = ?", (*fields.values(), mem_id)
+            )
+            await self._db.commit()
+        return await self.get_memory(mem_id)
+
+    async def delete_memory(self, mem_id: str) -> bool:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0

@@ -88,6 +88,12 @@ class Settings:
     # Agent conversationnel Assist (Phase 5B) — vide = endpoint /v1 désactivé
     assist_token: str = ""
 
+    # Mémoire persistante (Phase 1) — SENTINEL_MEMORY=off coupe l'injection du profil
+    # dans le prompt (les souvenirs restent stockés) ; memory_window borne le nombre
+    # de souvenirs les plus récents injectés à chaque tour.
+    memory_enabled: bool = True
+    memory_window: int = 60
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -137,4 +143,7 @@ class Settings:
             daily_report=os.environ.get("SENTINEL_DAILY_REPORT", "").strip(),
             container_mem_mo=_int(os.environ.get("SENTINEL_CONTAINER_MEM_MO"), 1500),
             assist_token=os.environ.get("SENTINEL_ASSIST_TOKEN", "").strip(),
+            memory_enabled=os.environ.get("SENTINEL_MEMORY", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            memory_window=_int(os.environ.get("SENTINEL_MEMORY_WINDOW"), 60),
         )

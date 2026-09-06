@@ -160,8 +160,36 @@ def test_hello_et_sante(client):
         for key in ("effort", "whisper_model", "piper_voice", "wake_model", "tz"):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
-        for key in ("ha", "worker", "assist", "anthropic"):
+        for key in ("ha", "worker", "assist", "anthropic", "memory"):
             assert key in hello["config"]
+
+
+def test_memoire_via_ws(client):
+    """Ajout / lecture / suppression de souvenirs par l'UI, rediffusés à tous."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive()  # hello
+
+        ws.send_text(json.dumps({
+            "type": "memoire_add",
+            "content": "Préfère les réponses courtes",
+            "category": "preference",
+        }))
+        pushed = json.loads(ws.receive()["text"])
+        assert pushed["type"] == "memoires"
+        assert [m["content"] for m in pushed["memories"]] == ["Préfère les réponses courtes"]
+        assert pushed["memories"][0]["source"] == "manuel"
+        assert pushed["memories"][0]["category"] == "preference"
+        mem_id = pushed["memories"][0]["id"]
+
+        # Lecture explicite (réponse au seul demandeur)
+        ws.send_text(json.dumps({"type": "memoires"}))
+        listing = json.loads(ws.receive()["text"])
+        assert listing["type"] == "memoires" and len(listing["memories"]) == 1
+
+        # Suppression → rediffusion d'une liste vide
+        ws.send_text(json.dumps({"type": "memoire_delete", "id": mem_id}))
+        after = json.loads(ws.receive()["text"])
+        assert after["type"] == "memoires" and after["memories"] == []
 
 
 def test_tour_ecrit(client, fake_brain):

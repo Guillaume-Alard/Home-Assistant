@@ -77,6 +77,11 @@ et « loggia » (le dashboard Lovelace installé via HACS). Le travail se fait d
 clone jetable ; le résultat revient en diff que Guillaume relit, et le push vers \
 GitHub est une proposition à approuver. Formule des instructions précises et \
 autonomes ; une seule tâche à la fois.
+- Te souvenir de Guillaume : au fil des échanges, retiens discrètement avec \
+`memoriser` ce qui est DURABLEMENT utile (ses préférences, ses habitudes, la façon \
+dont il aime qu'on lui parle, les faits stables de sa vie). Oublie sur demande avec \
+`oublier`. C'est de la mémoire de contexte, jamais une action sur la maison ; \
+Guillaume voit et contrôle tout dans Paramètres › Mémoire.
 - Pour toute modification au-delà de la domotique courante (services Home Assistant \
 quelconques, redémarrage d'un conteneur, push GitHub…), tu ne peux PAS agir \
 directement : cela passe par une proposition que Guillaume approuvera ou refusera. \
@@ -95,6 +100,10 @@ tu ne sais pas.
 les journaux (logs_conteneur), et seulement ensuite conclus et propose une action.
 - N'agis que sur demande explicite de Guillaume — de ta propre initiative, tu \
 proposes, tu n'exécutes pas.
+- Mémoire : ne retiens que ce qui te servira plus tard — pas les banalités d'un \
+échange ponctuel, et JAMAIS de secret (mot de passe, code, données bancaires). Ne \
+redemande pas ce que tu sais déjà. Sois discrète : n'annonce pas chaque chose que tu \
+notes, sauf si Guillaume te demande ce que tu retiens.
 - Le déverrouillage et le désarmement sont sensibles : tes outils ne les font pas. \
 Invite Guillaume à donner l'ordre directement à la voix (il devra confirmer), et \
 mentionne que c'est le protocole de sécurité.
@@ -103,7 +112,7 @@ mentionne que c'est le protocole de sécurité.
 """
 
 
-def _system_blocks(settings: Settings) -> list[dict]:
+def _system_blocks(settings: Settings, memory_text: str = "") -> list[dict]:
     try:
         tz = ZoneInfo(settings.tz)
     except Exception:  # tzdata absente ou TZ invalide : on ne casse pas un tour pour ça
@@ -113,12 +122,24 @@ def _system_blocks(settings: Settings) -> list[dict]:
         f"Nous sommes le {date_francaise(now)} et il est "
         f"{now.strftime('%H:%M')} ({settings.tz})."
     )
-    return [
+    blocks = [
         # Bloc stable en premier + cache : les tours suivants relisent le cache
         {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
         # Bloc variable (date/heure) après le point de cache
         {"type": "text", "text": date_fr},
     ]
+    # Mémoire persistante : bloc variable, APRÈS le point de cache (il évolue).
+    if memory_text:
+        blocks.append({
+            "type": "text",
+            "text": (
+                "Ce que tu sais de Guillaume (mémoire persistante, apprise au fil de vos "
+                "échanges). Sers-t'en pour personnaliser tes réponses et respecter ses "
+                "préférences ; ne la récite pas telle quelle, ne l'évoque que si c'est "
+                "utile.\n" + memory_text
+            ),
+        })
+    return blocks
 
 
 class Brain:
@@ -127,10 +148,14 @@ class Brain:
         settings: Settings,
         toolbox: Toolbox | None = None,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
+        memory_provider: Callable[[], Awaitable[str]] | None = None,
     ):
         self._settings = settings
         self._toolbox = toolbox
         self._on_activity = on_activity
+        # Fournit le bloc « ce que je sais de toi » injecté dans le prompt (async :
+        # il lit le Store). Absent en test unitaire → mémoire vide, comportement inchangé.
+        self._memory_provider = memory_provider
         self._client: anthropic.AsyncAnthropic | None = (
             anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
             if settings.anthropic_api_key
@@ -155,12 +180,21 @@ class Brain:
         messages: list[dict] = list(history)
         tools = self._toolbox.specs() if self._toolbox else None
 
+        # Mémoire lue une seule fois pour tout le tour (stable entre les rounds d'outils).
+        memory_text = ""
+        if self._memory_provider is not None:
+            try:
+                memory_text = await self._memory_provider()
+            except Exception:
+                log.exception("Lecture de la mémoire impossible — tour sans profil")
+                memory_text = ""
+
         try:
             for round_no in range(MAX_TOOL_ROUNDS):
                 kwargs: dict = dict(
                     model=s.model,
                     max_tokens=s.max_tokens,
-                    system=_system_blocks(s),
+                    system=_system_blocks(s, memory_text),
                     output_config={"effort": s.effort},
                     messages=messages,
                 )

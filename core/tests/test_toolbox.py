@@ -63,6 +63,7 @@ async def test_specs_stables_et_completes(box):
         "creer_proposition", "lister_propositions", "liste_pieces", "chercher_entites",
         "sante_systemes", "logs_conteneur", "audit_systemes", "redemarrer_conteneur",
         "lancer_tache_dev", "etat_taches_dev", "lire_diff_dev",
+        "memoriser", "lister_souvenirs", "oublier",
     ]
     assert all(s["description"] for s in specs)
 
@@ -203,3 +204,58 @@ async def test_proposition_de_service_sensible_escaladee(box):
     _, msg = await engine.decide(pending["num"], "approve", via="voice")
     assert "interface" in msg
     assert box.calls == []
+
+
+# ── Mémoire (Phase 1) : enrichissement de contexte, jamais une action ─────────
+
+async def test_memoriser_puis_lister(box):
+    content, is_error = await _run(box, "memoriser", {
+        "contenu": "Préfère des réponses très courtes", "categorie": "preference",
+    })
+    assert not is_error and "noté" in content.lower()
+
+    stored = await box.store.list_memories(subject="guillaume")
+    assert [m["content"] for m in stored] == ["Préfère des réponses très courtes"]
+    assert stored[0]["category"] == "preference"
+    assert stored[0]["source"] == "luna"
+
+    listing, is_error = await _run(box, "lister_souvenirs", {})
+    assert not is_error
+    data = json.loads(listing)
+    assert data[0]["contenu"] == "Préfère des réponses très courtes"
+    assert data[0]["id"] == stored[0]["id"]
+
+
+async def test_memoriser_anti_doublon(box):
+    await _run(box, "memoriser", {"contenu": "Habite à Lyon", "categorie": "fait"})
+    # Même contenu à la casse/accents près → pas de second enregistrement
+    content, _ = await _run(box, "memoriser", {"contenu": "habite à lyon"})
+    assert "déjà" in content.lower()
+    assert len(await box.store.list_memories(subject="guillaume")) == 1
+
+
+async def test_categorie_inconnue_repli_fait(box):
+    await _run(box, "memoriser", {"contenu": "Aime le jazz", "categorie": "n'importe quoi"})
+    assert (await box.store.list_memories(subject="guillaume"))[0]["category"] == "fait"
+
+
+async def test_oublier(box):
+    await _run(box, "memoriser", {"contenu": "À oublier", "categorie": "fait"})
+    mem_id = (await box.store.list_memories(subject="guillaume"))[0]["id"]
+
+    content, is_error = await _run(box, "oublier", {"id": mem_id})
+    assert not is_error and "oublié" in content.lower()
+    assert await box.store.list_memories(subject="guillaume") == []
+
+    # Oublier un id inconnu est une erreur douce, pas une exception
+    content, is_error = await _run(box, "oublier", {"id": "inexistant"})
+    assert is_error and "trouvé" in content.lower()
+
+
+async def test_memoire_ne_cree_jamais_de_proposition(box):
+    """Garde-fou : la mémoire n'est PAS une action — rien ne passe par le moteur,
+    aucune proposition n'est créée, Nova n'est jamais appelée."""
+    await _run(box, "memoriser", {"contenu": "Un fait quelconque", "categorie": "fait"})
+    await _run(box, "oublier", {"id": "peu importe"})
+    assert await box.store.list_proposals() == []
+    assert box.calls == []  # aucun appel de service Home Assistant
