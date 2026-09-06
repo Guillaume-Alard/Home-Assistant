@@ -272,6 +272,8 @@ ws.addEventListener('event', (e) => {
       els.connNova.hidden = !msg.ha_configured;
       setNova(!!msg.ha_connected);
       els.atelierBtn.hidden = !msg.dev_configured;
+      if (!msg.dev_configured) els.winTasks.hidden = true;         // pas d'atelier → pas de fenêtre
+      else if (!els.winTasks.hidden) setAtelierPolling(true);      // ouverte → (re)lance le sondage
       setDevRunning(msg.dev_running || null);
       wakeWord = msg.wake_word || wakeWord;
       els.wakeBtn.hidden = !msg.wake_available;
@@ -486,21 +488,40 @@ document.querySelectorAll('.panel-x').forEach((btn) => btn.addEventListener('cli
 makeDraggable(els.winTasks, 'tasks');
 makeDraggable(els.winPreview, 'preview');
 
-function toggleWin(win) {
-  win.hidden = !win.hidden;
-  if (!win.hidden) bringToFront(win);
+const isSheet = () => window.matchMedia('(max-width: 760px)').matches;
+
+function setWinOpen(win, key, open) {
+  win.hidden = !open;
+  if (open) bringToFront(win);
+  try { localStorage.setItem(`sentinel.winopen.${key}`, open ? '1' : '0'); } catch { /* privé */ }
+  if (win === els.winTasks) setAtelierPolling(open);
 }
 
-els.atelierBtn.addEventListener('click', () => {
-  toggleWin(els.winTasks);
-  setAtelierPolling(!els.winTasks.hidden);
-});
-els.previewBtn.addEventListener('click', () => toggleWin(els.winPreview));
+function restoreWinOpen(win, key, defaultOpen) {
+  let open = defaultOpen;
+  try {
+    const v = localStorage.getItem(`sentinel.winopen.${key}`);
+    if (v !== null) open = v === '1';
+  } catch { /* privé */ }
+  setWinOpen(win, key, open);
+}
+
+// Comme le chat, ces fenêtres sont ouvertes par défaut sur grand écran (état
+// mémorisé ensuite) ; sur mobile elles restent fermées (les feuilles plein
+// écran ne s'empilent pas — on les ouvre via les boutons de la barre du haut).
+restoreWinOpen(els.winTasks, 'tasks', !isSheet());
+restoreWinOpen(els.winPreview, 'preview', !isSheet());
+
+els.atelierBtn.addEventListener('click',
+  () => setWinOpen(els.winTasks, 'tasks', els.winTasks.hidden));
+els.previewBtn.addEventListener('click',
+  () => setWinOpen(els.winPreview, 'preview', els.winPreview.hidden));
 
 document.querySelectorAll('.win-close').forEach((btn) => btn.addEventListener('click', () => {
   const win = btn.closest('.win');
-  win.hidden = true;
-  if (win === els.winTasks) setAtelierPolling(false);
+  const key = win === els.winTasks ? 'tasks' : (win === els.winPreview ? 'preview' : null);
+  if (key) setWinOpen(win, key, false);
+  else win.hidden = true;
 }));
 
 // ── Fenêtre Aperçu : embarque un serveur de dev (Vite…) ou Atrium ────────

@@ -14,6 +14,9 @@
   .sentinel-embed .link,
   .sentinel-embed .frame { display:none !important; }
   .sentinel-embed, .sentinel-embed body { background:transparent !important; }
+  /* Le #stage a un fond dégradé opaque : le neutraliser, sinon il resterait
+     un carré sombre derrière le canvas transparent. */
+  .sentinel-embed #stage { background:transparent !important; }
 </style>
 
 <title>Noyau Synaptique</title>

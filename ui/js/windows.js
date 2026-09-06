@@ -80,4 +80,47 @@ export function makeDraggable(win, key) {
   };
   head.addEventListener('pointerup', end);
   head.addEventListener('pointercancel', end);
+
+  // ── Redimensionnement (poignée maison, en bas à droite) ────────────────
+  // Poignée dédiée plutôt que `resize: both` du navigateur : la poignée native
+  // se retrouve sous l'iframe (Aperçu) et n'est plus attrapable ; celle-ci est
+  // au-dessus et capture le pointeur, donc elle marche partout.
+  const grip = document.createElement('div');
+  grip.className = 'win-resize';
+  grip.setAttribute('aria-hidden', 'true');
+  win.appendChild(grip);
+
+  let rez = false;
+  let sx = 0;
+  let sy = 0;
+  let sw = 0;
+  let sh = 0;
+  grip.addEventListener('pointerdown', (e) => {
+    if (isSheet() || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = win.getBoundingClientRect();
+    Object.assign(win.style, {
+      left: `${r.left}px`, top: `${r.top}px`, right: 'auto', bottom: 'auto',
+    });
+    sx = e.clientX; sy = e.clientY; sw = r.width; sh = r.height;
+    rez = true;
+    grip.setPointerCapture(e.pointerId);
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!rez) return;
+    const r = win.getBoundingClientRect();
+    const w = Math.max(280, Math.min(sw + (e.clientX - sx), window.innerWidth - r.left - 6));
+    const h = Math.max(160, Math.min(sh + (e.clientY - sy), window.innerHeight - r.top - 6));
+    win.style.width = `${w}px`;
+    win.style.height = `${h}px`;
+  });
+  const endRez = (e) => {
+    if (!rez) return;
+    rez = false;
+    try { grip.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    save();
+  };
+  grip.addEventListener('pointerup', endRez);
+  grip.addEventListener('pointercancel', endRez);
 }
