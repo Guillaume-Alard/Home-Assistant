@@ -4,7 +4,13 @@ set -e
 
 DATA_DIR="${SENTINEL_DATA_DIR:-/data}"
 CERT_DIR="$DATA_DIR/certs"
-ARGS="--host 0.0.0.0 --port 8443"
+# --http h11 : parseur HTTP en Python pur (implémentation de référence). Le
+# parseur par défaut de uvicorn[standard], httptools, rejette la requête
+# d'upgrade WebSocket au niveau HTTP (« Invalid HTTP request received ») avec
+# certaines combinaisons récentes uvicorn/httptools : le HTTP simple passe mais
+# /ws ne se connecte jamais. h11 gère l'upgrade de façon fiable et nous met à
+# l'abri de cette classe de régressions liée aux versions de httptools.
+ARGS="--host 0.0.0.0 --port 8443 --http h11"
 
 # Toutes les valeurs « vraies » usuelles activent le TLS (on/true/yes/1),
 # même interprétation que healthcheck.py — ne pas diverger.
