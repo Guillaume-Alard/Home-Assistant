@@ -1,0 +1,10 @@
+{
+  "domain": "sentinel_assist",
+  "name": "Sentinel",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/Guillaume-Alard/Home-Assistant/blob/main/docs/ASSIST.md",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "version": "1.0.0"
+}

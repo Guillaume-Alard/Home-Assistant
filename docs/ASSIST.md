@@ -42,6 +42,29 @@ Tu dois voir une liste de modèles (`sentinel`).
 
 ## 2. Côté Nova (Home Assistant)
 
+Deux options. **Le connecteur maison (2A) est recommandé** : *Extended OpenAI
+Conversation* casse souvent sur les versions récentes de HA (erreur 500 au
+chargement de son écran de configuration).
+
+### 2A. Connecteur Sentinel maison (recommandé)
+
+Un `custom_component` minimal fourni avec le projet
+([`custom_components/sentinel_assist/`](../custom_components/sentinel_assist/)),
+sans dépendance tierce. Prérequis : **HA 2024.2+**.
+
+1. Copie le dossier `custom_components/sentinel_assist/` dans le
+   `custom_components/` de Nova :
+   `\\192.168.0.251\config\custom_components\sentinel_assist\`.
+2. **Redémarre** Home Assistant.
+3. **Paramètres → Appareils et services → Ajouter une intégration →**
+   cherche **« Sentinel »**.
+4. **URL de Sentinel** : `https://192.168.0.251:8443` (sans `/v1`) ;
+   **Jeton** : ton `SENTINEL_ASSIST_TOKEN`. Le certificat auto-signé est
+   accepté automatiquement.
+5. Puis va à l'étape 4 ci-dessous (pipeline Assist) — identique.
+
+### 2B. Extended OpenAI Conversation (si tu préfères une intégration HACS)
+
 1. **HACS → Intégrations →** installe **« Extended OpenAI Conversation »**
    (jekalmin). Redémarre Nova si demandé.
 2. **Paramètres → Appareils et services → Ajouter → Extended OpenAI Conversation** :
@@ -50,7 +73,12 @@ Tu dois voir une liste de modèles (`sentinel`).
    - **Skip authentication / verify SSL** : le certificat de Sentinel est
      auto-signé — si l'intégration refuse la connexion, c'est le point à
      désactiver (ou dépose un vrai certificat dans `data/certs/`, voir README).
-3. Le **modèle** : `sentinel` (ou laisse le défaut).
+   - **Modèle** : `sentinel` (ou laisse le défaut).
+   > Un 500 « le flux de configuration n'a pas pu être chargé » à cette étape =
+   > intégration incompatible avec ta version de HA → passe au **2A**.
+
+### 4. Pipeline Assist (commun aux deux options)
+
 4. **Paramètres → Voix (Assist) → Ajouter un assistant** :
    - **Agent conversationnel** : Extended OpenAI Conversation (créé ci-dessus)
    - **Transcription (STT)** et **synthèse (TTS)** : tu peux réutiliser

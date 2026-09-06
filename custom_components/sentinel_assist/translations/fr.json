@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sentinel",
+        "description": "Connecte Home Assistant au cerveau de Sentinel (agent conversationnel).",
+        "data": {
+          "base_url": "URL de Sentinel",
+          "token": "Jeton (SENTINEL_ASSIST_TOKEN)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Connexion à Sentinel impossible — vérifie l'URL et que le conteneur tourne.",
+      "invalid_auth": "Jeton refusé — vérifie SENTINEL_ASSIST_TOKEN."
+    },
+    "abort": {
+      "already_configured": "Sentinel est déjà configuré."
+    }
+  }
+}
