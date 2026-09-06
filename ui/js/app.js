@@ -1,5 +1,5 @@
 /* Sentinel — application cliente (cockpit) : états, micro, lecture, chat,
-   waveform, transcript, onglets, tiroirs, atelier, aperçu, veille. */
+   transcript, onglets, tiroirs, atelier, aperçu, veille. */
 
 import { WSClient } from './ws.js';
 import { Capture } from './audio-capture.js';
@@ -49,7 +49,6 @@ const els = {
   orbMic: document.getElementById('orb-mic'),
   interrupt: document.getElementById('btn-interrupt'),
   stateLabel: document.getElementById('state-label'),
-  waveform: document.getElementById('waveform'),
   transcript: document.getElementById('transcript'),
   quickChips: document.getElementById('quick-chips'),
   // atelier
@@ -121,7 +120,7 @@ let devConfigured = false;
 let currentView = 'cockpit';
 let viewerTab = 'vite';   // 'vite' | 'code'
 let wakeWord = 'hey jarvis';
-let liveLevel = 0;         // niveau audio courant (0..1) pour la waveform
+let liveLevel = 0;         // niveau audio courant (0..1) → amplitude de l'orbe
 let turnCount = 0;
 
 try { st.wakeArmed = localStorage.getItem('sentinel-wake') === '1'; } catch { /* privé */ }
@@ -945,47 +944,13 @@ function updateTranscript() {
   }
 }
 
-// ── Waveform (barres réactives au niveau audio + état) ────────────────────
-const WF_COUNT = 48;
-const wfBars = [];
-const wfBase = [];
-(function buildWaveform() {
-  for (let i = 0; i < WF_COUNT; i++) {
-    const p = i / (WF_COUNT - 1);
-    const env = Math.pow(Math.sin(p * Math.PI), 0.65);        // enveloppe (haut au centre)
-    const jag = 0.42 + 0.58 * Math.abs(Math.sin(i * 1.73) * Math.cos(i * 0.61));
-    wfBase.push({ env, jag });
-    const bar = document.createElement('div');
-    bar.className = 'wf-bar';
-    if (i % 6 === 0) bar.style.background = 'var(--state)';
-    bar.style.opacity = String(0.3 + 0.7 * env);
-    els.waveform.appendChild(bar);
-    wfBars.push(bar);
-  }
-})();
-
-function renderWaveform(amp) {
-  const H = 44;
-  for (let i = 0; i < WF_COUNT; i++) {
-    const { env, jag } = wfBase[i];
-    const h = Math.max(3, 3 + (H - 3) * amp * env * jag);
-    wfBars[i].style.height = `${h.toFixed(1)}px`;
-  }
-}
-
-// Niveau audio → orbe + waveform. Voix (lecture) et micro (capture) déforment ;
-// sinon amplitude « au repos » douce selon l'état.
+// ── Niveau audio → orbe (voix de lecture + capture micro) ─────────────────
+// L'orbe WebGL porte seule l'état visuel ; on lui pousse juste l'amplitude.
 let orbLevelActive = false;
 (function pump() {
-  let amp;
-  if (player && player.playing) { const l = player.level(); orb.level(l); orbLevelActive = true; amp = 0.35 + 0.65 * l; }
-  else if (st.listening) { orb.level(liveLevel); orbLevelActive = true; amp = 0.3 + 0.7 * Math.min(1, liveLevel * 6); }
-  else {
-    if (orbLevelActive) { orb.release(); orbLevelActive = false; }
-    const s = displayState();
-    amp = s === 'thinking' || s === 'transcribing' ? 0.5 : s === 'offline' ? 0.06 : 0.16;
-  }
-  renderWaveform(amp);
+  if (player && player.playing) { orb.level(player.level()); orbLevelActive = true; }
+  else if (st.listening) { orb.level(liveLevel); orbLevelActive = true; }
+  else if (orbLevelActive) { orb.release(); orbLevelActive = false; }
   requestAnimationFrame(pump);
 })();
 
