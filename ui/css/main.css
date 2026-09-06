@@ -344,26 +344,37 @@ body.online.nova-on .conn-dot.nova { background: #59d78c; box-shadow: 0 0 8px rg
   padding: 18px 0 6px;
 }
 
-.orb { position: relative; width: 188px; height: 188px; }
+.orb { position: relative; width: 240px; height: 240px; }
 
-#viz { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Noyau Synaptique : orbe WebGL servie en iframe, purement visuelle
+   (pilotée par postMessage). pointer-events:none → les clics vont au bouton. */
+.orb-frame {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border: 0; pointer-events: none; background: transparent;
+}
 
+/* Le bouton micro devient une cible de clic transparente posée sur l'orbe :
+   l'orbe reste visible, on tape dessus pour parler. */
 .mic {
   position: absolute; inset: 50% auto auto 50%;
   translate: -50% -50%;
-  width: 88px; height: 88px; border-radius: 50%;
-  border: 1px solid var(--panel-edge);
-  background: radial-gradient(circle at 32% 28%, #1b2b40, #101a29 70%);
+  width: 100%; height: 100%; border-radius: 50%;
+  border: none;
+  background: none;
   color: var(--accent);
   cursor: pointer;
-  display: grid; place-items: center;
-  transition: box-shadow 0.35s, color 0.3s, transform 0.15s;
-  box-shadow: 0 0 0 rgba(79, 216, 235, 0);
+  display: grid; place-items: end center;
+  padding-bottom: 14px;
+  transition: color 0.3s, transform 0.15s;
+  box-shadow: none;
 }
 .mic:hover { transform: translate(0, -1px); }
 .mic:active { transform: scale(0.97); }
-.mic svg { width: 32px; height: 32px; }
+.mic svg { width: 30px; height: 30px; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6)); }
 .mic .icon-stop { display: none; }
+
+/* L'orbe WebGL porte l'état visuel : on retire halo et respiration du bouton. */
+.mic, body[data-state] .mic { box-shadow: none !important; animation: none !important; }
 
 .state-label {
   margin-top: 10px;

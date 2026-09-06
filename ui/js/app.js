@@ -4,7 +4,6 @@ import { WSClient } from './ws.js';
 import { Capture } from './audio-capture.js';
 import { Player } from './audio-play.js';
 import { Thread } from './chat.js';
-import { Viz } from './viz.js';
 
 const LABELS = {
   idle: 'en veille',
@@ -23,7 +22,7 @@ const HARD_CAP_MS = 45000; // durée maximale d'une prise de parole
 
 const els = {
   mic: document.getElementById('mic'),
-  viz: document.getElementById('viz'),
+  orb: document.getElementById('orb'),
   stateLabel: document.getElementById('state-label'),
   connLabel: document.getElementById('conn-label'),
   thread: document.getElementById('thread'),
@@ -64,7 +63,26 @@ const panels = {
 
 const ws = new WSClient();
 const thread = new Thread(els.thread);
-const viz = new Viz(els.viz);
+
+// ── Orbe « Noyau Synaptique » (iframe WebGL, pilotée par postMessage) ──────
+// États Sentinel → états de l'orbe (elle n'en connaît que quatre).
+const ORB_STATE = {
+  idle: 'idle', listening: 'listening', transcribing: 'thinking',
+  thinking: 'thinking', speaking: 'speaking', offline: 'idle',
+};
+const orb = {
+  _post(msg) {
+    const w = els.orb && els.orb.contentWindow;
+    if (w) { try { w.postMessage({ orb: true, ...msg }, '*'); } catch { /* pas prête */ } }
+  },
+  state(s) { this._post({ state: ORB_STATE[s] || 'idle' }); },
+  level(v) { this._post({ level: v }); },
+  release() { this._post({ level: null }); },
+  pulse() { this._post({ pulse: true }); },
+};
+// L'iframe charge Three.js de façon asynchrone : à la fin du chargement,
+// on lui renvoie l'état courant (les messages envoyés trop tôt sont perdus).
+els.orb.addEventListener('load', () => orb.state(displayState()));
 
 const st = {
   server: 'idle',   // état diffusé par le serveur
@@ -104,7 +122,7 @@ function refreshUi() {
     els.stateLabel.textContent = `en veille · dis « ${wakeWord} »`;
   }
   els.wakeBtn.classList.toggle('live', st.wakeStreaming);
-  viz.setMode(s);
+  orb.state(s);
 }
 
 function toast(text) {
@@ -145,7 +163,7 @@ async function ensureCapture() {
   cap.addEventListener('level', (e) => {
     const { value, active } = e.detail;
     if (!active || !st.listening) return;
-    viz.setLevel(value);
+    orb.level(value);
     const now = performance.now();
     if (value > VOICE_THRESHOLD) {
       st.hadVoice = true;
@@ -274,6 +292,7 @@ ws.addEventListener('event', (e) => {
       break;
     case 'wake':
       st.wakeStreaming = false; // le serveur a clos la session de veille
+      orb.pulse();
       chime();
       startListening();
       break;
@@ -1038,10 +1057,21 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Niveau de la voix de Sentinel → visualiseur
-(function pumpPlayerLevel() {
-  if (player && player.playing) viz.setLevel(player.level());
-  requestAnimationFrame(pumpPlayerLevel);
+// Niveau audio → orbe. La voix de Sentinel (lecture) et le micro (capture, via
+// l'événement 'level') déforment l'orbe ; sinon on rend la main à son enveloppe
+// automatique — sans ça, setLevel figerait l'orbe sur la dernière amplitude.
+let orbLevelActive = false;
+(function pumpOrbLevel() {
+  if (player && player.playing) {
+    orb.level(player.level());
+    orbLevelActive = true;
+  } else if (st.listening) {
+    orbLevelActive = true; // alimentée par l'événement 'level' de la capture
+  } else if (orbLevelActive) {
+    orb.release();
+    orbLevelActive = false;
+  }
+  requestAnimationFrame(pumpOrbLevel);
 })();
 
 // ── Démarrage ───────────────────────────────────────────────────────────
