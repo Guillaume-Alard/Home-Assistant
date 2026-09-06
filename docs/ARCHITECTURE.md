@@ -1,4 +1,4 @@
-# Architecture — état courant (fin de Phase 4)
+# Architecture — état courant (Phase 5A : mot d'éveil dans le navigateur)
 
 > Document vivant : mis à jour à chaque phase. La cible globale est décrite dans
 > [PLAN.md](PLAN.md) ; ici, seulement ce qui **existe** et pourquoi.
@@ -124,6 +124,8 @@ qui a parlé.
 | `audio_cancel` | — | Abandon de la capture (rien n'est transcrit) |
 | `cancel` | — | Interrompt le tour en cours (LLM + voix) |
 | `proposal_decision` | `{id, decision}` | `approve` · `reject` · `defer` depuis l'UI |
+| `wake_start` | `{rate}` | Ouvre une session de veille au mot d'éveil ; le PCM suit en binaire (hors capture) |
+| `wake_stop` | — | Ferme la session de veille |
 | `dev_tasks` | — | Panneau atelier : liste des tâches + état (auth, push, dépôts) |
 | `dev_log` | `{id, after}` | Journal en direct d'une tâche (incrémental : `after` = dernier `next` reçu) |
 | `dev_diff` | `{id}` | Diff complet d'une tâche |
@@ -133,6 +135,14 @@ qui a parlé.
 
 Les cinq requêtes de panneau sont de la **lecture pure** (aucune action possible par
 ce chemin) et reçoivent leur réponse du même type, adressée au seul demandeur.
+
+**Mot d'éveil (Phase 5A)** : hors capture, les trames binaires alimentent une
+session de veille (`WakeStream`) ouverte vers `sentinel-openwakeword`. Le lecteur
+de la session tourne dans un task dédié ; à la détection il invoque son callback
+(qui émet `wake`) puis **se termine de lui-même** et ferme sa connexion — il ne
+s'auto-annule jamais (annuler le task pendant que le callback envoie couperait
+l'envoi). La capture d'un tour de parole est prioritaire : tant qu'elle est
+active, l'audio ne va pas à la veille.
 
 ### Serveur → client(s)
 
@@ -155,6 +165,8 @@ ce chemin) et reçoivent leur réponse du même type, adressée au seul demandeu
 | `notice` | `{text}` | Information non bloquante (« Je n'ai rien entendu. ») |
 | `error` | `{text}` | Erreur à afficher (clé API absente, service injoignable…) |
 | `dev_status` | `{running}` | Tâche de dev en cours (`{id, repo}` ou `null`) — pastille ⚒ |
+| `wake` | `{name}` | Mot d'éveil détecté — le client joue un carillon et passe en écoute |
+| `wake_error` | `{text}` | Veille impossible (service injoignable, non configuré) |
 | `dev_tasks` · `dev_log` · `dev_diff` · `sante` · `historique` | *(réponses)* | Réponses aux requêtes de panneau (`error` en cas d'échec) — *demandeur seulement* |
 
 ## Audio
@@ -168,6 +180,12 @@ ce chemin) et reçoivent leur réponse du même type, adressée au seul demandeu
 - **Latence** : la réponse LLM est découpée en **phrases** (`SentenceChunker`) envoyées à
   Piper au fil du streaming — Sentinel parle dès la première phrase terminée. Le texte
   passe par `markdown_to_speech` (le code, les tableaux et le style ne sont pas lus).
+- **Mot d'éveil (Phase 5A)** : quand la veille est active et l'appareil au repos, le
+  même flux 16 kHz est envoyé en continu au serveur, qui le relaie à openWakeWord. La
+  détection est **locale** (aucun audio ne quitte le LAN avant le mot d'éveil) ; à la
+  détection, le client joue un carillon (WebAudio) et bascule sur une écoute normale.
+  L'`AudioContext` du navigateur exigeant un geste utilisateur, la veille se (ré)arme
+  au premier clic si nécessaire.
 
 ## Le tour de parole
 

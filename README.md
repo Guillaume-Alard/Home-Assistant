@@ -152,6 +152,7 @@ En haut à droite, quatre boutons ouvrent des panneaux latéraux (Échap referme
 | `SENTINEL_TLS` | `on` | `off` **uniquement** derrière un reverse proxy HTTPS |
 | `WHISPER_MODEL` | `small-int8` | Modèle STT (`tiny-int8` plus rapide, `medium` plus juste) |
 | `PIPER_VOICE` | `fr_FR-siwis-medium` | Voix française de Sentinel |
+| `WAKEWORD_MODEL` | `hey_jarvis` | Mot d'éveil (Phase 5A) — modèle openWakeWord préchargé |
 | `TZ` | `Europe/Paris` | Fuseau horaire (Sentinel connaît la date et l'heure) |
 | `LOG_LEVEL` | `INFO` | Verbosité des journaux |
 | `HA_URL` | — | URL de Nova, ex. `http://192.168.1.10:8123` |
@@ -207,6 +208,23 @@ PR/merger sur GitHub et déployer via HACS.
 Garde-fous : liste blanche de dépôts (`DEV_REPOS`), une tâche à la fois, durée
 plafonnée (`DEV_TASK_TIMEOUT`), branche `sentinel/<id>` jamais poussée sans
 proposition approuvée, secrets purgés des journaux du worker.
+
+## Mot d'éveil « Hey Jarvis » (Phase 5A)
+
+`docker compose up -d` démarre aussi **sentinel-openwakeword** (openWakeWord via
+Wyoming, réseau interne). Dans l'interface, le bouton **◉** en haut à droite
+active la **veille au mot d'éveil** sur cet appareil : l'onglet écoute en
+continu et, dès qu'il entend « **Hey Jarvis** », joue un petit carillon et bascule
+en écoute — tu enchaînes ta demande sans rien toucher. La préférence est
+mémorisée par appareil ; la veille se met en pause quand Sentinel parle ou
+réfléchit, puis se ré-arme, et s'interrompt quand l'onglet passe en arrière-plan.
+
+- Aucun matériel requis : une vieille tablette avec l'onglet ouvert devient un
+  poste d'écoute mains libres.
+- Le contexte sécurisé (HTTPS) reste nécessaire — comme pour le micro en général.
+- **Mot personnalisé** (« Sentinel ») : voir [`config/wakewords/README.md`](config/wakewords/README.md).
+- La détection est **locale** (openWakeWord sur Nebula) : aucun audio ne part sur
+  Internet tant que le mot d'éveil n'a pas été prononcé.
 
 ## Connecter Nova (Home Assistant)
 

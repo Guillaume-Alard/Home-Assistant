@@ -46,6 +46,10 @@ class Settings:
     whisper_port: int
     piper_host: str
     piper_port: int
+    # Mot d'éveil (Phase 5A) — WAKE_HOST vide = désactivé
+    wake_host: str
+    wake_port: int
+    wake_model: str
 
     # Réseau / stockage — le TLS lui-même est géré hors application
     # (entrypoint.sh + healthcheck.py lisent SENTINEL_TLS directement)
@@ -91,6 +95,9 @@ class Settings:
             whisper_port=_int(os.environ.get("WHISPER_PORT"), 10300),
             piper_host=os.environ.get("PIPER_HOST", "sentinel-piper"),
             piper_port=_int(os.environ.get("PIPER_PORT"), 10200),
+            wake_host=os.environ.get("WAKE_HOST", "").strip(),
+            wake_port=_int(os.environ.get("WAKE_PORT"), 10400),
+            wake_model=os.environ.get("WAKEWORD_MODEL", "hey_jarvis").strip() or "hey_jarvis",
             data_dir=data_dir,
             ui_dir=find_ui_dir(),
             config_dir=Path(os.environ.get("SENTINEL_CONFIG_DIR", "")) if os.environ.get("SENTINEL_CONFIG_DIR") else _find_dir("config"),

@@ -9,12 +9,17 @@ interne Docker, le coût est négligeable et cela évite tout état partagé.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import contextlib
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.client import AsyncTcpClient
 from wyoming.tts import Synthesize
+from wyoming.wake import Detection
+
+log = logging.getLogger("sentinel.voice")
 
 
 class VoiceServiceError(RuntimeError):
@@ -81,6 +86,87 @@ class WhisperSTT(_WyomingService):
             raise VoiceServiceError(f"{self._label} — connexion interrompue.") from exc
         finally:
             await client.disconnect()
+
+
+class WakeWordDetector(_WyomingService):
+    """Détection du mot d'éveil (openWakeWord) — flux continu, pas requête/réponse.
+
+    `open()` établit une session : l'appelant y pousse le PCM du micro au fil de
+    l'eau ; à la détection, le callback est invoqué UNE fois puis la session ne
+    sert plus (l'appareil bascule en écoute normale et ré-ouvrira une session).
+    """
+
+    def __init__(self, host: str, port: int, timeout: int = 120):
+        super().__init__(host, port, "Le service du mot d'éveil (openwakeword)", timeout)
+
+    async def open(
+        self, rate: int, on_detection: Callable[[str], Awaitable[None]]
+    ) -> "WakeStream":
+        client = await self._connect()
+        try:
+            await client.write_event(AudioStart(rate=rate, width=2, channels=1).event())
+        except OSError as exc:
+            await client.disconnect()
+            raise VoiceServiceError(f"{self._label} — connexion interrompue.") from exc
+        return WakeStream(client, self._label, on_detection)
+
+
+class WakeStream:
+    def __init__(
+        self, client: AsyncTcpClient, label: str, on_detection: Callable[[str], Awaitable[None]]
+    ):
+        self._client = client
+        self._label = label
+        self._on_detection = on_detection
+        self._closed = False
+        self._reader = asyncio.create_task(self._read_loop(), name="wake-reader")
+
+    async def _read_loop(self) -> None:
+        # Une détection (ou une coupure) met fin à la session : la boucle sort
+        # d'elle-même et ferme sa connexion dans le `finally`. On ne s'auto-annule
+        # JAMAIS — le callback tourne dans ce task, l'annuler couperait son envoi.
+        try:
+            while True:
+                event = await self._client.read_event()
+                if event is None:
+                    return
+                if Detection.is_type(event.type):
+                    name = Detection.from_event(event).name or ""
+                    try:
+                        await self._on_detection(name)
+                    except Exception:
+                        log.exception("Callback de détection du mot d'éveil en échec")
+                    return
+        except asyncio.CancelledError:
+            raise
+        except OSError:
+            return  # connexion coupée : send() le signalera aussi à l'appelant
+        finally:
+            self._closed = True
+            with contextlib.suppress(Exception):
+                await self._client.disconnect()
+
+    async def send(self, pcm: bytes, rate: int) -> None:
+        if self._closed:
+            return
+        try:
+            await self._client.write_event(
+                AudioChunk(audio=pcm, rate=rate, width=2, channels=1).event()
+            )
+        except OSError as exc:
+            await self.close()
+            raise VoiceServiceError(f"{self._label} — connexion interrompue.") from exc
+
+    async def close(self) -> None:
+        """Arrêt externe (wake_stop, déconnexion, nouvelle session). Sûr même si
+        le lecteur s'est déjà terminé tout seul après une détection."""
+        self._closed = True
+        if asyncio.current_task() is not self._reader:
+            self._reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader
+        with contextlib.suppress(Exception):
+            await self._client.disconnect()
 
 
 class PiperTTS(_WyomingService):

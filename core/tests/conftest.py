@@ -20,15 +20,19 @@ from wyoming.asr import Transcript
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.event import async_read_event, async_write_event
 from wyoming.tts import Synthesize
+from wyoming.wake import Detection
 
 FAKE_TRANSCRIPT = "allume la lumière du salon"
 FAKE_TTS_CHUNKS = [b"\x00\x01" * 512, b"\x02\x03" * 512]
 
 
 class FakeWyoming:
+    WAKE_AFTER_CHUNKS = 3  # le « mot d'éveil » est détecté au 3e chunk audio
+
     def __init__(self) -> None:
         self.whisper_port: int | None = None
         self.piper_port: int | None = None
+        self.wake_port: int | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
@@ -51,8 +55,10 @@ class FakeWyoming:
     async def _start_servers(self) -> None:
         whisper = await asyncio.start_server(self._handle_whisper, "127.0.0.1", 0)
         piper = await asyncio.start_server(self._handle_piper, "127.0.0.1", 0)
+        wake = await asyncio.start_server(self._handle_wake, "127.0.0.1", 0)
         self.whisper_port = whisper.sockets[0].getsockname()[1]
         self.piper_port = piper.sockets[0].getsockname()[1]
+        self.wake_port = wake.sockets[0].getsockname()[1]
         self._ready.set()
 
     async def _handle_whisper(self, reader, writer) -> None:
@@ -64,6 +70,25 @@ class FakeWyoming:
                 if AudioStop.is_type(event.type):
                     await async_write_event(Transcript(text=FAKE_TRANSCRIPT).event(), writer)
                     await writer.drain()
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+
+    async def _handle_wake(self, reader, writer) -> None:
+        chunks = 0
+        try:
+            while True:
+                event = await async_read_event(reader)
+                if event is None:
+                    return
+                if AudioChunk.is_type(event.type):
+                    chunks += 1
+                    if chunks == self.WAKE_AFTER_CHUNKS:
+                        await async_write_event(
+                            Detection(name="hey_jarvis", timestamp=0).event(), writer
+                        )
+                        await writer.drain()
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         finally:

@@ -94,6 +94,11 @@ body.online.nova-on .conn-dot.nova { background: #59d78c; box-shadow: 0 0 8px rg
 }
 .chip:hover { background: var(--user-bubble); }
 .chip.attention { border-color: var(--warn); color: var(--warn); }
+.chip.armed { border-color: var(--accent-dim); color: var(--accent); }
+.chip.armed.live {
+  box-shadow: 0 0 12px rgba(79, 216, 235, 0.35);
+  animation: livepulse 2.6s ease-in-out infinite;
+}
 
 /* ── Bannière d'alerte ────────────────────────────────────────────────── */
 

@@ -38,6 +38,7 @@ const els = {
   alertClose: document.getElementById('alert-close'),
   panel: document.getElementById('proposals-panel'),
   proposalsList: document.getElementById('proposals-list'),
+  wakeBtn: document.getElementById('wake-btn'),
   atelierBtn: document.getElementById('atelier-btn'),
   devLive: document.getElementById('dev-live'),
   santeBtn: document.getElementById('sante-btn'),
@@ -73,7 +74,12 @@ const st = {
   lastVoice: 0,
   startedAt: 0,
   proposals: new Map(), // num → proposition (pending/deferred)
+  wakeArmed: false,     // préférence : veille au mot d'éveil (par appareil)
+  wakeStreaming: false, // flux micro → openWakeWord en cours
 };
+
+let wakeWord = 'hey jarvis';
+try { st.wakeArmed = localStorage.getItem('sentinel-wake') === '1'; } catch { /* privé */ }
 
 let audioCtx = null;
 let player = null;
@@ -94,6 +100,10 @@ function refreshUi() {
   const s = displayState();
   document.body.dataset.state = s;
   els.stateLabel.textContent = LABELS[s] || s;
+  if (s === 'idle' && st.wakeStreaming) {
+    els.stateLabel.textContent = `en veille · dis « ${wakeWord} »`;
+  }
+  els.wakeBtn.classList.toggle('live', st.wakeStreaming);
   viz.setMode(s);
 }
 
@@ -162,6 +172,11 @@ async function startListening() {
     toast('Micro indisponible : vérifie l’autorisation du navigateur et l’accès HTTPS.');
     return;
   }
+  if (st.wakeStreaming) {
+    // La veille passe la main à l'écoute : le micro tourne déjà
+    st.wakeStreaming = false;
+    ws.sendJSON({ type: 'wake_stop' });
+  }
   if (player) player.stop(); // couper Sentinel s'il parlait
   ws.sendJSON({ type: 'audio_start', rate: 16000 });
   st.listening = true;
@@ -205,6 +220,7 @@ ws.addEventListener('close', () => {
   document.body.classList.remove('online');
   els.connLabel.textContent = 'hors ligne';
   if (st.listening) { st.listening = false; capture && capture.stop(); }
+  if (st.wakeStreaming) { st.wakeStreaming = false; capture && capture.stop(); }
   refreshUi();
 });
 
@@ -221,6 +237,10 @@ ws.addEventListener('event', (e) => {
       setNova(!!msg.ha_connected);
       els.atelierBtn.hidden = !msg.dev_configured;
       setDevRunning(msg.dev_running || null);
+      wakeWord = msg.wake_word || wakeWord;
+      els.wakeBtn.hidden = !msg.wake_available;
+      renderWakeBtn();
+      syncWake();
       st.proposals.clear();
       (msg.proposals || []).forEach((p) => st.proposals.set(p.num, p));
       renderProposals();
@@ -246,6 +266,15 @@ ws.addEventListener('event', (e) => {
     case 'status':
       st.server = msg.state;
       refreshUi();
+      syncWake(); // la veille s'arme quand un tour finit, se coupe quand un commence
+      break;
+    case 'wake':
+      st.wakeStreaming = false; // le serveur a clos la session de veille
+      chime();
+      startListening();
+      break;
+    case 'wake_error':
+      onWakeError(msg.text || 'Le mot d’éveil est indisponible.');
       break;
     case 'message':
       thread.addMessage(msg.message);
@@ -863,6 +892,117 @@ function renderHistory(msg) {
     ));
   }
 }
+
+// ── Veille au mot d'éveil (Phase 5A) ────────────────────────────────────
+
+let wakeRetryTimer = null;
+let gestureHooked = false;
+
+function renderWakeBtn() {
+  els.wakeBtn.classList.toggle('armed', st.wakeArmed);
+  els.wakeBtn.title = st.wakeArmed
+    ? `Veille active — dis « ${wakeWord} » (cliquer pour couper)`
+    : `Activer la veille au mot d'éveil (« ${wakeWord} »)`;
+}
+
+function saveWakePref() {
+  try { localStorage.setItem('sentinel-wake', st.wakeArmed ? '1' : '0'); } catch { /* privé */ }
+}
+
+function armOnGesture() {
+  // L'audio du navigateur est verrouillé tant que l'utilisateur n'a pas
+  // interagi avec la page : on ré-essaie au premier clic ou appui de touche.
+  if (gestureHooked) return;
+  gestureHooked = true;
+  const handler = () => { gestureHooked = false; syncWake(); };
+  document.addEventListener('pointerdown', handler, { once: true });
+}
+
+async function tryEnsureCapture() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    player = new Player(audioCtx);
+  }
+  if (audioCtx.state === 'suspended') {
+    // resume() sans geste utilisateur peut rester en attente pour toujours :
+    // on borne, et on retentera au premier geste.
+    await Promise.race([
+      audioCtx.resume().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 350)),
+    ]);
+    if (audioCtx.state !== 'running') throw new Error('audio verrouillé');
+  }
+  await ensureCapture();
+}
+
+function wakeWanted() {
+  return st.wakeArmed && ws.alive && !els.wakeBtn.hidden
+    && !st.listening && st.server === 'idle' && !document.hidden;
+}
+
+async function syncWake() {
+  if (wakeWanted() && !st.wakeStreaming) {
+    try {
+      await tryEnsureCapture();
+    } catch (err) {
+      if (String(err && err.message).includes('verrouillé')) { armOnGesture(); return; }
+      console.error(err);
+      st.wakeArmed = false;
+      saveWakePref();
+      renderWakeBtn();
+      toast('Micro indisponible : la veille au mot d’éveil est coupée.');
+      return;
+    }
+    if (!wakeWanted() || st.wakeStreaming) return; // état changé pendant l'attente
+    st.wakeStreaming = true;
+    ws.sendJSON({ type: 'wake_start', rate: 16000 });
+    capture.start();
+  } else if (!wakeWanted() && st.wakeStreaming) {
+    st.wakeStreaming = false;
+    if (capture && !st.listening) capture.stop();
+    ws.sendJSON({ type: 'wake_stop' });
+  }
+  refreshUi();
+}
+
+function onWakeError(text) {
+  if (st.wakeStreaming) {
+    st.wakeStreaming = false;
+    if (capture && !st.listening) capture.stop();
+  }
+  if (st.wakeArmed) {
+    toast(text);
+    clearTimeout(wakeRetryTimer);
+    wakeRetryTimer = setTimeout(syncWake, 8000); // nouvel essai en douceur
+  }
+  refreshUi();
+}
+
+function chime() {
+  if (!audioCtx || audioCtx.state !== 'running') return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(660, now);
+  osc.frequency.exponentialRampToValueAtTime(990, now + 0.12);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.1, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.3);
+}
+
+els.wakeBtn.addEventListener('click', () => {
+  st.wakeArmed = !st.wakeArmed;
+  saveWakePref();
+  renderWakeBtn();
+  syncWake();
+});
+
+document.addEventListener('visibilitychange', () => syncWake());
 
 // ── Interactions ────────────────────────────────────────────────────────
 

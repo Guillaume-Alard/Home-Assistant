@@ -21,6 +21,7 @@ def _base_env(monkeypatch, tmp_path, fake_wyoming):
     monkeypatch.setenv("PIPER_HOST", "127.0.0.1")
     monkeypatch.setenv("PIPER_PORT", str(fake_wyoming.piper_port))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # le cerveau est simulé par les tests
+    monkeypatch.setenv("WAKE_HOST", "")  # mot d'éveil désactivé par défaut (fixture dédiée)
 
 
 @pytest.fixture()
@@ -54,6 +55,19 @@ def _write_config(tmp_path):
     config_dir.mkdir()
     (config_dir / "protocols.yml").write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
     return config_dir
+
+
+@pytest.fixture()
+def client_wake(fake_wyoming, tmp_path, monkeypatch):
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("WAKE_HOST", "127.0.0.1")
+    monkeypatch.setenv("WAKE_PORT", str(fake_wyoming.wake_port))
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 @pytest.fixture()
@@ -258,6 +272,43 @@ def test_decision_proposition_via_ws(client_ha, fake_ha):
         events, _ = _drain(ws, {"notice"})
     notice = next(e for e in events if e["type"] == "notice")
     assert "999" in notice["text"]
+
+
+# ── Mot d'éveil (Phase 5A) ───────────────────────────────────────────────
+
+
+def test_mot_deveil_bout_en_bout(client_wake, fake_brain):
+    """Veille → « hey jarvis » détecté → tour vocal complet, même connexion."""
+    with client_wake.websocket_connect("/ws") as ws:
+        hello = json.loads(ws.receive()["text"])
+        assert hello["wake_available"] is True
+        assert hello["wake_word"] == "hey jarvis"
+
+        # L'appareil passe en veille et streame son micro
+        ws.send_text(json.dumps({"type": "wake_start", "rate": 16000}))
+        for _ in range(4):
+            ws.send_bytes(b"\x00\x00" * 800)
+        events, _ = _drain(ws, {"wake"})
+        wake = next(e for e in events if e["type"] == "wake")
+        assert wake["name"] == "hey_jarvis"
+
+        # Le client enchaîne sur une écoute normale : le tour vocal aboutit
+        ws.send_text(json.dumps({"type": "audio_start", "rate": 16000}))
+        ws.send_bytes(b"\x10\x00" * 1600)
+        ws.send_text(json.dumps({"type": "audio_end"}))
+        events, _ = _drain(ws, {"assistant_end"})
+
+    end = next(e for e in events if e["type"] == "assistant_end")
+    assert end["message"]["content"] == "Bonjour Guillaume."
+
+
+def test_mot_deveil_non_configure(client):
+    with client.websocket_connect("/ws") as ws:
+        hello = json.loads(ws.receive()["text"])
+        assert hello["wake_available"] is False
+        ws.send_text(json.dumps({"type": "wake_start", "rate": 16000}))
+        events, _ = _drain(ws, {"wake_error"})
+        assert "WAKE_HOST" in next(e for e in events if e["type"] == "wake_error")["text"]
 
 
 # ── Panneaux Phase 4 : atelier, santé, historique ────────────────────────

@@ -20,6 +20,9 @@ services:
       DOCKER_PROXY_URL: http://sentinel-dockerproxy:2375
       DOCKER_RESTART_URL: http://sentinel-dockerproxy-restart:2375
       WORKER_URL: http://sentinel-worker:8400
+      WAKE_HOST: sentinel-openwakeword
+      WAKE_PORT: 10400
+      WAKEWORD_MODEL: ${WAKEWORD_MODEL:-hey_jarvis}
     ports:
       # Seul service exposé sur le LAN
       - "${SENTINEL_PORT:-8443}:8443"
@@ -31,6 +34,7 @@ services:
     depends_on:
       - sentinel-whisper
       - sentinel-piper
+      - sentinel-openwakeword
     healthcheck:
       test: ["CMD", "python", "healthcheck.py"]
       interval: 30s
@@ -99,6 +103,18 @@ services:
   # Ne connaît ni Nova, ni le socket Docker, ni les jetons de sentinel-core.
   # Clones jetables dans son volume dédié ; le push GitHub n'a lieu qu'après
   # une proposition approuvée dans Sentinel.
+  # Mot d'éveil (Phase 5A) : openWakeWord via Wyoming. « hey_jarvis » est fourni
+  # avec l'image ; pour un mot personnalisé, déposer un .tflite dans
+  # config/wakewords/ puis mettre son nom dans WAKEWORD_MODEL (.env).
+  sentinel-openwakeword:
+    image: rhasspy/wyoming-openwakeword
+    container_name: sentinel-openwakeword
+    restart: unless-stopped
+    command: --preload-model ${WAKEWORD_MODEL:-hey_jarvis} --custom-model-dir /custom
+    volumes:
+      - ./config/wakewords:/custom
+    # aucun port publié : joignable uniquement par sentinel-core en interne
+
   sentinel-worker:
     build:
       context: .

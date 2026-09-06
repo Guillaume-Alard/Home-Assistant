@@ -3,15 +3,16 @@
 Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
 
   Client → serveur (JSON) : chat, audio_start, audio_end, audio_cancel, cancel,
-                            proposal_decision, ping — et les requêtes de lecture
-                            des panneaux : dev_tasks, dev_log, dev_diff, sante,
-                            historique
+                            proposal_decision, wake_start, wake_stop, ping —
+                            et les requêtes de lecture des panneaux :
+                            dev_tasks, dev_log, dev_diff, sante, historique
   Client → serveur (binaire) : PCM 16 bits mono (entre audio_start et audio_end)
   Serveur → clients (JSON) : hello, status, message, assistant_start,
                              assistant_delta, assistant_end, speak_start,
                              speak_end, notice, error, alert, ha_status,
                              activity, proposal_new, proposal_update,
-                             dev_status, pong — et les réponses de panneaux
+                             dev_status, wake, wake_error, pong — et les
+                             réponses de panneaux
                              (dev_tasks, dev_log, dev_diff, sante, historique,
                              au seul client demandeur)
   Serveur → client d'origine (binaire) : PCM de la voix de Sentinel
@@ -50,7 +51,13 @@ from .ha.protocols import ProtocolBook
 from .monitors import AtriumMonitor, DockerMonitor, HealthService
 from .store import Store
 from .voice.session import CaptureSession
-from .voice.wyoming import PiperTTS, VoiceServiceError, WhisperSTT
+from .voice.wyoming import (
+    PiperTTS,
+    VoiceServiceError,
+    WakeStream,
+    WakeWordDetector,
+    WhisperSTT,
+)
 
 log = logging.getLogger("sentinel")
 
@@ -62,6 +69,8 @@ class Client:
         self.ws = ws
         self.id = uuid.uuid4().hex[:8]
         self.capture = CaptureSession(max_seconds=max_utterance_seconds)
+        self.wake: WakeStream | None = None  # veille au mot d'éveil (Phase 5A)
+        self.wake_rate = 16000
 
 
 class Hub:
@@ -132,6 +141,11 @@ class Sentinel:
         )
         self.tts = PiperTTS(
             settings.piper_host, settings.piper_port, settings.wyoming_timeout_seconds
+        )
+        self.wake_detector: WakeWordDetector | None = (
+            WakeWordDetector(settings.wake_host, settings.wake_port)
+            if settings.wake_host
+            else None
         )
         self.state = "idle"
         self._turn_task: asyncio.Task | None = None
@@ -575,6 +589,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "ha_configured": sentinel.ha is not None,
             "dev_configured": sentinel._worker is not None,
             "dev_running": sentinel._dev_running,
+            "wake_available": sentinel.wake_detector is not None,
+            "wake_word": sentinel.settings.wake_model.replace("_", " "),
             "proposals": sorted(pending + deferred, key=lambda p: p["num"]),
             "protocols": [
                 {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
@@ -609,19 +625,32 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         pass
     finally:
         sentinel.hub.unregister(ws)
+        with contextlib.suppress(Exception):
+            await _stop_wake(client)
         log.info("Client %s déconnecté (%d en ligne)", client.id, sentinel.hub.count)
 
 
 async def _on_audio_chunk(sentinel: Sentinel, client: Client, data: bytes) -> None:
-    if not client.capture.active:
-        return  # audio hors capture : ignoré
-    if not client.capture.add(data):
-        # Durée maximale atteinte : on transcrit ce qui a été capté
-        pcm, rate = client.capture.finish()
-        await sentinel.hub.send(
-            client, {"type": "notice", "text": "Durée maximale atteinte, je traite ce que j'ai entendu."}
-        )
-        await sentinel.start_turn(sentinel.run_voice_turn(client, pcm, rate))
+    if client.capture.active:
+        if not client.capture.add(data):
+            # Durée maximale atteinte : on transcrit ce qui a été capté
+            pcm, rate = client.capture.finish()
+            await sentinel.hub.send(
+                client,
+                {"type": "notice", "text": "Durée maximale atteinte, je traite ce que j'ai entendu."},
+            )
+            await sentinel.start_turn(sentinel.run_voice_turn(client, pcm, rate))
+        return
+
+    # Hors capture : l'audio alimente la veille au mot d'éveil, s'il y en a une
+    stream = client.wake
+    if stream is None:
+        return
+    try:
+        await stream.send(data, client.wake_rate)
+    except VoiceServiceError as exc:
+        client.wake = None
+        await sentinel.hub.send(client, {"type": "wake_error", "text": str(exc)})
 
 
 async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
@@ -676,6 +705,12 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
         _, message = await sentinel.engine.decide(num, decision, via="ui")
         await sentinel.hub.send(client, {"type": "notice", "text": message})
 
+    elif mtype == "wake_start":
+        await _wake_start(sentinel, client, msg)
+
+    elif mtype == "wake_stop":
+        await _stop_wake(client)
+
     elif mtype == "dev_tasks":
         await _reply_dev_tasks(sentinel, client)
 
@@ -693,6 +728,43 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
+
+
+# ── Veille au mot d'éveil (Phase 5A) ─────────────────────────────────────
+
+
+async def _wake_start(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    if sentinel.wake_detector is None:
+        await sentinel.hub.send(
+            client,
+            {"type": "wake_error", "text": "Le mot d'éveil n'est pas configuré (WAKE_HOST)."},
+        )
+        return
+    await _stop_wake(client)  # une session remplace la précédente
+    try:
+        client.wake_rate = int(msg.get("rate", 16000))
+    except (TypeError, ValueError):
+        client.wake_rate = 16000
+
+    async def on_detection(name: str) -> None:
+        # Ce callback tourne DANS le task lecteur de la session : on se contente
+        # de la détacher (le lecteur ferme lui-même sa connexion en sortant) et
+        # d'annoncer. Surtout pas de close() ici — cela s'auto-annulerait.
+        client.wake = None
+        log.info("Mot d'éveil détecté (%s) par le client %s", name or "?", client.id)
+        await sentinel.hub.send(client, {"type": "wake", "name": name})
+
+    try:
+        client.wake = await sentinel.wake_detector.open(client.wake_rate, on_detection)
+    except VoiceServiceError as exc:
+        await sentinel.hub.send(client, {"type": "wake_error", "text": str(exc)})
+
+
+async def _stop_wake(client: Client) -> None:
+    stream = client.wake
+    client.wake = None
+    if stream is not None:
+        await stream.close()
 
 
 # ── Requêtes de lecture des panneaux (réponse au seul client demandeur) ──
