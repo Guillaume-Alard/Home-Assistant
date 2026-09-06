@@ -14,12 +14,21 @@ case "$TLS" in on|true|yes|1) TLS=on ;; *) TLS=off ;; esac
 if [ "$TLS" = "on" ]; then
   if [ ! -f "$CERT_DIR/sentinel.crt" ] || [ ! -f "$CERT_DIR/sentinel.key" ]; then
     echo "[sentinel] Aucun certificat trouvé — génération d'un certificat auto-signé (10 ans) dans $CERT_DIR"
-    echo "[sentinel] Pour un certificat de confiance (PWA installable sans avertissement), voir le README (mkcert)."
+    echo "[sentinel] Pour un certificat de confiance (PWA iPhone, avertissement supprimé), voir le README (mkcert)."
     mkdir -p "$CERT_DIR"
+    # SAN de base + adresses fournies par l'utilisateur (SENTINEL_TLS_SANS).
+    # IMPORTANT : ajoute-y l'IP LAN réelle (ex. IP:192.168.0.212), sinon les
+    # clients stricts (iOS) refusent le WebSocket sécurisé — l'adresse ne
+    # correspond pas au certificat.
+    SAN="DNS:sentinel,DNS:sentinel.local,DNS:nebula,DNS:nebula.local,DNS:localhost,IP:127.0.0.1"
+    if [ -n "${SENTINEL_TLS_SANS:-}" ]; then
+      SAN="$SAN,$SENTINEL_TLS_SANS"
+      echo "[sentinel] SAN supplémentaires : $SENTINEL_TLS_SANS"
+    fi
     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
       -keyout "$CERT_DIR/sentinel.key" -out "$CERT_DIR/sentinel.crt" \
       -subj "/CN=sentinel" \
-      -addext "subjectAltName=DNS:sentinel,DNS:sentinel.local,DNS:nebula,DNS:nebula.local,DNS:localhost,IP:127.0.0.1" \
+      -addext "subjectAltName=$SAN" \
       >/dev/null 2>&1
   fi
   ARGS="$ARGS --ssl-certfile $CERT_DIR/sentinel.crt --ssl-keyfile $CERT_DIR/sentinel.key"

@@ -293,8 +293,18 @@ Le micro du navigateur (`getUserMedia`) exige un **contexte sécurisé** — c'e
 que Sentinel sert du HTTPS même en LAN.
 
 - **Par défaut** : certificat auto-signé généré dans `data/certs/` (avertissement à
-  accepter une fois par navigateur). Tout fonctionne, **sauf** l'installation PWA et le
-  service worker, qui exigent un certificat de confiance.
+  accepter une fois par navigateur). Tout fonctionne sur ordinateur, **mais** :
+  - l'installation PWA et le service worker exigent un certificat de confiance ;
+  - le certificat n'inclut pas ton IP LAN par défaut → **ajoute-la** via
+    `SENTINEL_TLS_SANS=IP:192.168.0.212` dans `.env`, sinon **iPhone reste « hors
+    ligne »** (iOS refuse le WebSocket sécurisé si l'adresse ne correspond pas au
+    certificat). Après modif : supprime `data/certs/sentinel.*` puis
+    `docker compose up -d` pour régénérer.
+- **iPhone / installation PWA sans avertissement** : il faut un certificat de
+  **confiance**. Le plus simple est mkcert (ci-dessous) ; installe ensuite la
+  racine mkcert sur l'iPhone (Réglages → profil téléchargé, puis Réglages →
+  Général → Informations → **Réglages de confiance des certificats** → active
+  la confiance). C'est indispensable pour que la PWA passe « en ligne » sur iOS.
 - **Recommandé — [mkcert](https://github.com/FiloSottile/mkcert)** (certificat reconnu
   par tes appareils, avertissement supprimé, PWA installable) :
 
