@@ -236,6 +236,12 @@ body.online.nova-on .conn-dot.nova { background: var(--ok); box-shadow: 0 0 8px 
 body[data-state="listening"] .mic { color: var(--accent); border-color: var(--accent-line); }
 body[data-state="listening"] .mic .icon-mic { display: none; }
 body[data-state="listening"] .mic .icon-stop { display: block; }
+/* Interrupteur « Luna répond à voix haute » (état porté par aria-checked) */
+.spk[aria-checked="true"] { color: var(--accent); border-color: var(--accent-line); }
+.spk .icon-spk-off { display: none; }
+.spk[aria-checked="false"] { color: var(--muted); }
+.spk[aria-checked="false"] .icon-spk-on { display: none; }
+.spk[aria-checked="false"] .icon-spk-off { display: block; }
 
 /* ── Voix / Orbe (colonne centrale) ──────────────────────────────────────── */
 .voice {

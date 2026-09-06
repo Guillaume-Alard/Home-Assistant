@@ -42,6 +42,7 @@ const els = {
   chatMeta: document.getElementById('chat-meta'),
   composer: document.getElementById('composer'),
   input: document.getElementById('text-input'),
+  voiceReply: document.getElementById('voice-reply'),
   mic: document.getElementById('mic'),
   // voix / orbe
   orb: document.getElementById('orb'),
@@ -139,8 +140,10 @@ let liveLevel = 0;         // niveau audio courant (0..1) → amplitude de l'orb
 let turnCount = 0;
 let lastHello = null;      // dernier message hello (moteur/config) pour les Paramètres
 let devAtelier = null;     // dernières infos atelier (auth/push/dépôts)
+let voiceReply = true;     // Luna répond-elle à voix haute ? (aussi à l'écrit)
 
 try { st.wakeArmed = localStorage.getItem('sentinel-wake') === '1'; } catch { /* privé */ }
+try { voiceReply = localStorage.getItem('sentinel-voice-reply') !== '0'; } catch { /* privé */ }
 
 let audioCtx = null;
 let player = null;
@@ -468,7 +471,7 @@ document.querySelectorAll('.drawer-x').forEach((btn) => btn.addEventListener('cl
 els.quickChips.querySelectorAll('.chip-q').forEach((btn) => {
   btn.addEventListener('click', () => {
     const q = btn.dataset.q || btn.textContent;
-    if (q && ws.alive) { ensureAudio().catch(() => {}); ws.sendJSON({ type: 'chat', text: q }); }
+    if (q && ws.alive) { ensureAudio().catch(() => {}); ws.sendJSON({ type: 'chat', text: q, speak: voiceReply }); }
   });
 });
 
@@ -1105,14 +1108,32 @@ els.orbMic.addEventListener('click', micAction);
 els.orbTap.addEventListener('click', micAction);
 els.interrupt.addEventListener('click', () => { if (st.listening) stopListening(false); interrupt(); });
 
+// Interrupteur « Luna répond à voix haute » (vaut aussi quand on écrit)
+function renderVoiceReply() {
+  els.voiceReply.setAttribute('aria-checked', String(voiceReply));
+  els.voiceReply.title = voiceReply
+    ? 'Luna répond à voix haute (cliquer pour couper le son)'
+    : 'Luna répond en silence (cliquer pour réactiver la voix)';
+}
+els.voiceReply.addEventListener('click', () => {
+  voiceReply = !voiceReply;
+  try { localStorage.setItem('sentinel-voice-reply', voiceReply ? '1' : '0'); } catch { /* privé */ }
+  if (voiceReply) ensureAudio().catch(() => {});  // débloque le haut-parleur du même geste
+  else if (player) player.stop();                 // coupe la voix déjà en cours
+  renderVoiceReply();
+});
+
 els.composer.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = els.input.value.trim();
   if (!text || !ws.alive) return;
   // Débloque le haut-parleur du navigateur sur ce geste (nécessaire pour
-  // entendre la réponse de Luna quand on écrit au lieu de parler).
+  // entendre la réponse de Luna quand on écrit au lieu de parler) et demande
+  // au serveur de PARLER la réponse (`speak`) : Luna est une assistante vocale,
+  // elle répond à voix haute même quand on lui écrit — sauf si on l'a mise en
+  // sourdine (bouton haut-parleur).
   ensureAudio().catch(() => {});
-  ws.sendJSON({ type: 'chat', text });
+  ws.sendJSON({ type: 'chat', text, speak: voiceReply });
   els.input.value = '';
 });
 
@@ -1146,6 +1167,7 @@ if ('serviceWorker' in navigator) {
 }
 
 setView('cockpit');
+renderVoiceReply();
 updateChatMeta();
 refreshUi();
 ws.connect();
