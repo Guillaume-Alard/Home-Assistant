@@ -123,6 +123,14 @@ export class Thread {
     this.streamText = '';
   }
 
+  // Texte assistant courant : flux en cours si présent, sinon dernière bulle.
+  lastAssistantText() {
+    if (this.streamText) return this.streamText;
+    const bodies = this.el.querySelectorAll('.msg.assistant .body');
+    const last = bodies[bodies.length - 1];
+    return last ? last.textContent : '';
+  }
+
   notice(text) { this._line(text, 'line'); }
   error(text) { this._line(text, 'line error'); }
 

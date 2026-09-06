@@ -3,58 +3,53 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0a0f16">
+  <meta name="theme-color" content="#08090B">
   <title>Sentinel</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/main.css">
 </head>
-<body data-state="offline">
+<body data-state="offline" data-view="cockpit">
 
-  <!-- Orbe « Noyau Synaptique » en fond ambiant, derrière tout, non cliquable -->
-  <div id="ambient" aria-hidden="true">
-    <iframe id="orb" class="orb-frame" src="orb.html" title="Noyau synaptique"
-            tabindex="-1" scrolling="no"></iframe>
-  </div>
-  <button id="orb-mic" class="orb-mic" type="button"
-          aria-label="Parler à Sentinel (barre espace)" title="Parler (espace)">
-    <svg class="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-         stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="9" y="3" width="6" height="11" rx="3"></rect>
-      <path d="M5 11a7 7 0 0 0 14 0"></path>
-      <line x1="12" y1="18" x2="12" y2="21"></line>
-    </svg>
-    <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <rect x="7" y="7" width="10" height="10" rx="2"></rect>
-    </svg>
-  </button>
-
+  <!-- ── En-tête ─────────────────────────────────────────────────────────── -->
   <header class="topbar">
     <div class="brand">
       <span class="brand-dot" aria-hidden="true"></span>
       <span class="brand-name">SENTINEL</span>
+      <span class="brand-tag">v0.1 · LOCAL</span>
     </div>
-    <div class="top-right">
-      <button id="proposals-btn" class="chip" type="button" hidden
-              aria-label="Propositions en attente">
-        ▤ <span id="prop-count">0</span>
-      </button>
-      <button id="wake-btn" class="chip" type="button" hidden
+
+    <nav class="tabs" role="tablist" aria-label="Vues">
+      <button id="tab-cockpit" class="tab" type="button" role="tab" aria-selected="true">Cockpit</button>
+      <button id="tab-settings" class="tab" type="button" role="tab" aria-selected="false">Paramètres</button>
+    </nav>
+
+    <div class="topbar-spacer"></div>
+
+    <div class="liaisons" aria-label="Liaisons">
+      <span class="liaisons-label">Liaisons</span>
+      <div class="liaisons-row" id="liaisons-row">
+        <span class="liaison" id="liaison-nova" data-svc="ha" title="Nova (Home Assistant)">HA</span>
+        <span class="liaison" id="liaison-github" data-svc="gh" title="GitHub (atelier)">GH</span>
+        <span class="liaison on" id="liaison-brain" data-svc="ai" title="Cerveau (Anthropic)">IA</span>
+      </div>
+    </div>
+
+    <div class="topbar-tools">
+      <button id="wake-btn" class="tool" type="button" hidden
               title="Veille au mot d'éveil" aria-label="Veille au mot d'éveil">◉</button>
-      <button id="atelier-btn" class="chip" type="button" hidden
-              title="Tâches de fond (atelier)" aria-label="Tâches de fond">
-        ⚒<span id="dev-live" class="live-dot" hidden aria-hidden="true"></span>
+      <button id="proposals-btn" class="tool" type="button" hidden aria-label="Propositions en attente">
+        ▤ <span id="prop-count" class="tool-badge">0</span>
       </button>
-      <button id="preview-btn" class="chip" type="button"
-              title="Aperçu d'un projet" aria-label="Aperçu d'un projet">▷</button>
-      <button id="sante-btn" class="chip" type="button"
-              title="Santé des systèmes" aria-label="Santé des systèmes">✚</button>
-      <button id="history-btn" class="chip" type="button"
-              title="Historique et journal" aria-label="Historique et journal">↺</button>
+      <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé">✚</button>
+      <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique">↺</button>
+      <div class="topbar-sep" aria-hidden="true"></div>
       <div class="conn" id="conn-nova" title="Nova (Home Assistant)" hidden>
-        <span class="conn-dot nova" id="nova-dot" aria-hidden="true"></span>
-        <span>nova</span>
+        <span class="conn-dot nova" id="nova-dot" aria-hidden="true"></span><span>nova</span>
       </div>
       <div class="conn" id="conn">
         <span class="conn-dot" id="conn-dot" aria-hidden="true"></span>
@@ -63,120 +58,163 @@
     </div>
   </header>
 
+  <!-- ── Vue COCKPIT ─────────────────────────────────────────────────────── -->
+  <main id="view-cockpit" class="cockpit">
+
+    <!-- Colonne 1 — Conversation -->
+    <section class="col conversation" aria-label="Conversation">
+      <header class="col-head">
+        <span class="head-dot ok" aria-hidden="true"></span>
+        <span class="head-title">Conversation</span>
+        <span class="head-meta" id="chat-meta"></span>
+      </header>
+      <section class="thread" id="thread" aria-live="polite"></section>
+      <footer class="composer-bar">
+        <form id="composer" class="composer" autocomplete="off">
+          <input id="text-input" type="text" placeholder="Écrire à Sentinel…"
+                 aria-label="Message écrit" maxlength="4000">
+          <button id="mic" class="icon-btn mic" type="button" aria-label="Parler (barre espace)">
+            <svg class="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><line x1="12" y1="18" x2="12" y2="21"></line>
+            </svg>
+            <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>
+          </button>
+          <button type="submit" class="icon-btn send" aria-label="Envoyer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"></path><path d="M13 6l6 6-6 6"></path></svg>
+          </button>
+        </form>
+      </footer>
+    </section>
+
+    <!-- Colonne 2 — Voix / Orbe -->
+    <section class="col voice" aria-label="Voix">
+      <div class="voice-grid" aria-hidden="true"></div>
+
+      <div class="voice-status">
+        <span class="head-dot state-dot" aria-hidden="true"></span>
+        <span class="head-title">État · <span id="state-label">hors ligne</span></span>
+        <span class="head-meta voice-loc">fr-FR</span>
+      </div>
+
+      <button id="orb-tap" class="orb-wrap" type="button" aria-label="Parler à Sentinel (barre espace)">
+        <span class="orb-aura" aria-hidden="true"></span>
+        <span class="orb-ring" aria-hidden="true"></span>
+        <span id="ambient" class="orb-holder">
+          <iframe id="orb" class="orb-frame" src="orb.html" title="Noyau synaptique" tabindex="-1" scrolling="no"></iframe>
+        </span>
+      </button>
+
+      <div class="waveform" id="waveform" aria-hidden="true"></div>
+
+      <div class="transcript" id="transcript"></div>
+
+      <div class="voice-actions">
+        <button id="orb-mic" class="btn-primary" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><line x1="12" y1="18" x2="12" y2="21"></line></svg>
+          <span id="orb-mic-label">Parler à Sentinel</span>
+        </button>
+        <button id="btn-interrupt" class="btn-ghost" type="button">Interrompre</button>
+      </div>
+
+      <div class="chips" id="quick-chips">
+        <button class="chip-q" type="button" data-q="Fais le point sur la maison et les systèmes.">État de la maison</button>
+        <button class="chip-q" type="button" data-q="Quel est l'état de l'atelier de dev ?">État de l'atelier</button>
+        <button class="chip-q" type="button" data-q="Résume les dernières alertes et propositions.">Résumé du jour</button>
+      </div>
+    </section>
+
+    <!-- Colonne 3 — Tâches de fond + Aperçu -->
+    <section class="col right" aria-label="Tâches et aperçu">
+
+      <div class="pane tasks-pane">
+        <header class="col-head">
+          <span class="head-title">Tâches de fond</span>
+          <span class="head-badge" id="tasks-count" hidden>0</span>
+          <span class="head-meta" id="atelier-status">connexion à l'atelier…</span>
+        </header>
+        <div class="tasks-body">
+          <div id="atelier-tasks" class="atelier-tasks"></div>
+          <div class="atelier-detail">
+            <div class="atelier-toolbar" id="atelier-toolbar" hidden>
+              <span id="atelier-branch" class="mono-chip"></span>
+              <button id="atelier-diff-btn" type="button" class="mini-btn">Voir le diff</button>
+            </div>
+            <div id="atelier-log" class="atelier-log" hidden></div>
+            <p id="atelier-empty" class="pane-empty">Aucune tâche pour l'instant.<br>
+              Dis à Sentinel : « Lance une tâche de dev sur loggia : … »</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane viewer-pane">
+        <header class="viewer-tabs">
+          <button id="preview-tab-vite" class="vtab" type="button" aria-selected="true">Aperçu</button>
+          <button id="preview-tab-code" class="vtab" type="button" aria-selected="false">Code</button>
+          <div class="viewer-spacer"></div>
+          <button id="preview-open" class="win-icon" type="button" title="Ouvrir dans un onglet">↗</button>
+          <button id="preview-refresh" class="win-icon" type="button" title="Recharger">↻</button>
+        </header>
+        <div class="preview-bar" id="preview-bar">
+          <input id="preview-url" type="url" inputmode="url" autocomplete="off"
+                 placeholder="https://… (serveur Vite, Atrium…)" aria-label="URL à prévisualiser">
+          <button id="preview-go" type="button" class="mini-btn">Ouvrir</button>
+        </div>
+        <div class="viewer-body">
+          <iframe id="preview-frame" class="preview-frame" title="Aperçu du projet"></iframe>
+          <div id="preview-code" class="preview-code" hidden>
+            <div id="preview-diff" class="atelier-log diff"></div>
+          </div>
+        </div>
+        <p id="preview-hint" class="pane-hint">
+          URL d'un serveur de dev (Vite, ex. http://192.168.0.212:5173) ou d'Atrium.
+          Onglet <b>Code</b> : le diff de la tâche sélectionnée.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Vue PARAMÈTRES (étoffée en phase 4) ─────────────────────────────── -->
+  <main id="view-settings" class="settings" hidden>
+    <div class="settings-placeholder">
+      <div class="head-title">Paramètres</div>
+      <p class="pane-empty">Connexions, voix &amp; réveil, moteur, confidentialité — bientôt.</p>
+    </div>
+  </main>
+
+  <!-- ── Tiroirs latéraux ────────────────────────────────────────────────── -->
+  <aside id="proposals-panel" class="drawer" hidden aria-label="Centre de propositions">
+    <header class="drawer-head">
+      <h2>Propositions</h2>
+      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+    </header>
+    <div id="proposals-list" class="drawer-list"></div>
+    <p class="drawer-hint">À la voix : « approuve / refuse / reporte la proposition N ».
+      Les propositions <em>sensibles</em> ne s'approuvent qu'ici.</p>
+  </aside>
+
+  <aside id="sante-panel" class="drawer" hidden aria-label="Santé des systèmes">
+    <header class="drawer-head">
+      <h2>Santé</h2>
+      <div class="drawer-actions">
+        <button id="sante-refresh" type="button" aria-label="Actualiser">↻</button>
+        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      </div>
+    </header>
+    <div id="sante-body" class="drawer-list"></div>
+  </aside>
+
+  <aside id="history-panel" class="drawer" hidden aria-label="Historique et journal">
+    <header class="drawer-head">
+      <h2>Historique</h2>
+      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+    </header>
+    <div id="history-body" class="drawer-list"></div>
+  </aside>
+
   <div id="alert-banner" class="alert-banner" role="alert" hidden>
     <span id="alert-text"></span>
     <button id="alert-close" type="button" aria-label="Fermer l'alerte">✕</button>
   </div>
-
-  <aside id="proposals-panel" class="panel" hidden aria-label="Centre de propositions">
-    <header class="panel-head">
-      <h2>Propositions</h2>
-      <button class="panel-x" type="button" aria-label="Fermer">✕</button>
-    </header>
-    <div id="proposals-list" class="panel-list"></div>
-    <p class="panel-hint">
-      À la voix : « approuve / refuse / reporte la proposition N ».
-      Les propositions <em>sensibles</em> ne s'approuvent qu'ici.
-    </p>
-  </aside>
-
-  <section id="win-tasks" class="win wide" hidden aria-label="Tâches de fond">
-    <header class="win-head">
-      <span class="win-title">Tâches de fond</span>
-      <button class="win-close" type="button" aria-label="Fermer">✕</button>
-    </header>
-    <p id="atelier-status" class="panel-status">connexion à l'atelier…</p>
-    <div id="atelier-tasks" class="atelier-tasks"></div>
-    <div class="atelier-detail">
-      <div class="atelier-toolbar" id="atelier-toolbar" hidden>
-        <span id="atelier-branch" class="mono-chip"></span>
-        <button id="atelier-view-btn" type="button" class="mini-btn">Voir le diff</button>
-      </div>
-      <div id="atelier-log" class="atelier-log" hidden></div>
-      <div id="atelier-diff" class="atelier-log diff" hidden></div>
-      <p id="atelier-empty" class="panel-empty">Aucune tâche pour l'instant.<br>
-        Dis à Sentinel : « Lance une tâche de dev sur loggia : … »</p>
-    </div>
-  </section>
-
-  <section id="win-preview" class="win wide" hidden aria-label="Aperçu d'un projet">
-    <header class="win-head">
-      <span class="win-title">Aperçu</span>
-      <div class="win-btns">
-        <button id="preview-open" class="win-icon" type="button" title="Ouvrir dans un onglet">↗</button>
-        <button id="preview-refresh" class="win-icon" type="button" title="Recharger">↻</button>
-        <button class="win-close" type="button" aria-label="Fermer">✕</button>
-      </div>
-    </header>
-    <div class="preview-bar">
-      <input id="preview-url" type="url" inputmode="url" autocomplete="off"
-             placeholder="https://… (serveur Vite, Atrium…)" aria-label="URL à prévisualiser">
-      <button id="preview-go" type="button" class="mini-btn">Ouvrir</button>
-    </div>
-    <div class="win-body">
-      <iframe id="preview-frame" class="preview-frame" title="Aperçu du projet"></iframe>
-    </div>
-    <p id="preview-hint" class="preview-hint">
-      URL d'un serveur de dev (Vite, ex. http://192.168.0.212:5173) ou d'Atrium.
-      Une URL en <b>http</b> ne s'affiche pas dans cette page (servie en https) —
-      utilise alors ↗ pour l'ouvrir dans un onglet.
-    </p>
-  </section>
-
-  <aside id="sante-panel" class="panel" hidden aria-label="Santé des systèmes">
-    <header class="panel-head">
-      <h2>Santé</h2>
-      <div class="panel-head-actions">
-        <button id="sante-refresh" type="button" aria-label="Actualiser">↻</button>
-        <button class="panel-x" type="button" aria-label="Fermer">✕</button>
-      </div>
-    </header>
-    <div id="sante-body" class="panel-list"></div>
-  </aside>
-
-  <aside id="history-panel" class="panel" hidden aria-label="Historique et journal">
-    <header class="panel-head">
-      <h2>Historique</h2>
-      <button class="panel-x" type="button" aria-label="Fermer">✕</button>
-    </header>
-    <div id="history-body" class="panel-list"></div>
-  </aside>
-
-  <!-- Conversation : fenêtre flottante déplaçable (glisser la barre de titre) -->
-  <section class="win" id="win-chat" aria-label="Conversation">
-    <header class="win-head">
-      <span class="win-title">Conversation</span>
-      <span class="win-state" id="state-label" role="status">hors ligne</span>
-      <button class="win-min" type="button" aria-label="Réduire">–</button>
-    </header>
-    <div class="win-body">
-      <section class="thread" id="thread" aria-live="polite"></section>
-    </div>
-    <footer class="win-foot">
-      <form id="composer" class="composer" autocomplete="off">
-        <button id="mic" class="mic" type="button" aria-label="Parler (barre espace)">
-          <svg class="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="9" y="3" width="6" height="11" rx="3"></rect>
-            <path d="M5 11a7 7 0 0 0 14 0"></path>
-            <line x1="12" y1="18" x2="12" y2="21"></line>
-          </svg>
-          <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <rect x="7" y="7" width="10" height="10" rx="2"></rect>
-          </svg>
-        </button>
-        <input id="text-input" type="text" placeholder="Écris à Sentinel…"
-               aria-label="Message écrit" maxlength="4000">
-        <button type="submit" class="send" aria-label="Envoyer">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M22 2 11 13"></path>
-            <path d="M22 2 15 22l-4-9-9-4z"></path>
-          </svg>
-        </button>
-      </form>
-    </footer>
-  </section>
 
   <div id="toast" class="toast" role="alert" hidden></div>
 
