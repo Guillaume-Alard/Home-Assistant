@@ -29,6 +29,21 @@ async def test_detection_puis_fin_de_session(fake_wyoming):
     await stream.send(b"\x00\x00" * 320, 16000)
 
 
+async def test_session_coupee_signalee(fake_wyoming):
+    """Le service coupe la connexion sans détection → la session se marque fermée
+    (l'appelant peut alors ré-armer), au lieu de se figer en silence."""
+    async def on_detection(name: str) -> None:  # pragma: no cover
+        raise AssertionError("aucune détection attendue")
+
+    detector = WakeWordDetector("127.0.0.1", fake_wyoming.wake_port, timeout=5)
+    stream = await detector.open(16000, on_detection)
+    # Le faux service ne coupe pas tout seul : on ferme depuis l'extérieur et on
+    # vérifie que la session se déclare fermée (contrat lu par _on_audio_chunk).
+    await stream.close()
+    assert stream.closed is True
+    await stream.send(b"\x00\x00" * 320, 16000)  # no-op silencieux, pas d'exception
+
+
 async def test_service_injoignable(unused_tcp_port=None):
     detector = WakeWordDetector("127.0.0.1", 1, timeout=2)  # port fermé
 

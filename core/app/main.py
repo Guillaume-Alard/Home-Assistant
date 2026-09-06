@@ -646,6 +646,15 @@ async def _on_audio_chunk(sentinel: Sentinel, client: Client, data: bytes) -> No
     stream = client.wake
     if stream is None:
         return
+    if stream.closed:
+        # Le service a coupé la session sans détection (redémarrage du conteneur…) :
+        # send() se tairait, donc on signale ici pour que l'UI ré-arme.
+        client.wake = None
+        await sentinel.hub.send(
+            client,
+            {"type": "wake_error", "text": "La veille au mot d'éveil a été interrompue."},
+        )
+        return
     try:
         await stream.send(data, client.wake_rate)
     except VoiceServiceError as exc:

@@ -121,6 +121,11 @@ class WakeStream:
         self._closed = False
         self._reader = asyncio.create_task(self._read_loop(), name="wake-reader")
 
+    @property
+    def closed(self) -> bool:
+        """Vrai dès que la session ne peut plus servir (détection, coupure ou arrêt)."""
+        return self._closed
+
     async def _read_loop(self) -> None:
         # Une détection (ou une coupure) met fin à la session : la boucle sort
         # d'elle-même et ferme sa connexion dans le `finally`. On ne s'auto-annule

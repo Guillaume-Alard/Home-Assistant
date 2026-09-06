@@ -116,11 +116,15 @@ function toast(text) {
 
 // ── Audio (créé au premier geste utilisateur) ───────────────────────────
 
-async function ensureAudio() {
+function makeAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     player = new Player(audioCtx);
   }
+}
+
+async function ensureAudio() {
+  makeAudio();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
 }
 
@@ -911,18 +915,22 @@ function saveWakePref() {
 
 function armOnGesture() {
   // L'audio du navigateur est verrouillé tant que l'utilisateur n'a pas
-  // interagi avec la page : on ré-essaie au premier clic ou appui de touche.
+  // interagi avec la page : on ré-essaie au premier clic OU appui de touche
+  // (les deux satisfont le déverrouillage autoplay).
   if (gestureHooked) return;
   gestureHooked = true;
-  const handler = () => { gestureHooked = false; syncWake(); };
+  const handler = () => {
+    document.removeEventListener('pointerdown', handler);
+    document.removeEventListener('keydown', handler);
+    gestureHooked = false;
+    syncWake();
+  };
   document.addEventListener('pointerdown', handler, { once: true });
+  document.addEventListener('keydown', handler, { once: true });
 }
 
 async function tryEnsureCapture() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    player = new Player(audioCtx);
-  }
+  makeAudio();
   if (audioCtx.state === 'suspended') {
     // resume() sans geste utilisateur peut rester en attente pour toujours :
     // on borne, et on retentera au premier geste.
