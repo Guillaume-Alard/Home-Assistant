@@ -35,6 +35,10 @@ class SentinelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ) as resp:
                     if resp.status == 401:
                         errors["base"] = "invalid_auth"
+                    elif resp.status == 404:
+                        # Route absente (sentinel-core pas à jour) OU endpoint
+                        # désactivé (jeton non chargé) : les deux renvoient 404.
+                        errors["base"] = "endpoint_missing"
                     elif resp.status != 200:
                         errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001 — toute erreur réseau = injoignable

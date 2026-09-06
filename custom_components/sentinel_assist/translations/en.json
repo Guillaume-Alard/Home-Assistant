@@ -11,7 +11,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Cannot reach Sentinel — check the URL and that the container is running.",
+      "cannot_connect": "Cannot reach Sentinel — check the URL (Sentinel's address on the NAS, e.g. https://192.168.0.251:8443) and that the container is running.",
+      "endpoint_missing": "Sentinel answered but the /v1 API is missing — update sentinel-core (git pull + docker compose up -d --build) and check that SENTINEL_ASSIST_TOKEN is set.",
       "invalid_auth": "Token rejected — check SENTINEL_ASSIST_TOKEN."
     },
     "abort": {

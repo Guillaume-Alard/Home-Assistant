@@ -11,7 +11,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Connexion à Sentinel impossible — vérifie l'URL et que le conteneur tourne.",
+      "cannot_connect": "Connexion à Sentinel impossible — vérifie l'URL (celle de Sentinel sur le NAS, ex. https://192.168.0.251:8443) et que le conteneur tourne.",
+      "endpoint_missing": "Sentinel répond mais l'API /v1 est introuvable — mets sentinel-core à jour (git pull + docker compose up -d --build) et vérifie que SENTINEL_ASSIST_TOKEN est bien renseigné.",
       "invalid_auth": "Jeton refusé — vérifie SENTINEL_ASSIST_TOKEN."
     },
     "abort": {
