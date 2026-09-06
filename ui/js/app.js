@@ -113,6 +113,22 @@ const st = {
 let wakeWord = 'hey jarvis';
 try { st.wakeArmed = localStorage.getItem('sentinel-wake') === '1'; } catch { /* privé */ }
 
+// État de la console de l'atelier de dev. Déclaré ici (et non dans sa section
+// plus bas) car, au démarrage, restoreWinOpen → setAtelierPolling y accède
+// avant que cette section ne s'exécute : un `const` déclaré plus bas provoquait
+// une ReferenceError (zone morte temporelle) qui stoppait tout le script AVANT
+// ws.connect() — d'où le HUD figé sur « hors ligne » alors que le serveur allait bien.
+const dev = {
+  tasks: [],        // dernière liste reçue (plus récente d'abord)
+  selected: null,   // id de la tâche affichée
+  next: 0,          // curseur de lecture incrémentale du journal
+  showDiff: false,
+  tasksTimer: null,
+  logTimer: null,
+  workerDown: false, // dernier dev_tasks en erreur → on suspend le sondage du journal
+  logPendingAt: 0,   // requête de journal en vol (anti-doublons, expire après 8 s)
+};
+
 let audioCtx = null;
 let player = null;
 let capture = null;
@@ -554,19 +570,10 @@ try {
 } catch { /* privé */ }
 
 // ── Console de l'atelier de développement ───────────────────────────────
+// (l'état `dev` est déclaré plus haut, près de `st` : voir la note là-bas —
+// il est utilisé dès le démarrage par restoreWinOpen → setAtelierPolling.)
 
 const DEV_STATUS_FR = { queued: 'en file', running: 'en cours', done: 'terminée', failed: 'échec' };
-
-const dev = {
-  tasks: [],        // dernière liste reçue (plus récente d'abord)
-  selected: null,   // id de la tâche affichée
-  next: 0,          // curseur de lecture incrémentale du journal
-  showDiff: false,
-  tasksTimer: null,
-  logTimer: null,
-  workerDown: false, // dernier dev_tasks en erreur → on suspend le sondage du journal
-  logPendingAt: 0,   // requête de journal en vol (anti-doublons, expire après 8 s)
-};
 
 function setAtelierPolling(on) {
   clearInterval(dev.tasksTimer); dev.tasksTimer = null;
