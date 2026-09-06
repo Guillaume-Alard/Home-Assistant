@@ -1127,6 +1127,19 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Débloque le haut-parleur du navigateur au tout premier geste (clic ou touche),
+// où qu'il soit : la voix de Luna se joue alors même si on n'a jamais touché le
+// micro (cas de l'écrit, et de l'accès http où le micro est bloqué).
+(function unlockAudioOnFirstGesture() {
+  const h = () => {
+    document.removeEventListener('pointerdown', h);
+    document.removeEventListener('keydown', h);
+    ensureAudio().catch(() => {});
+  };
+  document.addEventListener('pointerdown', h);
+  document.addEventListener('keydown', h);
+})();
+
 // ── Démarrage ─────────────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
