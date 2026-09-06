@@ -792,6 +792,10 @@ const matFinal = new THREE.ShaderMaterial({
       // Alpha dérivé de la luminance : le vide (noir) devient transparent,
       // l'orbe lumineuse reste opaque. Sans prémultiplication (renderer).
       float a = clamp(max(max(ldr.r, ldr.g), ldr.b) * 1.4, 0.0, 1.0);
+      // Estompe l'alpha vers le bord du canvas carré : sans ça, l'aura est
+      // coupée net au bord (bordures droites visibles quand l'orbe est intégrée).
+      // Le corps de l'orbe (rayon uv ~0.40) n'est pas touché.
+      a *= 1.0 - smoothstep(0.44, 0.5, rad);
       gl_FragColor = vec4(ldr, a);
     }`
 });

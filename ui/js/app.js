@@ -11,7 +11,7 @@ const LABELS = {
   listening: 'je t’écoute',
   transcribing: 'transcription…',
   thinking: 'réflexion…',
-  speaking: 'sentinel parle',
+  speaking: 'luna parle',
   offline: 'hors ligne',
 };
 
@@ -955,7 +955,7 @@ function renderConnexions(h, cfg) {
     { ic: 'AS', name: 'Agent Assist (Nova)',
       status: cfg.assist ? 'Actif' : 'Désactivé',
       statusCls: cfg.assist ? 'on' : '',
-      desc: 'Sentinel comme agent conversationnel de Home Assistant.' },
+      desc: 'Luna comme agent conversationnel de Home Assistant.' },
   ];
   if (cfg.docker) real.push({ ic: 'DK', name: 'Surveillance Docker', status: 'Active · lecture', statusCls: 'on', desc: 'État des conteneurs, mémoire, redémarrage sur proposition.' });
   if (cfg.atrium) real.push({ ic: 'AT', name: 'Atrium', status: 'Surveillé', statusCls: 'on', desc: 'Disponibilité et latence du service.' });

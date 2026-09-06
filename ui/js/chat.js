@@ -146,7 +146,7 @@ export class Thread {
     el.className = `msg ${role === 'user' ? 'user' : 'assistant'}`;
     const meta = document.createElement('div');
     meta.className = 'meta';
-    const who = role === 'user' ? (source === 'voice' ? 'Toi · voix' : 'Toi') : 'Sentinel';
+    const who = role === 'user' ? (source === 'voice' ? 'Toi · voix' : 'Toi') : 'Luna';
     const at = createdAt ? ` · ${timeFr(createdAt)}` : '';
     meta.textContent = who + at;
     const body = document.createElement('div');
