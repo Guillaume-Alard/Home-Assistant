@@ -155,6 +155,13 @@ def test_hello_et_sante(client):
         assert hello["type"] == "hello"
         assert hello["history"] == []
         assert hello["state"] == "idle"
+        # Bloc « engine » (affichage seul) attendu par la page Paramètres du cockpit
+        assert hello["engine"]["model"]
+        for key in ("effort", "whisper_model", "piper_voice", "wake_model", "tz"):
+            assert key in hello["engine"]
+        # Capacités booléennes pour les cartes Connexions
+        for key in ("ha", "worker", "assist", "anthropic"):
+            assert key in hello["config"]
 
 
 def test_tour_ecrit(client, fake_brain):
