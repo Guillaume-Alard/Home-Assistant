@@ -667,3 +667,30 @@ body[data-state="transcribing"] .win-state { color: var(--warn); }
   }
   .win-head { cursor: default; }
 }
+
+/* ── Fenêtres Tâches de fond + Aperçu ──────────────────────────────────── */
+#win-tasks   { left: 24px;  top: 64px; right: auto; bottom: auto;
+               width: min(560px, 92vw); height: min(66vh, 640px); }
+#win-preview { right: 24px; top: 64px; left: auto;  bottom: auto;
+               width: min(620px, 92vw); height: min(70vh, 680px); }
+
+.win-btns { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.win-head > .win-close { margin-left: auto; }
+.win-icon, .win-close {
+  border: none; background: none; color: var(--muted);
+  cursor: pointer; font-size: 14px; line-height: 1; padding: 3px 6px; border-radius: 6px;
+}
+.win-icon:hover { color: var(--text); background: var(--panel); }
+.win-close:hover { color: var(--text); }
+
+/* Aperçu : barre d'URL + iframe */
+.preview-bar { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--panel-edge); }
+.preview-bar input {
+  flex: 1; background: var(--panel); border: 1px solid var(--panel-edge);
+  color: var(--text); border-radius: 8px; padding: 7px 10px;
+  font-size: 13px; font-family: inherit; outline: none;
+}
+.preview-bar input:focus { border-color: var(--accent-dim); box-shadow: 0 0 0 3px var(--accent-soft); }
+.preview-frame { flex: 1; width: 100%; border: 0; background: #0e1520; }
+.preview-hint { margin: 0; padding: 8px 12px; font-size: 11px; color: var(--muted);
+  border-top: 1px solid var(--panel-edge); line-height: 1.45; }

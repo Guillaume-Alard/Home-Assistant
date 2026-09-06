@@ -4,7 +4,7 @@ import { WSClient } from './ws.js';
 import { Capture } from './audio-capture.js';
 import { Player } from './audio-play.js';
 import { Thread } from './chat.js';
-import { makeDraggable } from './windows.js';
+import { makeDraggable, bringToFront } from './windows.js';
 
 const LABELS = {
   idle: 'en veille',
@@ -56,11 +56,21 @@ const els = {
   atelierEmpty: document.getElementById('atelier-empty'),
   santeBody: document.getElementById('sante-body'),
   historyBody: document.getElementById('history-body'),
+  // Fenêtres flottantes
+  winTasks: document.getElementById('win-tasks'),
+  previewBtn: document.getElementById('preview-btn'),
+  winPreview: document.getElementById('win-preview'),
+  previewUrl: document.getElementById('preview-url'),
+  previewGo: document.getElementById('preview-go'),
+  previewRefresh: document.getElementById('preview-refresh'),
+  previewOpen: document.getElementById('preview-open'),
+  previewFrame: document.getElementById('preview-frame'),
 };
 
+// Panneaux latéraux exclusifs (un seul ouvert). L'atelier et l'aperçu sont, eux,
+// des fenêtres flottantes gérées à part (voir plus bas).
 const panels = {
   proposals: document.getElementById('proposals-panel'),
-  atelier: document.getElementById('atelier-panel'),
   sante: document.getElementById('sante-panel'),
   history: document.getElementById('history-panel'),
 };
@@ -463,16 +473,64 @@ function closePanels() {
 
 function panelsChanged() {
   renderProposals(); // la visibilité du chip propositions dépend du panneau
-  setAtelierPolling(!panels.atelier.hidden);
   setSantePolling(!panels.sante.hidden);
   if (!panels.history.hidden) ws.sendJSON({ type: 'historique' });
 }
 
 els.proposalsBtn.addEventListener('click', () => openPanel('proposals'));
-els.atelierBtn.addEventListener('click', () => openPanel('atelier'));
 els.santeBtn.addEventListener('click', () => openPanel('sante'));
 els.historyBtn.addEventListener('click', () => openPanel('history'));
 document.querySelectorAll('.panel-x').forEach((btn) => btn.addEventListener('click', closePanels));
+
+// ── Fenêtres flottantes : Tâches de fond (atelier) + Aperçu ─────────────
+makeDraggable(els.winTasks, 'tasks');
+makeDraggable(els.winPreview, 'preview');
+
+function toggleWin(win) {
+  win.hidden = !win.hidden;
+  if (!win.hidden) bringToFront(win);
+}
+
+els.atelierBtn.addEventListener('click', () => {
+  toggleWin(els.winTasks);
+  setAtelierPolling(!els.winTasks.hidden);
+});
+els.previewBtn.addEventListener('click', () => toggleWin(els.winPreview));
+
+document.querySelectorAll('.win-close').forEach((btn) => btn.addEventListener('click', () => {
+  const win = btn.closest('.win');
+  win.hidden = true;
+  if (win === els.winTasks) setAtelierPolling(false);
+}));
+
+// ── Fenêtre Aperçu : embarque un serveur de dev (Vite…) ou Atrium ────────
+const PREVIEW_KEY = 'sentinel.preview.url';
+const normalizeUrl = (u) => {
+  u = (u || '').trim();
+  return u && !/^https?:\/\//i.test(u) ? `https://${u}` : u;
+};
+function loadPreview() {
+  const url = normalizeUrl(els.previewUrl.value);
+  if (!url) return;
+  els.previewUrl.value = url;
+  els.previewFrame.src = url;
+  try { localStorage.setItem(PREVIEW_KEY, url); } catch { /* privé */ }
+}
+els.previewGo.addEventListener('click', loadPreview);
+els.previewUrl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); loadPreview(); }
+});
+els.previewRefresh.addEventListener('click', () => {
+  if (els.previewFrame.src) els.previewFrame.src = els.previewFrame.src; // recharge
+});
+els.previewOpen.addEventListener('click', () => {
+  const url = normalizeUrl(els.previewUrl.value);
+  if (url) window.open(url, '_blank', 'noopener');
+});
+try {
+  const u = localStorage.getItem(PREVIEW_KEY); // pré-remplit sans charger (http/lenteur)
+  if (u) els.previewUrl.value = u;
+} catch { /* privé */ }
 
 // ── Console de l'atelier de développement ───────────────────────────────
 
@@ -512,8 +570,8 @@ function setDevRunning(running) {
   els.devLive.hidden = !running;
   els.atelierBtn.title = running
     ? `Atelier au travail sur « ${running.repo} »`
-    : 'Atelier de développement';
-  if (!panels.atelier.hidden) ws.sendJSON({ type: 'dev_tasks' });
+    : 'Tâches de fond';
+  if (!els.winTasks.hidden) ws.sendJSON({ type: 'dev_tasks' });
 }
 
 function onDevTasks(msg) {

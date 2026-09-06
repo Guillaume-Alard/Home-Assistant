@@ -43,9 +43,11 @@
       <button id="wake-btn" class="chip" type="button" hidden
               title="Veille au mot d'éveil" aria-label="Veille au mot d'éveil">◉</button>
       <button id="atelier-btn" class="chip" type="button" hidden
-              title="Atelier de développement" aria-label="Atelier de développement">
+              title="Tâches de fond (atelier)" aria-label="Tâches de fond">
         ⚒<span id="dev-live" class="live-dot" hidden aria-hidden="true"></span>
       </button>
+      <button id="preview-btn" class="chip" type="button"
+              title="Aperçu d'un projet" aria-label="Aperçu d'un projet">▷</button>
       <button id="sante-btn" class="chip" type="button"
               title="Santé des systèmes" aria-label="Santé des systèmes">✚</button>
       <button id="history-btn" class="chip" type="button"
@@ -78,10 +80,10 @@
     </p>
   </aside>
 
-  <aside id="atelier-panel" class="panel wide" hidden aria-label="Atelier de développement">
-    <header class="panel-head">
-      <h2>Atelier</h2>
-      <button class="panel-x" type="button" aria-label="Fermer">✕</button>
+  <section id="win-tasks" class="win wide" hidden aria-label="Tâches de fond">
+    <header class="win-head">
+      <span class="win-title">Tâches de fond</span>
+      <button class="win-close" type="button" aria-label="Fermer">✕</button>
     </header>
     <p id="atelier-status" class="panel-status">connexion à l'atelier…</p>
     <div id="atelier-tasks" class="atelier-tasks"></div>
@@ -95,7 +97,31 @@
       <p id="atelier-empty" class="panel-empty">Aucune tâche pour l'instant.<br>
         Dis à Sentinel : « Lance une tâche de dev sur loggia : … »</p>
     </div>
-  </aside>
+  </section>
+
+  <section id="win-preview" class="win wide" hidden aria-label="Aperçu d'un projet">
+    <header class="win-head">
+      <span class="win-title">Aperçu</span>
+      <div class="win-btns">
+        <button id="preview-open" class="win-icon" type="button" title="Ouvrir dans un onglet">↗</button>
+        <button id="preview-refresh" class="win-icon" type="button" title="Recharger">↻</button>
+        <button class="win-close" type="button" aria-label="Fermer">✕</button>
+      </div>
+    </header>
+    <div class="preview-bar">
+      <input id="preview-url" type="url" inputmode="url" autocomplete="off"
+             placeholder="https://… (serveur Vite, Atrium…)" aria-label="URL à prévisualiser">
+      <button id="preview-go" type="button" class="mini-btn">Ouvrir</button>
+    </div>
+    <div class="win-body">
+      <iframe id="preview-frame" class="preview-frame" title="Aperçu du projet"></iframe>
+    </div>
+    <p id="preview-hint" class="preview-hint">
+      URL d'un serveur de dev (Vite, ex. http://192.168.0.212:5173) ou d'Atrium.
+      Une URL en <b>http</b> ne s'affiche pas dans cette page (servie en https) —
+      utilise alors ↗ pour l'ouvrir dans un onglet.
+    </p>
+  </section>
 
   <aside id="sante-panel" class="panel" hidden aria-label="Santé des systèmes">
     <header class="panel-head">
