@@ -372,6 +372,23 @@ def test_assist_message_vide_refuse(client_assist):
     assert r.status_code == 400
 
 
+def test_assist_bloc_malforme_ne_casse_pas(client_assist, fake_brain):
+    # Un bloc de contenu au texte null ne doit pas donner un 500 (400 propre
+    # si vide, ou réponse normale si un texte exploitable subsiste).
+    r = client_assist.post(
+        "/v1/chat/completions", headers=_AUTH,
+        json={"messages": [{"role": "user", "content": [{"type": "text", "text": None}]}]},
+    )
+    assert r.status_code == 400
+    r = client_assist.post(
+        "/v1/chat/completions", headers=_AUTH,
+        json={"messages": [{"role": "user", "content": [
+            {"type": "text", "text": None}, {"type": "text", "text": "Bonjour"},
+        ]}]},
+    )
+    assert r.status_code == 200
+
+
 def test_assist_models(client_assist):
     assert client_assist.get("/v1/models").status_code == 401
     r = client_assist.get("/v1/models", headers=_AUTH)

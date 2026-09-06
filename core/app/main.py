@@ -478,45 +478,72 @@ class Sentinel:
         """Un tour venu d'Assist (agent conversationnel de Nova / app HA).
 
         Même cerveau, même fil, même sécurité que le chat écrit — mais requête/
-        réponse HTTP (pas de WebSocket, pas de TTS : Nova gère la voix). Le tour
-        est aussi diffusé aux clients web pour que la conversation reste unique.
-        Renvoie le texte final (que Nova prononcera).
+        réponse HTTP (pas de TTS : Nova gère la voix). Le tour PASSE par la même
+        machinerie de tour unique (verrou + barge-in) que le WebSocket : il ne
+        peut donc jamais se superposer à un tour web ni à un autre tour Assist
+        (sinon deux flux corrompraient le fil partagé, et un outil pourrait
+        s'exécuter deux fois). Renvoie le texte final (que Nova prononcera).
         """
+        holder: dict[str, str] = {}
+
+        async def _turn() -> None:
+            holder["text"] = await self._assist_body(text)
+
+        async with self._turn_lock:
+            await self._cancel_locked()
+            task = asyncio.create_task(_turn(), name="assist-turn")
+            self._turn_task = task
+        try:
+            await task
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise  # notre propre annulation (client HTTP parti), pas le tour
+        return holder.get("text") or "Désolé, ma réponse a été interrompue."
+
+    async def _assist_body(self, text: str) -> str:
         source = "assist"
         assistant_id = uuid.uuid4().hex[:12]
-        user_msg = await self.store.add_message("user", text, source)
-        await self.hub.broadcast({"type": "message", "message": user_msg})
-
-        intent_reply = await self.intents.handle(text, source)
-        if intent_reply is not None:
-            stream = _single_reply(intent_reply)
-        else:
-            history = _build_history(await self.store.recent_messages(self.settings.history_window))
-            stream = self.brain.stream_reply(history, utterance=text, source=source)
-
-        await self.hub.broadcast({"type": "assistant_start", "id": assistant_id})
         parts: list[str] = []
         error_text: str | None = None
+        cancelled = False
         try:
+            user_msg = await self.store.add_message("user", text, source)
+            await self.hub.broadcast({"type": "message", "message": user_msg})
+            intent_reply = await self.intents.handle(text, source)
+            if intent_reply is not None:
+                stream = _single_reply(intent_reply)
+            else:
+                history = _build_history(
+                    await self.store.recent_messages(self.settings.history_window)
+                )
+                stream = self.brain.stream_reply(history, utterance=text, source=source)
+            await self.hub.broadcast({"type": "assistant_start", "id": assistant_id})
             async for delta in stream:
                 parts.append(delta)
                 await self.hub.broadcast(
                     {"type": "assistant_delta", "id": assistant_id, "text": delta}
                 )
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except LLMUnavailable as exc:
             error_text = str(exc)
         except Exception:
             log.exception("Échec inattendu d'un tour Assist")
             error_text = "Une erreur interne est survenue — détail dans les journaux du serveur."
-
-        full = "".join(parts).strip() or error_text or "Je n'ai rien à répondre."
-        message = None
-        with contextlib.suppress(Exception):
-            message = await self.store.add_message("assistant", full, source)
-        await self.hub.broadcast(
-            {"type": "assistant_end", "id": assistant_id, "message": message, "cancelled": False}
-        )
-        return full
+        finally:
+            full = "".join(parts).strip()
+            message = None
+            if full:
+                with contextlib.suppress(Exception):
+                    message = await self.store.add_message("assistant", full, source)
+            await self.hub.broadcast(
+                {"type": "assistant_end", "id": assistant_id,
+                 "message": message, "cancelled": cancelled}
+            )
+            if error_text:
+                await self.hub.broadcast({"type": "error", "text": error_text})
+        return full or error_text or "Je n'ai rien à répondre."
 
     async def _speak_worker(
         self, origin: Client, queue: asyncio.Queue[str | None]
@@ -667,7 +694,7 @@ async def assist_chat(request: Request):
                 content = m.get("content")
                 if isinstance(content, list):  # format à blocs éventuel
                     content = " ".join(
-                        b.get("text", "") for b in content if isinstance(b, dict)
+                        str(b.get("text") or "") for b in content if isinstance(b, dict)
                     )
                 text = str(content or "").strip()
                 break

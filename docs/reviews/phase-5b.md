@@ -24,9 +24,9 @@ conversationnel » — parler à Sentinel depuis l'app HA.
 - **Honnêteté matériel** : les Echo Dot (Alexa) ne peuvent pas être des satellites
   de Sentinel ; documenté, avec les seules options réalistes (annonces via Alexa
   Media Player). Le vrai satellite est l'app HA (et un futur Voice PE, sans code).
-- Tests : 124 (5 nouveaux — désactivé sans jeton, jeton exigé, complétion +
-  miroir dans le fil, message vide refusé, `/v1/models` ; + durcissement sensible
-  vérifié pour `text`/`assist`).
+- Tests : 125 (6 nouveaux — désactivé sans jeton, jeton exigé, complétion +
+  miroir dans le fil, message vide refusé, bloc malformé sans 500, `/v1/models` ;
+  + durcissement sensible vérifié pour `text`/`assist`).
 
 ## Points de doute — avis sollicité
 
@@ -44,10 +44,29 @@ conversationnel » — parler à Sentinel depuis l'app HA.
 5. **Durcissement `via != "ui"`** : bien fondé (le modèle de sécurité dit sensible =
    approbation UI seule), mais change le comportement du texte tapé. Acceptable ?
 
+## Addendum — revue interne du 06/09 (4 constats, tous corrigés)
+
+1. **Tour Assist hors machinerie de tour (le plus grave)** : `run_assist_reply`
+   ne prenait pas le verrou de tour → un appel Assist chevauchant un tour web
+   corrompait le fil partagé (deux flux dans une bulle), et deux appels Assist
+   simultanés pouvaient exécuter un outil / créer une proposition en double →
+   le tour passe désormais par le verrou + barge-in (`_cancel_locked`), comme le
+   WebSocket ; jamais deux tours en parallèle.
+2. Awaits d'avant-flux hors `try` → une panne transitoire donnait un 500 et une
+   bulle utilisateur orpheline → tout le corps est en `try/finally`, `assistant_end`
+   toujours émis, `error` diffusé, jamais de 500.
+3. Extraction d'un contenu à blocs : un `text` non-`str` (`null`) levait un
+   `TypeError` (→ 500) → coercition `str(... or "")`, 400 propre si vide.
+4. Duplication avec `run_reply_turn` : réduite (le corps Assist partage la
+   machinerie de tour) ; le reste diverge volontairement (pas de TTS, renvoie le
+   texte).
+
+125 tests après correctifs. Les points de doute restent ouverts.
+
 ## Comment tester
 
 ```bash
-cd core && pip install -r requirements-dev.txt && pytest -q   # 124 tests
+cd core && pip install -r requirements-dev.txt && pytest -q   # 125 tests
 ```
 
 Réel : `SENTINEL_ASSIST_TOKEN=...` dans `.env`, `docker compose up -d`, puis
