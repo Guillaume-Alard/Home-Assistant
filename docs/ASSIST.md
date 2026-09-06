@@ -35,7 +35,7 @@ Puis `docker compose up -d`. Sans ce jeton, l'endpoint renvoie 404 (désactivé)
 Vérifie depuis le LAN (remplace l'IP et le jeton) :
 
 ```bash
-curl -k https://192.168.0.251:8443/v1/models -H "Authorization: Bearer TON_JETON"
+curl -k https://192.168.0.212:8443/v1/models -H "Authorization: Bearer TON_JETON"
 ```
 
 Tu dois voir une liste de modèles (`sentinel`).
@@ -58,7 +58,7 @@ sans dépendance tierce. Prérequis : **HA 2024.2+**.
 2. **Redémarre** Home Assistant.
 3. **Paramètres → Appareils et services → Ajouter une intégration →**
    cherche **« Sentinel »**.
-4. **URL de Sentinel** : `https://192.168.0.251:8443` (sans `/v1`) ;
+4. **URL de Sentinel** : `https://192.168.0.212:8443` (sans `/v1`) ;
    **Jeton** : ton `SENTINEL_ASSIST_TOKEN`. Le certificat auto-signé est
    accepté automatiquement.
 5. Puis va à l'étape 4 ci-dessous (pipeline Assist) — identique.
@@ -68,7 +68,7 @@ sans dépendance tierce. Prérequis : **HA 2024.2+**.
 1. **HACS → Intégrations →** installe **« Extended OpenAI Conversation »**
    (jekalmin). Redémarre Nova si demandé.
 2. **Paramètres → Appareils et services → Ajouter → Extended OpenAI Conversation** :
-   - **Base URL** : `https://192.168.0.251:8443/v1` (l'IP de Nebula)
+   - **Base URL** : `https://192.168.0.212:8443/v1` (l'IP de Nebula)
    - **API Key** : le `SENTINEL_ASSIST_TOKEN`
    - **Skip authentication / verify SSL** : le certificat de Sentinel est
      auto-signé — si l'intégration refuse la connexion, c'est le point à
@@ -83,7 +83,7 @@ sans dépendance tierce. Prérequis : **HA 2024.2+**.
    - **Agent conversationnel** : Extended OpenAI Conversation (créé ci-dessus)
    - **Transcription (STT)** et **synthèse (TTS)** : tu peux réutiliser
      directement les conteneurs de Sentinel — Nova → **Wyoming Protocol**,
-     hôte `192.168.0.251`, ports `10300` (whisper) et `10200` (piper) — ou les
+     hôte `192.168.0.212`, ports `10300` (whisper) et `10200` (piper) — ou les
      services que tu utilises déjà. (Pour les exposer, publie ces ports dans
      `docker-compose.yml` ; ils sont internes par défaut.)
 5. Dans l'**app HA** de ton téléphone : **Paramètres → Assistants**, choisis ce

@@ -17,7 +17,7 @@ conversationnels par entité), et `SENTINEL_ASSIST_TOKEN` renseigné côté Sent
 3. **Paramètres → Appareils et services → Ajouter une intégration →** cherche
    **« Sentinel »**.
 4. Renseigne :
-   - **URL de Sentinel** : `https://192.168.0.251:8443` (sans `/v1`)
+   - **URL de Sentinel** : `https://192.168.0.212:8443` (sans `/v1`)
    - **Jeton** : la valeur de `SENTINEL_ASSIST_TOKEN`
    Le certificat auto-signé est accepté automatiquement (pas de vérif TLS).
 5. **Paramètres → Voix (Assist) → Ajouter un assistant** : choisis **Sentinel**
