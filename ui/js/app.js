@@ -87,6 +87,7 @@ const els = {
   setWakeavail: document.getElementById('set-wakeavail'),
   setWakeToggle: document.getElementById('set-wake-toggle'),
   setVoice: document.getElementById('set-voice'),
+  setVoiceEngine: document.getElementById('set-voice-engine'),
   setModel: document.getElementById('set-model'),
   setEffort: document.getElementById('set-effort'),
   setMaxtok: document.getElementById('set-maxtok'),
@@ -871,12 +872,16 @@ function renderSettings() {
   els.setWakeavail.textContent = h.wake_available ? 'actif' : 'indisponible';
   els.setWakeToggle.setAttribute('aria-checked', String(st.wakeArmed));
   els.setWakeToggle.disabled = !h.wake_available;
-  els.setVoice.textContent = eng.piper_voice || '—';
+  const cloned = eng.tts_engine === 'cloned';
+  els.setVoiceEngine.textContent = cloned ? 'clonage local · repli Piper' : 'Piper · local';
+  els.setVoice.textContent = cloned ? `« ${eng.cloned_tts_voice || 'luna'} » (clonée)` : (eng.piper_voice || '—');
   els.setModel.textContent = eng.model || '—';
   els.setEffort.textContent = eng.effort || '—';
   els.setMaxtok.textContent = eng.max_tokens ? String(eng.max_tokens) : '—';
   els.setStt.textContent = eng.whisper_model ? `${eng.whisper_model} · faster-whisper` : '—';
-  els.setTts.textContent = eng.piper_voice ? `${eng.piper_voice} · Piper` : '—';
+  els.setTts.textContent = cloned
+    ? `voix clonée « ${eng.cloned_tts_voice || 'luna'} » (repli Piper)`
+    : (eng.piper_voice ? `${eng.piper_voice} · Piper` : '—');
   els.setReport.textContent = cfg.daily_report ? cfg.daily_report : 'désactivé';
   els.setTz.textContent = eng.tz || '—';
   renderProtocols(h.protocols || []);

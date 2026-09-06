@@ -13,5 +13,9 @@ venv/
 .pytest_cache/
 .ruff_cache/
 
+# Voix de Luna : échantillons de référence (jamais versionnés)
+config/voix/voices/*
+!config/voix/voices/.gitkeep
+
 # Divers
 .DS_Store

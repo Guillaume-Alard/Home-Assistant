@@ -1,0 +1,3 @@
+# Dépose ici l'échantillon de référence de la voix de Luna : luna.wav
+# (~6 à 15 s, mono, propre, sans bruit de fond). Les fichiers .wav de ce dossier
+# ne sont PAS versionnés (voir .gitignore) — ils restent locaux sur Nebula.

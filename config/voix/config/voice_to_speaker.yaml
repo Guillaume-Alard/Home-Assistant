@@ -1,0 +1,20 @@
+# Mapping voix → modèle / échantillon pour le serveur de voix clonée
+# (openedai-speech). « luna » est la voix par défaut de Sentinel
+# (CLONED_TTS_VOICE=luna). Dépose ton échantillon de référence dans
+# config/voix/voices/luna.wav (~6–15 s, mono, propre), puis ajuste ce fichier
+# si besoin selon la version du serveur.
+#
+# Format de référence : https://github.com/matatonic/openedai-speech
+# (à valider sur Nebula — voir docs/VOICE.md).
+
+tts-1:
+  luna:
+    model: xtts_v2.0.2
+    speaker: voices/luna.wav
+    language: fr
+
+tts-1-hd:
+  luna:
+    model: xtts_v2.0.2
+    speaker: voices/luna.wav
+    language: fr

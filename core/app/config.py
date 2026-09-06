@@ -55,6 +55,15 @@ class Settings:
     wake_port: int
     wake_model: str
 
+    # Voix de Luna (clonage local) — TTS_ENGINE=cloned pour l'activer ; sinon Piper.
+    # Le serveur clone est appelé via une API compatible OpenAI (/v1/audio/speech).
+    # Repli automatique sur Piper si le serveur est indisponible.
+    tts_engine: str
+    cloned_tts_url: str
+    cloned_tts_voice: str
+    cloned_tts_model: str
+    cloned_tts_rate: int
+
     # Réseau / stockage — le TLS lui-même est géré hors application
     # (entrypoint.sh + healthcheck.py lisent SENTINEL_TLS directement)
     data_dir: Path
@@ -107,6 +116,13 @@ class Settings:
             wake_host=os.environ.get("WAKE_HOST", "").strip(),
             wake_port=_int(os.environ.get("WAKE_PORT"), 10400),
             wake_model=os.environ.get("WAKEWORD_MODEL", "hey_jarvis").strip() or "hey_jarvis",
+            tts_engine=(os.environ.get("TTS_ENGINE", "piper").strip().lower() or "piper")
+            if os.environ.get("TTS_ENGINE", "piper").strip().lower() in ("piper", "cloned")
+            else "piper",
+            cloned_tts_url=os.environ.get("CLONED_TTS_URL", "").strip().rstrip("/"),
+            cloned_tts_voice=os.environ.get("CLONED_TTS_VOICE", "luna").strip() or "luna",
+            cloned_tts_model=os.environ.get("CLONED_TTS_MODEL", "tts-1").strip() or "tts-1",
+            cloned_tts_rate=_int(os.environ.get("CLONED_TTS_RATE"), 24000),
             data_dir=data_dir,
             ui_dir=find_ui_dir(),
             config_dir=Path(os.environ.get("SENTINEL_CONFIG_DIR", "")) if os.environ.get("SENTINEL_CONFIG_DIR") else _find_dir("config"),

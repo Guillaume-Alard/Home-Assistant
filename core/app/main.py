@@ -55,6 +55,8 @@ from .monitors import AtriumMonitor, DockerMonitor, HealthService
 from .store import Store
 from .voice.session import CaptureSession
 from .voice.wyoming import (
+    ClonedTTS,
+    FallbackTTS,
     PiperTTS,
     VoiceServiceError,
     WakeStream,
@@ -142,9 +144,23 @@ class Sentinel:
         self.stt = WhisperSTT(
             settings.whisper_host, settings.whisper_port, settings.wyoming_timeout_seconds
         )
-        self.tts = PiperTTS(
+        piper = PiperTTS(
             settings.piper_host, settings.piper_port, settings.wyoming_timeout_seconds
         )
+        # Voix de Luna : clonage local (repli automatique sur Piper) ou Piper seul.
+        if settings.tts_engine == "cloned" and settings.cloned_tts_url:
+            self.tts = FallbackTTS(
+                ClonedTTS(
+                    settings.cloned_tts_url,
+                    settings.cloned_tts_voice,
+                    settings.cloned_tts_model,
+                    settings.cloned_tts_rate,
+                    settings.wyoming_timeout_seconds,
+                ),
+                piper,
+            )
+        else:
+            self.tts = piper
         self.wake_detector: WakeWordDetector | None = (
             WakeWordDetector(settings.wake_host, settings.wake_port)
             if settings.wake_host
@@ -752,6 +768,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "max_tokens": sentinel.settings.max_tokens,
                 "whisper_model": sentinel.settings.whisper_model,
                 "piper_voice": sentinel.settings.piper_voice,
+                "tts_engine": sentinel.settings.tts_engine,
+                "cloned_tts_voice": sentinel.settings.cloned_tts_voice,
                 "wake_model": sentinel.settings.wake_model,
                 "tz": sentinel.settings.tz,
             },

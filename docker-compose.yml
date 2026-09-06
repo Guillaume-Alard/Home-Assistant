@@ -26,6 +26,12 @@ services:
       WAKE_HOST: sentinel-openwakeword
       WAKE_PORT: 10400
       WAKEWORD_MODEL: ${WAKEWORD_MODEL:-hey_jarvis}
+      # Voix de Luna : TTS_ENGINE=cloned pour la voix clonée (repli Piper auto),
+      # sinon Piper. Le serveur de clonage est le service « sentinel-xtts »
+      # (profil « voix », désactivé par défaut). Voir docs/VOICE.md.
+      TTS_ENGINE: ${TTS_ENGINE:-piper}
+      CLONED_TTS_URL: ${CLONED_TTS_URL:-http://sentinel-xtts:8000}
+      CLONED_TTS_VOICE: ${CLONED_TTS_VOICE:-luna}
     ports:
       # Seul service exposé sur le LAN
       - "${SENTINEL_PORT:-8443}:8443"
@@ -118,6 +124,27 @@ services:
       - ./config/wakewords:/custom
     # aucun port publié : joignable uniquement par sentinel-core en interne
 
+  # Voix clonée de Luna (OPTIONNEL — profil « voix », désactivé par défaut) :
+  # serveur TTS local à API compatible OpenAI (openedai-speech / XTTS). CPU par
+  # défaut (latence de quelques secondes) ; pour un GPU, voir docs/VOICE.md.
+  # Activation : déposer l'échantillon dans config/voix/voices/, le mapping dans
+  # config/voix/config/, mettre TTS_ENGINE=cloned dans .env, puis :
+  #   docker compose --profile voix up -d
+  # sentinel-core bascule sur cette voix avec repli Piper automatique.
+  # NB : chemins/volumes à valider selon la version d'openedai-speech (docs/VOICE.md).
+  sentinel-xtts:
+    image: ghcr.io/matatonic/openedai-speech:latest
+    container_name: sentinel-xtts
+    restart: unless-stopped
+    profiles: ["voix"]
+    environment:
+      TZ: ${TZ:-Europe/Paris}
+    volumes:
+      - ./config/voix/config:/app/config
+      - ./config/voix/voices:/app/voices
+      - xtts-cache:/app/voices/tts
+    # aucun port publié : joignable uniquement par sentinel-core en interne
+
   sentinel-worker:
     build:
       context: .
@@ -139,3 +166,4 @@ volumes:
   whisper-models:
   piper-voices:
   worker-workspace:
+  xtts-cache:

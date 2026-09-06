@@ -13,6 +13,8 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 
+import httpx
+
 from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.client import AsyncTcpClient
@@ -199,3 +201,87 @@ class PiperTTS(_WyomingService):
             raise VoiceServiceError(f"{self._label} — connexion interrompue.") from exc
         finally:
             await client.disconnect()
+
+
+class ClonedTTS:
+    """Voix clonée locale via une API compatible OpenAI (/v1/audio/speech).
+
+    Même interface que PiperTTS (synthesize → couples (fréquence, PCM 16 bits
+    mono)). Pensée pour un serveur de clonage local (ex. openedai-speech / XTTS)
+    à qui l'on demande le format « pcm » (s16le brut). Aucun état partagé :
+    un client HTTP par requête, comme les services Wyoming.
+    """
+
+    def __init__(self, url: str, voice: str, model: str = "tts-1",
+                 rate: int = 24000, timeout: int = 120):
+        self._url = url.rstrip("/") + "/v1/audio/speech"
+        self._voice = voice
+        self._model = model
+        self._rate = rate
+        self._timeout = timeout
+        self._label = "Le service de voix clonée (Luna)"
+
+    async def synthesize(self, text: str) -> AsyncIterator[tuple[int, bytes]]:
+        payload = {
+            "model": self._model,
+            "input": text,
+            "voice": self._voice,
+            "response_format": "pcm",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream("POST", self._url, json=payload) as resp:
+                    if resp.status_code != 200:
+                        await resp.aread()
+                        raise VoiceServiceError(f"{self._label} a répondu {resp.status_code}.")
+                    rem = b""
+                    async for chunk in resp.aiter_bytes():
+                        if not chunk:
+                            continue
+                        data = rem + chunk
+                        cut = len(data) - (len(data) % 2)  # aligne sur 16 bits
+                        if cut:
+                            yield self._rate, data[:cut]
+                            rem = data[cut:]
+                        else:
+                            rem = data
+                    if rem:  # octet impair résiduel (rare) — complété d'un zéro
+                        yield self._rate, rem + b"\x00"
+        except (httpx.HTTPError, OSError) as exc:
+            raise VoiceServiceError(f"{self._label} injoignable ({exc}).") from exc
+
+    async def close(self) -> None:  # symétrie avec les autres services
+        return None
+
+
+class FallbackTTS:
+    """Essaie une voix principale (clonée) ; bascule sur une voix de repli (Piper)
+    si la principale échoue AVANT d'avoir produit le moindre son. Si elle échoue
+    en cours de flux, on s'arrête là (rejouer le début via le repli le doublerait).
+    """
+
+    def __init__(self, primary, fallback):
+        self._primary = primary
+        self._fallback = fallback
+
+    async def synthesize(self, text: str) -> AsyncIterator[tuple[int, bytes]]:
+        started = False
+        try:
+            async for rate, chunk in self._primary.synthesize(text):
+                started = True
+                yield rate, chunk
+            return
+        except VoiceServiceError as exc:
+            if started:
+                log.warning("Voix clonée interrompue en cours de synthèse : %s", exc)
+                return
+            log.warning("Voix clonée indisponible, repli sur Piper : %s", exc)
+        async for rate, chunk in self._fallback.synthesize(text):
+            yield rate, chunk
+
+    async def close(self) -> None:
+        for tts in (self._primary, self._fallback):
+            closer = getattr(tts, "close", None)
+            if closer is not None:
+                with contextlib.suppress(Exception):
+                    await closer()
