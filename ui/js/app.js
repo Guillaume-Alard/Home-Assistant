@@ -468,7 +468,7 @@ document.querySelectorAll('.drawer-x').forEach((btn) => btn.addEventListener('cl
 els.quickChips.querySelectorAll('.chip-q').forEach((btn) => {
   btn.addEventListener('click', () => {
     const q = btn.dataset.q || btn.textContent;
-    if (q && ws.alive) ws.sendJSON({ type: 'chat', text: q });
+    if (q && ws.alive) { ensureAudio().catch(() => {}); ws.sendJSON({ type: 'chat', text: q }); }
   });
 });
 
@@ -1109,6 +1109,9 @@ els.composer.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = els.input.value.trim();
   if (!text || !ws.alive) return;
+  // Débloque le haut-parleur du navigateur sur ce geste (nécessaire pour
+  // entendre la réponse de Luna quand on écrit au lieu de parler).
+  ensureAudio().catch(() => {});
   ws.sendJSON({ type: 'chat', text });
   els.input.value = '';
 });
