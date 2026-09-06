@@ -188,14 +188,14 @@ const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:'high-performance', stencil:false });
+  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, premultipliedAlpha:false, powerPreference:'high-performance', stencil:false });
 } catch (e) {
   document.getElementById('oops').style.display = 'grid';
   throw e;
 }
 renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-renderer.setClearColor(0x000000, 1);
+renderer.setClearColor(0x000000, 0);
 renderer.autoClear = false;
 stage.appendChild(renderer.domElement);
 
@@ -753,6 +753,11 @@ const matFinal = new THREE.ShaderMaterial({
     uStrength: { value: 1.0 }, uExposure: { value: 1.1 }, uTime: { value: 0 },
     uAber: { value: 1.0 }, uGrain: { value: 1.0 }
   },
+  // Écrit directement l'image finale (couleur + alpha) dans le canvas, sans
+  // mélange : l'alpha calculé rend les zones sombres transparentes → l'orbe
+  // se fond dans le fond de la page hôte (Sentinel).
+  blending: THREE.NoBlending,
+  transparent: true,
   vertexShader: VS_FS,
   fragmentShader: `
     precision highp float; varying vec2 vUv;
@@ -780,7 +785,11 @@ const matFinal = new THREE.ShaderMaterial({
       col *= 1.0 - smoothstep(0.38, 0.95, rad) * 0.50;
       col = aces(col);
       col += (hash(uv * 1024.0 + fract(uTime) * 91.0) - 0.5) * 0.005 * uGrain;
-      gl_FragColor = vec4(pow(max(col, 0.0), vec3(1.0 / 2.2)), 1.0);
+      vec3 ldr = pow(max(col, 0.0), vec3(1.0 / 2.2));
+      // Alpha dérivé de la luminance : le vide (noir) devient transparent,
+      // l'orbe lumineuse reste opaque. Sans prémultiplication (renderer).
+      float a = clamp(max(max(ldr.r, ldr.g), ldr.b) * 1.4, 0.0, 1.0);
+      gl_FragColor = vec4(ldr, a);
     }`
 });
 
