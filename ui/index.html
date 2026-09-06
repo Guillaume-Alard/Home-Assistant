@@ -12,6 +12,24 @@
 </head>
 <body data-state="offline">
 
+  <!-- Orbe « Noyau Synaptique » en fond ambiant, derrière tout, non cliquable -->
+  <div id="ambient" aria-hidden="true">
+    <iframe id="orb" class="orb-frame" src="orb.html" title="Noyau synaptique"
+            tabindex="-1" scrolling="no"></iframe>
+  </div>
+  <button id="orb-mic" class="orb-mic" type="button"
+          aria-label="Parler à Sentinel (barre espace)" title="Parler (espace)">
+    <svg class="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+      <path d="M5 11a7 7 0 0 0 14 0"></path>
+      <line x1="12" y1="18" x2="12" y2="21"></line>
+    </svg>
+    <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="7" y="7" width="10" height="10" rx="2"></rect>
+    </svg>
+  </button>
+
   <header class="topbar">
     <div class="brand">
       <span class="brand-dot" aria-hidden="true"></span>
@@ -98,13 +116,19 @@
     <div id="history-body" class="panel-list"></div>
   </aside>
 
-  <main class="layout">
-    <section class="stage" aria-label="Commande vocale">
-      <div class="orb">
-        <iframe id="orb" class="orb-frame" src="orb.html" title="Noyau synaptique"
-                aria-hidden="true" tabindex="-1" scrolling="no"></iframe>
-        <button id="mic" class="mic" type="button"
-                aria-label="Parler à Sentinel (barre espace)">
+  <!-- Conversation : fenêtre flottante déplaçable (glisser la barre de titre) -->
+  <section class="win" id="win-chat" aria-label="Conversation">
+    <header class="win-head">
+      <span class="win-title">Conversation</span>
+      <span class="win-state" id="state-label" role="status">hors ligne</span>
+      <button class="win-min" type="button" aria-label="Réduire">–</button>
+    </header>
+    <div class="win-body">
+      <section class="thread" id="thread" aria-live="polite"></section>
+    </div>
+    <footer class="win-foot">
+      <form id="composer" class="composer" autocomplete="off">
+        <button id="mic" class="mic" type="button" aria-label="Parler (barre espace)">
           <svg class="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="9" y="3" width="6" height="11" rx="3"></rect>
@@ -115,27 +139,18 @@
             <rect x="7" y="7" width="10" height="10" rx="2"></rect>
           </svg>
         </button>
-      </div>
-      <div class="state-label" id="state-label" role="status">hors ligne</div>
-    </section>
-
-    <section class="thread" id="thread" aria-label="Conversation" aria-live="polite"></section>
-  </main>
-
-  <footer class="composer-bar">
-    <form id="composer" class="composer" autocomplete="off">
-      <input id="text-input" type="text" placeholder="Écris à Sentinel…"
-             aria-label="Message écrit" maxlength="4000">
-      <button type="submit" class="send" aria-label="Envoyer">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M22 2 11 13"></path>
-          <path d="M22 2 15 22l-4-9-9-4z"></path>
-        </svg>
-      </button>
-    </form>
-    <div class="hint">Espace : parler · Échap : interrompre</div>
-  </footer>
+        <input id="text-input" type="text" placeholder="Écris à Sentinel…"
+               aria-label="Message écrit" maxlength="4000">
+        <button type="submit" class="send" aria-label="Envoyer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 2 11 13"></path>
+            <path d="M22 2 15 22l-4-9-9-4z"></path>
+          </svg>
+        </button>
+      </form>
+    </footer>
+  </section>
 
   <div id="toast" class="toast" role="alert" hidden></div>
 

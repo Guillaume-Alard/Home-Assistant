@@ -539,3 +539,131 @@ body[data-state="offline"] .mic { opacity: 0.45; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   HUD — orbe ambiante + fenêtres flottantes (refonte)
+   Écrase la disposition en grille : l'orbe devient le décor, les surfaces
+   deviennent des fenêtres de verre déplaçables posées par-dessus.
+   ════════════════════════════════════════════════════════════════════════ */
+
+body { display: block; overflow: hidden; }
+
+/* ── Orbe ambiante (grande, centrée, en fond) ─────────────────────────── */
+#ambient {
+  position: fixed; top: 50%; left: 50%; translate: -50% -50%;
+  width: min(82vmin, 940px); height: min(82vmin, 940px);
+  z-index: 0; pointer-events: none;
+}
+.orb-frame {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border: 0; background: transparent; pointer-events: none;
+}
+
+/* Bouton micro flottant, posé au bas de l'orbe (parler mains sur l'écran) */
+.orb-mic {
+  position: fixed; left: 50%; bottom: 26px; translate: -50% 0;
+  z-index: 25;
+  width: 60px; height: 60px; border-radius: 50%;
+  border: 1px solid var(--panel-edge);
+  background: color-mix(in srgb, var(--bg-raised) 72%, transparent);
+  backdrop-filter: blur(8px);
+  color: var(--accent); cursor: pointer;
+  display: grid; place-items: center;
+  box-shadow: 0 8px 26px rgba(0,0,0,0.45);
+  transition: color 0.25s, transform 0.15s, box-shadow 0.3s;
+}
+.orb-mic:hover { transform: translate(-50%, -2px); }
+.orb-mic svg { width: 24px; height: 24px; }
+.orb-mic .icon-stop, .win-foot .mic .icon-stop { display: none; }
+body[data-state="listening"] .orb-mic,
+body[data-state="listening"] .win-foot .mic { color: #a8f0fa; }
+body[data-state="listening"] .orb-mic { box-shadow: 0 0 30px rgba(79,216,235,0.45); }
+body[data-state="listening"] .orb-mic .icon-mic,
+body[data-state="listening"] .win-foot .mic .icon-mic { display: none; }
+body[data-state="listening"] .orb-mic .icon-stop,
+body[data-state="listening"] .win-foot .mic .icon-stop { display: block; }
+body[data-state="thinking"] .orb-mic,
+body[data-state="transcribing"] .orb-mic { color: var(--warn); }
+body[data-state="offline"] .orb-mic { opacity: 0.4; }
+
+/* ── Barre du haut fixe ────────────────────────────────────────────────── */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+}
+
+/* ── Fenêtres flottantes ───────────────────────────────────────────────── */
+.win {
+  position: fixed; z-index: 40;
+  display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--bg-raised) 80%, transparent);
+  backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid var(--panel-edge);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  overflow: hidden;
+}
+.win-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px 9px 16px;
+  border-bottom: 1px solid var(--panel-edge);
+  cursor: move; user-select: none;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+.win-head.dragging { cursor: grabbing; }
+.win-title {
+  font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase;
+  font-weight: 600; color: var(--text);
+}
+.win-state {
+  margin-left: auto;
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap;
+}
+body[data-state="listening"] .win-state { color: var(--accent); }
+body[data-state="thinking"] .win-state,
+body[data-state="transcribing"] .win-state { color: var(--warn); }
+.win-min {
+  border: none; background: none; color: var(--muted);
+  cursor: pointer; font-size: 18px; line-height: 1; padding: 0 4px;
+}
+.win-min:hover { color: var(--text); }
+.win-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.win-foot { border-top: 1px solid var(--panel-edge); padding: 10px 12px; }
+.win.collapsed .win-body, .win.collapsed .win-foot { display: none; }
+
+/* Fenêtre Conversation : par défaut en bas à gauche (comme la réf.) */
+#win-chat {
+  left: 24px; bottom: 24px; top: auto; right: auto;
+  width: min(400px, 92vw); height: min(60vh, 580px);
+}
+
+/* Le fil de conversation remplit le corps de la fenêtre */
+.win-body .thread {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 12px;
+  scrollbar-width: thin; scrollbar-color: var(--panel-edge) transparent;
+  overscroll-behavior: contain;
+}
+.win-foot .composer { display: flex; gap: 8px; align-items: center; }
+.win-foot .mic {
+  flex: none; width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--panel-edge); background: var(--panel);
+  color: var(--accent); cursor: pointer; display: grid; place-items: center;
+  position: static; inset: auto; translate: none; padding: 0;
+  box-shadow: none;
+}
+.win-foot .mic:hover { background: var(--user-bubble); }
+.win-foot .mic svg { width: 20px; height: 20px; }
+.win-foot #text-input { flex: 1; }
+
+/* ── Petit écran : les fenêtres deviennent des feuilles plein écran ─────── */
+@media (max-width: 760px) {
+  #ambient { width: 96vw; height: 96vw; top: 42%; }
+  .orb-mic { display: none; }
+  .win {
+    left: 0 !important; right: 0 !important; top: 54px !important; bottom: 0 !important;
+    width: auto !important; height: auto !important;
+    border-radius: 16px 16px 0 0; border-bottom: none;
+  }
+  .win-head { cursor: default; }
+}

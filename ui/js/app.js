@@ -4,6 +4,7 @@ import { WSClient } from './ws.js';
 import { Capture } from './audio-capture.js';
 import { Player } from './audio-play.js';
 import { Thread } from './chat.js';
+import { makeDraggable } from './windows.js';
 
 const LABELS = {
   idle: 'en veille',
@@ -22,7 +23,10 @@ const HARD_CAP_MS = 45000; // durée maximale d'une prise de parole
 
 const els = {
   mic: document.getElementById('mic'),
+  orbMic: document.getElementById('orb-mic'),
   orb: document.getElementById('orb'),
+  winChat: document.getElementById('win-chat'),
+  winMin: document.querySelector('#win-chat .win-min'),
   stateLabel: document.getElementById('state-label'),
   connLabel: document.getElementById('conn-label'),
   thread: document.getElementById('thread'),
@@ -1034,6 +1038,11 @@ document.addEventListener('visibilitychange', () => syncWake());
 // ── Interactions ────────────────────────────────────────────────────────
 
 els.mic.addEventListener('click', micAction);
+els.orbMic.addEventListener('click', micAction);
+
+// Fenêtre Conversation : déplaçable + réductible
+makeDraggable(els.winChat, 'chat');
+els.winMin.addEventListener('click', () => els.winChat.classList.toggle('collapsed'));
 
 els.composer.addEventListener('submit', (e) => {
   e.preventDefault();
