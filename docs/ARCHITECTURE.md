@@ -1,4 +1,4 @@
-# Architecture — état courant (Phase 5A : mot d'éveil dans le navigateur)
+# Architecture — état courant (Phase 5 : mot d'éveil + agent Assist)
 
 > Document vivant : mis à jour à chaque phase. La cible globale est décrite dans
 > [PLAN.md](PLAN.md) ; ici, seulement ce qui **existe** et pourquoi.
@@ -111,7 +111,8 @@ Point de passage **unique** des écritures — PLAN §5, appliqué techniquement
 
 Un seul canal par appareil. Les événements de conversation sont **diffusés à tous** les
 appareils connectés (fil unique partagé) ; l'audio de la réponse ne va qu'à l'appareil
-qui a parlé.
+qui a parlé. Les tours venus d'Assist (API `/v1`, hors WebSocket) sont eux aussi
+diffusés au fil, pour que téléphone et web partagent la même conversation.
 
 ### Client → serveur
 
@@ -168,6 +169,26 @@ active, l'audio ne va pas à la veille.
 | `wake` | `{name}` | Mot d'éveil détecté — le client joue un carillon et passe en écoute |
 | `wake_error` | `{text}` | Veille impossible (service injoignable, non configuré) |
 | `dev_tasks` · `dev_log` · `dev_diff` · `sante` · `historique` | *(réponses)* | Réponses aux requêtes de panneau (`error` en cas d'échec) — *demandeur seulement* |
+
+## Agent conversationnel Assist (Phase 5B)
+
+En plus du WebSocket, `sentinel-core` expose une **API compatible OpenAI** —
+`POST /v1/chat/completions`, `GET /v1/models` — protégée par un jeton porteur
+(`SENTINEL_ASSIST_TOKEN` ; vide = 404). Nova s'y connecte via l'intégration HACS
+*Extended OpenAI Conversation*, ce qui fait de Sentinel un **agent
+conversationnel** choisissable dans un pipeline Assist (app HA, satellites).
+
+- L'endpoint extrait le dernier message `user`, appelle `run_assist_reply`
+  (source `assist`) : même routage intents→LLM+outils que le chat écrit, réponse
+  renvoyée en une fois (non-streaming — ce qu'attend l'intégration), et **tour
+  diffusé au hub** pour que l'interface web reflète la conversation. Nova gère la
+  voix (STT/TTS de son pipeline, éventuellement les conteneurs Wyoming de
+  Sentinel réutilisés tels quels).
+- **Sécurité** : source `assist` traitée comme la voix ; les actions sensibles
+  passent par la double confirmation, et l'approbation d'une proposition sensible
+  est désormais réservée à l'interface (`via != "ui"` refuse voix, texte **et**
+  Assist). Les Echo Dot (Alexa) ne sont pas des satellites possibles (fermés) —
+  cf. [ASSIST.md](ASSIST.md).
 
 ## Audio
 

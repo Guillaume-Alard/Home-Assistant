@@ -58,6 +58,18 @@ def _write_config(tmp_path):
 
 
 @pytest.fixture()
+def client_assist(fake_wyoming, tmp_path, monkeypatch):
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("SENTINEL_ASSIST_TOKEN", "jeton-assist-test")
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture()
 def client_wake(fake_wyoming, tmp_path, monkeypatch):
     _base_env(monkeypatch, tmp_path, fake_wyoming)
     monkeypatch.setenv("HA_URL", "")
@@ -309,6 +321,62 @@ def test_mot_deveil_non_configure(client):
         ws.send_text(json.dumps({"type": "wake_start", "rate": 16000}))
         events, _ = _drain(ws, {"wake_error"})
         assert "WAKE_HOST" in next(e for e in events if e["type"] == "wake_error")["text"]
+
+
+# ── Agent conversationnel Assist (Phase 5B) ──────────────────────────────
+
+_AUTH = {"Authorization": "Bearer jeton-assist-test"}
+
+
+def test_assist_desactive_sans_jeton(client):
+    # Aucun SENTINEL_ASSIST_TOKEN configuré → endpoint injoignable (404)
+    r = client.post("/v1/chat/completions", json={"messages": []})
+    assert r.status_code == 404
+
+
+def test_assist_exige_le_jeton(client_assist):
+    r = client_assist.post("/v1/chat/completions",
+                           json={"messages": [{"role": "user", "content": "coucou"}]})
+    assert r.status_code == 401
+    r = client_assist.post("/v1/chat/completions", headers={"Authorization": "Bearer faux"},
+                           json={"messages": [{"role": "user", "content": "coucou"}]})
+    assert r.status_code == 401
+
+
+def test_assist_chat_completion(client_assist, fake_brain):
+    r = client_assist.post(
+        "/v1/chat/completions",
+        headers=_AUTH,
+        json={"model": "sentinel", "messages": [
+            {"role": "system", "content": "tu es un assistant"},
+            {"role": "user", "content": "Bonjour Sentinel"},
+        ]},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["object"] == "chat.completion"
+    assert data["choices"][0]["message"]["content"] == "Bonjour Guillaume."
+    assert data["choices"][0]["finish_reason"] == "stop"
+
+    # Le tour est bien entré dans le fil partagé (source « assist »)
+    with client_assist.websocket_connect("/ws") as ws:
+        hello = json.loads(ws.receive()["text"])
+        contents = [(m["content"], m["source"]) for m in hello["history"]]
+        assert ("Bonjour Sentinel", "assist") in contents
+        assert ("Bonjour Guillaume.", "assist") in contents
+
+
+def test_assist_message_vide_refuse(client_assist):
+    r = client_assist.post("/v1/chat/completions", headers=_AUTH,
+                           json={"messages": [{"role": "assistant", "content": "…"}]})
+    assert r.status_code == 400
+
+
+def test_assist_models(client_assist):
+    assert client_assist.get("/v1/models").status_code == 401
+    r = client_assist.get("/v1/models", headers=_AUTH)
+    assert r.status_code == 200
+    assert any(m["id"] == "sentinel" for m in r.json()["data"])
 
 
 # ── Panneaux Phase 4 : atelier, santé, historique ────────────────────────

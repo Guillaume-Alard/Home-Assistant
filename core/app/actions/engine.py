@@ -224,10 +224,12 @@ class ActionEngine:
         if decision != "approve":
             return proposal, "Décision inconnue (approuver, refuser ou reporter)."
 
-        # Approbation — verrou : une proposition sensible ne s'approuve pas à la voix
-        if proposal["risk"] == "sensitive" and via == "voice":
+        # Approbation — verrou : une proposition sensible ne s'approuve QUE depuis
+        # l'interface (bouton du panneau, via="ui") ; jamais par la conversation
+        # (voix, texte, ou agent Assist), quel que soit l'appareil.
+        if proposal["risk"] == "sensitive" and via != "ui":
             await self._journal("proposal", actor, proposal["action_id"], proposal["params"],
-                               f"tentative d'approbation vocale n°{num}", "refused",
+                               f"tentative d'approbation hors interface n°{num} (via {via})", "refused",
                                "sensible : interface uniquement")
             return proposal, (
                 f"La proposition n°{num} est sensible : approuve-la depuis l'interface, "

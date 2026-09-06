@@ -72,6 +72,9 @@ class Settings:
     daily_report: str = ""            # "HH:MM" heure locale, vide = pas de rapport
     container_mem_mo: int = 1500      # seuil mémoire signalé dans les audits
 
+    # Agent conversationnel Assist (Phase 5B) — vide = endpoint /v1 désactivé
+    assist_token: str = ""
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -111,4 +114,5 @@ class Settings:
             atrium_url=os.environ.get("ATRIUM_URL", "").strip().rstrip("/"),
             daily_report=os.environ.get("SENTINEL_DAILY_REPORT", "").strip(),
             container_mem_mo=_int(os.environ.get("SENTINEL_CONTAINER_MEM_MO"), 1500),
+            assist_token=os.environ.get("SENTINEL_ASSIST_TOKEN", "").strip(),
         )

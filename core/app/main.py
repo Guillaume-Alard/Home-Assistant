@@ -28,12 +28,15 @@ import asyncio
 import contextlib
 import json
 import logging
+import secrets
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -471,6 +474,50 @@ class Sentinel:
                 await self.hub.broadcast({"type": "error", "text": error_text})
             await self.set_state("idle")
 
+    async def run_assist_reply(self, text: str) -> str:
+        """Un tour venu d'Assist (agent conversationnel de Nova / app HA).
+
+        Même cerveau, même fil, même sécurité que le chat écrit — mais requête/
+        réponse HTTP (pas de WebSocket, pas de TTS : Nova gère la voix). Le tour
+        est aussi diffusé aux clients web pour que la conversation reste unique.
+        Renvoie le texte final (que Nova prononcera).
+        """
+        source = "assist"
+        assistant_id = uuid.uuid4().hex[:12]
+        user_msg = await self.store.add_message("user", text, source)
+        await self.hub.broadcast({"type": "message", "message": user_msg})
+
+        intent_reply = await self.intents.handle(text, source)
+        if intent_reply is not None:
+            stream = _single_reply(intent_reply)
+        else:
+            history = _build_history(await self.store.recent_messages(self.settings.history_window))
+            stream = self.brain.stream_reply(history, utterance=text, source=source)
+
+        await self.hub.broadcast({"type": "assistant_start", "id": assistant_id})
+        parts: list[str] = []
+        error_text: str | None = None
+        try:
+            async for delta in stream:
+                parts.append(delta)
+                await self.hub.broadcast(
+                    {"type": "assistant_delta", "id": assistant_id, "text": delta}
+                )
+        except LLMUnavailable as exc:
+            error_text = str(exc)
+        except Exception:
+            log.exception("Échec inattendu d'un tour Assist")
+            error_text = "Une erreur interne est survenue — détail dans les journaux du serveur."
+
+        full = "".join(parts).strip() or error_text or "Je n'ai rien à répondre."
+        message = None
+        with contextlib.suppress(Exception):
+            message = await self.store.add_message("assistant", full, source)
+        await self.hub.broadcast(
+            {"type": "assistant_end", "id": assistant_id, "message": message, "cancelled": False}
+        )
+        return full
+
     async def _speak_worker(
         self, origin: Client, queue: asyncio.Queue[str | None]
     ) -> None:
@@ -567,6 +614,82 @@ app = FastAPI(title="Sentinel", version=__version__, lifespan=lifespan)
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "sentinel", "version": __version__}
+
+
+# ── Agent conversationnel Assist : API compatible OpenAI (Phase 5B) ──────────
+#
+# Permet à Nova (via l'intégration HACS « Extended OpenAI Conversation ») et donc
+# à l'app HA et aux satellites Assist de parler au cerveau de Sentinel. Protégé
+# par un jeton porteur ; désactivé si SENTINEL_ASSIST_TOKEN est vide.
+
+
+def _assist_guard(request: Request) -> JSONResponse | None:
+    sentinel: Sentinel = request.app.state.sentinel
+    token = sentinel.settings.assist_token
+    if not token:
+        return JSONResponse({"error": {"message": "Agent Assist désactivé (SENTINEL_ASSIST_TOKEN)."}},
+                            status_code=404)
+    header = request.headers.get("authorization", "")
+    presented = header[7:].strip() if header.lower().startswith("bearer ") else ""
+    if not presented or not secrets.compare_digest(presented, token):
+        return JSONResponse({"error": {"message": "Jeton Assist invalide."}}, status_code=401)
+    return None
+
+
+@app.get("/v1/models")
+async def assist_models(request: Request):
+    denied = _assist_guard(request)
+    if denied is not None:
+        return denied
+    model = request.app.state.sentinel.settings.model
+    return {"object": "list", "data": [
+        {"id": model, "object": "model", "created": 0, "owned_by": "sentinel"},
+        {"id": "sentinel", "object": "model", "created": 0, "owned_by": "sentinel"},
+    ]}
+
+
+@app.post("/v1/chat/completions")
+async def assist_chat(request: Request):
+    denied = _assist_guard(request)
+    if denied is not None:
+        return denied
+    sentinel: Sentinel = request.app.state.sentinel
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": {"message": "Corps JSON invalide."}}, status_code=400)
+
+    messages = body.get("messages") if isinstance(body, dict) else None
+    text = ""
+    if isinstance(messages, list):
+        for m in reversed(messages):
+            if isinstance(m, dict) and m.get("role") == "user":
+                content = m.get("content")
+                if isinstance(content, list):  # format à blocs éventuel
+                    content = " ".join(
+                        b.get("text", "") for b in content if isinstance(b, dict)
+                    )
+                text = str(content or "").strip()
+                break
+    if not text:
+        return JSONResponse(
+            {"error": {"message": "Aucun message utilisateur."}}, status_code=400
+        )
+
+    reply = await sentinel.run_assist_reply(text)
+    model = str(body.get("model") or sentinel.settings.model)
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": reply},
+            "finish_reason": "stop",
+        }],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
 
 
 @app.websocket("/ws")

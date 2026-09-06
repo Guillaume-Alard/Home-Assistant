@@ -140,6 +140,12 @@ async def test_proposition_sensible_pas_approuvable_a_la_voix(env):
     assert p["status"] == "pending" and "interface" in msg
     assert env.rec.calls == []
 
+    # Ni le texte ni l'agent Assist ne peuvent approuver un sensible : UI seule
+    for via in ("text", "assist"):
+        p, msg = await env.engine.decide(proposal["num"], "approve", via=via)
+        assert p["status"] == "pending" and "interface" in msg
+    assert env.rec.calls == []
+
     p, _ = await env.engine.decide(proposal["num"], "approve", via="ui")
     assert p["status"] == "done"
 

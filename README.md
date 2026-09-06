@@ -153,6 +153,7 @@ En haut à droite, quatre boutons ouvrent des panneaux latéraux (Échap referme
 | `WHISPER_MODEL` | `small-int8` | Modèle STT (`tiny-int8` plus rapide, `medium` plus juste) |
 | `PIPER_VOICE` | `fr_FR-siwis-medium` | Voix française de Sentinel |
 | `WAKEWORD_MODEL` | `hey_jarvis` | Mot d'éveil (Phase 5A) — modèle openWakeWord préchargé |
+| `SENTINEL_ASSIST_TOKEN` | — | Jeton de l'API Assist compatible OpenAI (Phase 5B, vide = désactivé) — voir [docs/ASSIST.md](docs/ASSIST.md) |
 | `TZ` | `Europe/Paris` | Fuseau horaire (Sentinel connaît la date et l'heure) |
 | `LOG_LEVEL` | `INFO` | Verbosité des journaux |
 | `HA_URL` | — | URL de Nova, ex. `http://192.168.1.10:8123` |
@@ -225,6 +226,19 @@ réfléchit, puis se ré-arme, et s'interrompt quand l'onglet passe en arrière-
 - **Mot personnalisé** (« Sentinel ») : voir [`config/wakewords/README.md`](config/wakewords/README.md).
 - La détection est **locale** (openWakeWord sur Nebula) : aucun audio ne part sur
   Internet tant que le mot d'éveil n'a pas été prononcé.
+
+## Parler à Sentinel depuis l'app HA / Assist (Phase 5B)
+
+Sentinel peut devenir l'**agent conversationnel** de Home Assistant : depuis
+l'app HA de ton téléphone (ou un futur satellite Voice PE), tu parles, et c'est
+le cerveau de Sentinel qui répond — même fil, même sécurité que l'interface web.
+
+En bref : renseigne `SENTINEL_ASSIST_TOKEN` dans `.env`, installe l'intégration
+HACS *Extended OpenAI Conversation* dans Nova et pointe-la sur
+`https://<nebula>:8443/v1`. Guide complet : **[docs/ASSIST.md](docs/ASSIST.md)**.
+
+> Les **Echo Dot (Alexa)** ne peuvent pas servir de micro à Sentinel (appareils
+> Amazon fermés) ; l'app HA est le vrai satellite. Détails dans le guide.
 
 ## Connecter Nova (Home Assistant)
 
