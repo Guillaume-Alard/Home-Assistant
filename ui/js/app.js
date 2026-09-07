@@ -900,38 +900,55 @@ function renderMail(msg) {
   if (msg.error) { body.appendChild(emptyLine(msg.error)); return; }
   const data = msg.data || {};
   const msgs = data.messages || [];
-  const head = document.createElement('p');
-  head.className = 'mail-head';
   const total = data.unread_total || 0;
-  head.textContent = total
-    ? `${total} non lu${total > 1 ? 's' : ''}${msgs.length < total ? ` · ${msgs.length} récents` : ''}`
-    : 'Aucun message non lu.';
+
+  if (!total) { body.appendChild(emptyLine('Boîte à jour — aucun message non lu. ✨')); return; }
+
+  const head = document.createElement('div');
+  head.className = 'mail-head';
+  const n = document.createElement('span');
+  n.className = 'n';
+  n.textContent = String(total);
+  const lbl = document.createElement('span');
+  lbl.className = 'lbl';
+  lbl.textContent = `non lu${total > 1 ? 's' : ''}${msgs.length < total ? ` · ${msgs.length} affichés` : ''}`;
+  head.append(n, lbl);
   body.appendChild(head);
+
   for (const m of msgs) {
+    const name = m.from_name || m.from_email || '?';
     const item = document.createElement('article');
-    item.className = 'mail-item';
-    const top = document.createElement('div');
-    top.className = 'mail-top';
+    item.className = 'mail-item' + (m.important ? ' important' : '');
+
+    const ava = document.createElement('span');
+    ava.className = 'mail-ava';
+    ava.textContent = (name.trim()[0] || '?');
+
+    const main = document.createElement('div');
+    main.className = 'mail-main';
+
+    const l1 = document.createElement('div');
+    l1.className = 'mail-l1';
     const from = document.createElement('span');
     from.className = 'mail-from';
-    from.textContent = m.from_name || m.from_email || '?';
-    top.appendChild(from);
-    if (m.important) {
-      const imp = document.createElement('span');
-      imp.className = 'mail-imp';
-      imp.textContent = 'important';
-      top.appendChild(imp);
-    }
-    const subj = document.createElement('p');
+    from.textContent = name;
+    const when = document.createElement('span');
+    when.className = 'mail-when';
+    when.textContent = m.date ? fmtWhen(m.date) : '';
+    l1.append(from, when);
+
+    const subj = document.createElement('div');
     subj.className = 'mail-subj';
     subj.textContent = m.subject || '(sans objet)';
-    item.append(top, subj);
+    main.append(l1, subj);
+
     if (m.snippet) {
-      const snip = document.createElement('p');
+      const snip = document.createElement('div');
       snip.className = 'mail-snip';
       snip.textContent = m.snippet;
-      item.appendChild(snip);
+      main.appendChild(snip);
     }
+    item.append(ava, main);
     body.appendChild(item);
   }
 }
