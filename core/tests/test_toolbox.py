@@ -64,6 +64,7 @@ async def test_specs_stables_et_completes(box):
         "sante_systemes", "logs_conteneur", "audit_systemes", "redemarrer_conteneur",
         "lancer_tache_dev", "etat_taches_dev", "lire_diff_dev",
         "memoriser", "lister_souvenirs", "oublier", "resume_mails",
+        "creer_page", "modifier_page", "lister_pages",
     ]
     assert all(s["description"] for s in specs)
 
@@ -357,3 +358,40 @@ async def test_resume_mails_refuse_a_la_maisonnee_et_invite(box):
 async def test_resume_mails_non_configure(box):
     content, is_error = await _run(box, "resume_mails", {})  # _run = OWNER, mais _mail None
     assert is_error and "configuré" in content.lower()
+
+
+# ── Pages web (Phase 5) : Luna rédige des brouillons, réservés au propriétaire ─
+
+async def test_creer_page_est_un_brouillon(box):
+    content, is_error = await _run_as(
+        box, "creer_page", {"titre": "Tableau de bord", "html": "<!doctype html><h1>Salut</h1>"}, OWNER
+    )
+    assert not is_error
+    data = json.loads(content)
+    assert data["slug"] == "tableau-de-bord" and "brouillon" in data["etat"].lower()
+
+    pages = await box.store.list_pages()
+    assert len(pages) == 1 and pages[0]["published"] is False
+    # Rien n'est en ligne : creer_page ne publie jamais
+    assert await box.store.get_published_page("tableau-de-bord") is None
+
+    listing, _ = await _run_as(box, "lister_pages", {}, OWNER)
+    assert json.loads(listing)[0]["etat"] == "brouillon"
+
+
+async def test_pages_reservees_au_proprietaire(box):
+    for who in (_HOUSEHOLD, UNKNOWN):
+        content, is_error = await _run_as(box, "creer_page", {"titre": "X", "html": "<h1>x</h1>"}, who)
+        assert not is_error and "réservé à guillaume" in content.lower()
+    assert await box.store.list_pages() == []
+
+
+async def test_modifier_page_ne_republie_pas(box):
+    await _run_as(box, "creer_page", {"titre": "Suivi", "html": "<h1>v1</h1>"}, OWNER)
+    page = (await box.store.list_pages())[0]
+    await box.store.publish_page(page["id"])  # Guillaume publie (hors LLM)
+
+    content, is_error = await _run_as(box, "modifier_page", {"id": page["id"], "html": "<h1>v2</h1>"}, OWNER)
+    assert not is_error and "attente" in content.lower()
+    # La version EN LIGNE reste l'ancienne tant que Guillaume ne republie pas
+    assert (await box.store.get_published_page(page["slug"]))["published_html"] == "<h1>v1</h1>"

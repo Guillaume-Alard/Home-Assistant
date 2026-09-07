@@ -7,6 +7,8 @@ permettre des fils séparés plus tard sans migration.
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,6 +96,20 @@ CREATE TABLE IF NOT EXISTS speaker_samples (
 );
 CREATE INDEX IF NOT EXISTS idx_speaker_samples
     ON speaker_samples (speaker_id);
+
+-- Pages web (Phase 5) : Luna RÉDIGE une copie de travail (html) ; la version
+-- EN LIGNE (published_html) n'existe qu'après publication PAR Guillaume dans le
+-- cockpit — revue humaine avant toute publication, jamais contournée.
+CREATE TABLE IF NOT EXISTS pages (
+    id             TEXT PRIMARY KEY,
+    slug           TEXT NOT NULL UNIQUE,
+    title          TEXT NOT NULL,
+    html           TEXT NOT NULL DEFAULT '',   -- copie de travail (brouillon)
+    published_html TEXT,                        -- version en ligne (NULL = non publiée)
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    published_at   TEXT
+);
 """
 
 
@@ -108,6 +124,13 @@ def _proposal_dict(row) -> dict:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def slugify(text: str) -> str:
+    """Titre → identifiant d'URL : sans accents, minuscules, tirets."""
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii").lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return (text or "page")[:60]
 
 
 class Store:
@@ -396,3 +419,96 @@ class Store:
             except (ValueError, TypeError):
                 continue
         return list(by_id.values())
+
+    # ── Pages web (Phase 5) ──────────────────────────────────────────────
+
+    async def _unique_slug(self, base: str) -> str:
+        slug = base or "page"
+        n = 2
+        while True:
+            cursor = await self._db.execute("SELECT 1 FROM pages WHERE slug = ?", (slug,))
+            if await cursor.fetchone() is None:
+                return slug
+            slug = f"{base}-{n}"
+            n += 1
+
+    async def add_page(self, *, title: str, html: str = "", slug: str = "") -> dict:
+        assert self._db is not None, "Store non ouvert"
+        slug = await self._unique_slug(slug or slugify(title))
+        now = _now_iso()
+        record = {
+            "id": uuid.uuid4().hex[:12], "slug": slug, "title": title,
+            "html": html, "published_html": None,
+            "created_at": now, "updated_at": now, "published_at": None,
+        }
+        await self._db.execute(
+            "INSERT INTO pages (id, slug, title, html, published_html, created_at, updated_at, published_at)"
+            " VALUES (:id, :slug, :title, :html, :published_html, :created_at, :updated_at, :published_at)",
+            record,
+        )
+        await self._db.commit()
+        return record
+
+    async def get_page(self, page_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT * FROM pages WHERE id = ?", (page_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_published_page(self, slug: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT * FROM pages WHERE slug = ? AND published_html IS NOT NULL", (slug,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_pages(self) -> list[dict]:
+        """Métadonnées des pages (sans le HTML) : id, slug, titre, état, dates."""
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT id, slug, title, created_at, updated_at, published_at,"
+            " published_html IS NOT NULL AS published,"
+            " (published_html IS NOT NULL AND html != published_html) AS dirty"
+            " FROM pages ORDER BY updated_at DESC"
+        )
+        return [
+            {**dict(r), "published": bool(r["published"]), "dirty": bool(r["dirty"])}
+            for r in await cursor.fetchall()
+        ]
+
+    async def update_page(self, page_id: str, **fields) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        fields = {k: v for k, v in fields.items() if k in ("title", "html")}
+        if fields:
+            fields["updated_at"] = _now_iso()
+            keys = ", ".join(f"{k} = ?" for k in fields)
+            await self._db.execute(
+                f"UPDATE pages SET {keys} WHERE id = ?", (*fields.values(), page_id)
+            )
+            await self._db.commit()
+        return await self.get_page(page_id)
+
+    async def publish_page(self, page_id: str) -> dict | None:
+        """Met la copie de travail EN LIGNE (action déclenchée par Guillaume)."""
+        assert self._db is not None, "Store non ouvert"
+        await self._db.execute(
+            "UPDATE pages SET published_html = html, published_at = ? WHERE id = ?",
+            (_now_iso(), page_id),
+        )
+        await self._db.commit()
+        return await self.get_page(page_id)
+
+    async def unpublish_page(self, page_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        await self._db.execute(
+            "UPDATE pages SET published_html = NULL, published_at = NULL WHERE id = ?", (page_id,)
+        )
+        await self._db.commit()
+        return await self.get_page(page_id)
+
+    async def delete_page(self, page_id: str) -> bool:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0

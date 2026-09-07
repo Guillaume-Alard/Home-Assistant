@@ -192,6 +192,40 @@ def test_memoire_via_ws(client):
         assert after["type"] == "memoires" and after["memories"] == []
 
 
+def test_page_publiee_servie_avec_csp(fake_wyoming, tmp_path, monkeypatch):
+    """Une page publiée est servie à /p/<slug> avec une CSP verrouillant le réseau ;
+    un brouillon ou un slug inconnu renvoie 404."""
+    import asyncio
+
+    from app.store import Store
+
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    data = tmp_path / "data"
+    data.mkdir(parents=True, exist_ok=True)
+
+    async def seed():
+        store = Store(data / "sentinel.db")
+        await store.open()
+        pub = await store.add_page(title="Suivi Sport", html="<!doctype html><title>t</title><h1>Salut</h1>")
+        await store.publish_page(pub["id"])
+        draft = await store.add_page(title="Brouillon", html="<h1>secret</h1>")
+        await store.close()
+        return pub["slug"], draft["slug"]
+
+    published_slug, draft_slug = asyncio.run(seed())
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        ok = tc.get(f"/p/{published_slug}")
+        assert ok.status_code == 200 and "Salut" in ok.text
+        assert "connect-src 'none'" in ok.headers.get("content-security-policy", "")
+        # Un brouillon n'est jamais servi publiquement, ni un slug inconnu
+        assert tc.get(f"/p/{draft_slug}").status_code == 404
+        assert tc.get("/p/inexistant").status_code == 404
+
+
 def test_profils_vocaux_via_ws(client):
     """Création / enrôlement / suppression de profils vocaux (Phase 2)."""
     with client.websocket_connect("/ws") as ws:

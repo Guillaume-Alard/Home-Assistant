@@ -53,6 +53,9 @@ ACTIVITY_LABELS = {
     "lister_souvenirs": "relit ce qu'elle sait…",
     "oublier": "met à jour sa mémoire…",
     "resume_mails": "relève tes courriels…",
+    "creer_page": "rédige une page web…",
+    "modifier_page": "modifie une page web…",
+    "lister_pages": "relit tes pages web…",
 }
 
 
@@ -72,6 +75,7 @@ class Toolbox:
         worker: WorkerClient | None = None,
         mail: GmailClient | None = None,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
+        on_pages_change: Callable[[], Awaitable[None]] | None = None,
     ):
         self._ha = ha
         self._engine = engine
@@ -84,6 +88,8 @@ class Toolbox:
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
+        # Rafraîchit la liste des pages web quand Luna en rédige/modifie une.
+        self._on_pages_change = on_pages_change
 
     _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
     _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova/Docker non configurés)."
@@ -356,6 +362,47 @@ class Toolbox:
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             },
+            {
+                "name": "creer_page",
+                "description": (
+                    "Rédige une page web simple et autonome (tableau de bord, page de suivi, "
+                    "note partageable) sous forme d'un document HTML COMPLET et autonome "
+                    "(CSS et éventuel JS EN LIGNE ; aucune ressource ni appel réseau externe — "
+                    "la page ne peut pas contacter le réseau). C'est un BROUILLON : rien n'est "
+                    "publié. Guillaume la relit puis la publie lui-même depuis l'interface. "
+                    "Dis-lui que la page l'attend dans Paramètres › Pages web."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "titre": {"type": "string"},
+                        "html": {"type": "string", "description": "Document HTML complet (<!doctype html>…)."},
+                    },
+                    "required": ["titre", "html"],
+                },
+            },
+            {
+                "name": "modifier_page",
+                "description": (
+                    "Met à jour la copie de travail d'une page existante (son HTML et/ou son "
+                    "titre). N'affecte PAS la version en ligne : Guillaume republie après "
+                    "relecture. Donne l'`id` (via lister_pages)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "titre": {"type": "string"},
+                        "html": {"type": "string"},
+                    },
+                    "required": ["id"],
+                },
+            },
+            {
+                "name": "lister_pages",
+                "description": "Liste les pages web (id, titre, slug, publiée ou brouillon).",
+                "input_schema": {"type": "object", "properties": {}},
+            },
         ]
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -374,6 +421,7 @@ class Toolbox:
         "redemarrer_conteneur": "owner", "lancer_tache_dev": "owner",
         "etat_taches_dev": "owner", "lire_diff_dev": "owner",
         "resume_mails": "owner",  # courriel personnel : Guillaume seul
+        "creer_page": "owner", "modifier_page": "owner", "lister_pages": "owner",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -783,3 +831,52 @@ class Toolbox:
                 for m in msgs
             ],
         }), False
+
+    # Pages web (Phase 5 — Luna RÉDIGE ; Guillaume PUBLIE depuis l'UI) ─────
+
+    async def _notify_pages_change(self) -> None:
+        if self._on_pages_change is not None:
+            try:
+                await self._on_pages_change()
+            except Exception:
+                log.exception("Notification de changement de pages impossible")
+
+    async def _tool_creer_page(self, args, _utt, _src):
+        titre = str(args.get("titre") or "").strip()[:120]
+        html = str(args.get("html") or "")
+        if not titre or not html.strip():
+            return "Donne un titre et le contenu HTML de la page.", True
+        page = await self._store.add_page(title=titre, html=html)
+        await self._notify_pages_change()
+        return _compact({
+            "id": page["id"], "slug": page["slug"], "titre": page["title"],
+            "etat": "brouillon — à relire puis publier par Guillaume (Paramètres › Pages web)",
+        }), False
+
+    async def _tool_modifier_page(self, args, _utt, _src):
+        page_id = str(args.get("id") or "").strip()
+        page = await self._store.get_page(page_id)
+        if page is None:
+            return "Page introuvable — vérifie l'id avec lister_pages.", True
+        fields: dict = {}
+        if args.get("titre"):
+            fields["title"] = str(args["titre"])[:120]
+        if args.get("html") is not None:
+            fields["html"] = str(args["html"])
+        if not fields:
+            return "Rien à modifier (titre ou html attendu).", True
+        page = await self._store.update_page(page_id, **fields)
+        await self._notify_pages_change()
+        note = " (changements en attente de republication)" if page.get("published_html") else ""
+        return f"Brouillon mis à jour{note}.", False
+
+    async def _tool_lister_pages(self, _args, _utt, _src):
+        pages = await self._store.list_pages()
+        if not pages:
+            return "Aucune page pour l'instant.", False
+        return _compact([
+            {"id": p["id"], "titre": p["title"], "slug": p["slug"],
+             "etat": "publiée" if p["published"] else "brouillon",
+             "modifs_en_attente": p["dirty"]}
+            for p in pages
+        ]), False

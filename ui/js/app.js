@@ -113,6 +113,16 @@ const els = {
   speakerCount: document.getElementById('speaker-count'),
   speakerState: document.getElementById('speaker-state'),
   whoSpeaks: document.getElementById('who-speaks'),
+  // pages web (Paramètres)
+  pagesList: document.getElementById('pages-list'),
+  pagesCount: document.getElementById('pages-count'),
+  pagePreview: document.getElementById('page-preview'),
+  ppTitle: document.getElementById('pp-title'),
+  ppUrl: document.getElementById('pp-url'),
+  ppFrame: document.getElementById('pp-frame'),
+  ppPublish: document.getElementById('pp-publish'),
+  ppOpen: document.getElementById('pp-open'),
+  ppClose: document.getElementById('pp-close'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -369,6 +379,8 @@ ws.addEventListener('event', (e) => {
     case 'speakers': renderSpeakers(msg); break;
     case 'speaker': updateWhoSpeaks(msg); break;
     case 'enroll_result': onEnrollResult(msg); break;
+    case 'pages': renderPages(msg); break;
+    case 'page': showPagePreview(msg); break;
     default: break;
   }
 });
@@ -1075,6 +1087,7 @@ function setSettingsSection(name) {
   document.querySelectorAll('.set-sec').forEach((s) => { s.hidden = s.dataset.sec !== name; });
   if (name === 'memoire' && ws.alive) ws.sendJSON({ type: 'memoires' });
   if (name === 'profils' && ws.alive) ws.sendJSON({ type: 'speakers' });
+  if (name === 'pages' && ws.alive) ws.sendJSON({ type: 'pages' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 
@@ -1217,6 +1230,105 @@ els.speakerForm.addEventListener('submit', (e) => {
   els.speakerName.value = '';
   els.speakerOwner.checked = false;
 });
+
+// ── Pages web (Paramètres › Pages web) : Luna rédige, tu relis et publies ───
+function pageBtn(label, onClick, danger) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = label;
+  if (danger) b.className = 'danger';
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function renderPages(msg) {
+  const list = msg.pages || [];
+  els.pagesCount.textContent = list.length ? String(list.length) : '';
+  els.pagesList.textContent = '';
+  if (!list.length) {
+    els.pagesList.appendChild(emptyLine('Aucune page. Demande à Luna : « prépare-moi une page de suivi pour… ».'));
+    return;
+  }
+  for (const p of list) {
+    const row = document.createElement('div');
+    row.className = 'page-row';
+    const main = document.createElement('div');
+    main.className = 'page-main';
+    const title = document.createElement('div');
+    title.className = 'page-title';
+    title.textContent = p.title;
+    const meta = document.createElement('div');
+    meta.className = 'page-meta';
+    const st = document.createElement('span');
+    st.className = 'page-state' + (p.published ? ' on' : '');
+    st.textContent = p.published ? 'publiée' : 'brouillon';
+    meta.appendChild(st);
+    if (p.dirty) {
+      const d = document.createElement('span');
+      d.className = 'page-state dirty';
+      d.textContent = 'modifs en attente';
+      meta.appendChild(d);
+    }
+    if (p.published) {
+      const a = document.createElement('a');
+      a.className = 'page-link';
+      a.href = `/p/${p.slug}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = `/p/${p.slug}`;
+      meta.appendChild(a);
+    }
+    main.append(title, meta);
+
+    const acts = document.createElement('div');
+    acts.className = 'page-acts';
+    acts.appendChild(pageBtn('Aperçu', () => ws.sendJSON({ type: 'page_get', id: p.id })));
+    const pub = pageBtn(p.published ? 'Republier' : 'Publier', () => {
+      ws.sendJSON({ type: 'page_publish', id: p.id });
+      toast('Page mise en ligne.');
+    });
+    if (p.published && !p.dirty) { pub.disabled = true; pub.textContent = 'à jour'; }
+    acts.appendChild(pub);
+    if (p.published) {
+      acts.appendChild(pageBtn('Dépublier', () => {
+        ws.sendJSON({ type: 'page_unpublish', id: p.id });
+        toast('Page retirée du réseau.');
+      }));
+    }
+    acts.appendChild(pageBtn('Supprimer', () => {
+      if (confirm(`Supprimer définitivement la page « ${p.title} » ?`)) {
+        ws.sendJSON({ type: 'page_delete', id: p.id });
+      }
+    }, true));
+    row.append(main, acts);
+    els.pagesList.appendChild(row);
+  }
+}
+
+let previewPage = null;
+function showPagePreview(msg) {
+  previewPage = { id: msg.id, slug: msg.slug, published: msg.published };
+  els.ppTitle.textContent = msg.title || 'Aperçu';
+  els.ppFrame.srcdoc = msg.html || '';
+  const url = `${location.origin}/p/${msg.slug}`;
+  els.ppUrl.textContent = msg.published ? url : 'brouillon — non publié';
+  els.ppOpen.hidden = !msg.published;
+  els.ppOpen.onclick = () => window.open(url, '_blank', 'noopener');
+  els.ppPublish.textContent = msg.published ? 'Republier' : 'Publier';
+  els.pagePreview.hidden = false;
+}
+function closePagePreview() {
+  els.pagePreview.hidden = true;
+  els.ppFrame.srcdoc = '';
+  previewPage = null;
+}
+els.ppPublish.addEventListener('click', () => {
+  if (!previewPage) return;
+  ws.sendJSON({ type: 'page_publish', id: previewPage.id });
+  toast('Page mise en ligne.');
+  closePagePreview();
+});
+els.ppClose.addEventListener('click', closePagePreview);
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────
 let wakeRetryTimer = null;
@@ -1374,6 +1486,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     micAction();
   } else if (e.key === 'Escape') {
+    if (!els.pagePreview.hidden) { closePagePreview(); return; }
     if (anyDrawerOpen()) { closeDrawers(); return; }
     if (st.listening) stopListening(false);
     interrupt();

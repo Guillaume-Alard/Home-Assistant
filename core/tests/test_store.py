@@ -99,3 +99,40 @@ async def test_profils_vocaux_crud(tmp_path):
         assert [p["id"] for p in remaining] == [c["id"]]
     finally:
         await store.close()
+
+
+async def test_pages_cycle_de_vie(tmp_path):
+    store = Store(tmp_path / "pages.db")
+    await store.open()
+    try:
+        p = await store.add_page(title="Mon Suivi", html="<h1>v1</h1>")
+        assert p["slug"] == "mon-suivi"
+        p2 = await store.add_page(title="Mon Suivi", html="x")
+        assert p2["slug"] == "mon-suivi-2"  # slug rendu unique
+
+        # Rien n'est en ligne avant publication
+        assert await store.get_published_page("mon-suivi") is None
+        assert all(not r["published"] for r in await store.list_pages())
+
+        # Publication (action de Guillaume)
+        await store.publish_page(p["id"])
+        pub = await store.get_published_page("mon-suivi")
+        assert pub and pub["published_html"] == "<h1>v1</h1>"
+        rows = {r["id"]: r for r in await store.list_pages()}
+        assert rows[p["id"]]["published"] is True and rows[p["id"]]["dirty"] is False
+
+        # Éditer le brouillon ne touche PAS la version en ligne (marquée « dirty »)
+        await store.update_page(p["id"], html="<h1>v2</h1>")
+        rows = {r["id"]: r for r in await store.list_pages()}
+        assert rows[p["id"]]["dirty"] is True
+        assert (await store.get_published_page("mon-suivi"))["published_html"] == "<h1>v1</h1>"
+
+        # Republier pousse la nouvelle version ; dépublier la retire
+        await store.publish_page(p["id"])
+        assert (await store.get_published_page("mon-suivi"))["published_html"] == "<h1>v2</h1>"
+        await store.unpublish_page(p["id"])
+        assert await store.get_published_page("mon-suivi") is None
+
+        assert await store.delete_page(p["id"]) is True
+    finally:
+        await store.close()

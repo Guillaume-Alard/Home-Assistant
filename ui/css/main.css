@@ -518,6 +518,28 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
 .mail-subj { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mail-snip { font-size: 11px; color: var(--muted); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
+/* ── Pages web (Paramètres) ────────────────────────────────────────────────── */
+.pages-list { display: flex; flex-direction: column; gap: 8px; }
+.page-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--edge); background: var(--panel); border-radius: 10px; padding: 10px 12px; }
+.page-main { flex: 1 1 auto; min-width: 0; }
+.page-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-meta { font-size: 10.5px; color: var(--muted); margin-top: 3px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.page-state { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 999px; padding: 1px 7px; border: 1px solid var(--edge-2); color: var(--muted); }
+.page-state.on { color: var(--ok); border-color: rgba(86, 224, 160, 0.4); }
+.page-state.dirty { color: var(--warn); border-color: rgba(239, 168, 60, 0.4); }
+.page-link { color: var(--accent); text-decoration: none; font-family: var(--mono); font-size: 10.5px; }
+.page-acts { display: flex; gap: 5px; flex: 0 0 auto; }
+.page-acts button { border: 1px solid var(--edge-2); background: transparent; color: var(--muted-2); cursor: pointer; font-size: 11px; border-radius: 7px; padding: 3px 8px; transition: color 0.15s, border-color 0.15s; }
+.page-acts button:hover { color: var(--accent); border-color: var(--accent-line); }
+.page-acts button.danger:hover { color: var(--danger); border-color: rgba(255, 95, 82, 0.45); }
+
+.page-preview { position: fixed; inset: 0; z-index: 120; background: rgba(4, 5, 7, 0.86); display: flex; flex-direction: column; padding: 22px; gap: 12px; }
+.pp-head { display: flex; align-items: center; gap: 12px; }
+.pp-title { font-size: 14px; font-weight: 600; flex: 0 0 auto; }
+.pp-url { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.pp-frame { flex: 1; width: 100%; border: 1px solid var(--edge-2); border-radius: 12px; background: #fff; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55); }
+
 .switch { width: 40px; height: 23px; border-radius: 999px; border: 1px solid var(--edge-2); background: rgba(255, 255, 255, 0.12); cursor: pointer; position: relative; flex: 0 0 auto; transition: background 0.2s; padding: 0; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #8A8F98; transition: transform 0.2s, background 0.2s; }
 .switch[aria-checked="true"] { background: var(--accent); border-color: transparent; }

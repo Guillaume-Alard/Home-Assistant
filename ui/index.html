@@ -188,6 +188,7 @@
       <button class="set-navitem" type="button" data-sec="voix" aria-selected="false">Voix &amp; réveil</button>
       <button class="set-navitem" type="button" data-sec="profils" aria-selected="false">Profils vocaux</button>
       <button class="set-navitem" type="button" data-sec="memoire" aria-selected="false">Mémoire</button>
+      <button class="set-navitem" type="button" data-sec="pages" aria-selected="false">Pages web</button>
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false">Moteur</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false">Confidentialité</button>
       <div class="set-nav-note">Sentinel tourne en local.<br>Aucune donnée n'est envoyée sans ton accord.</div>
@@ -264,6 +265,17 @@
           <div class="set-card">
             <div class="set-card-h">Ce que Luna sait <span id="memoire-count" class="set-count"></span></div>
             <div id="memoire-list" class="memoire-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="pages" hidden>
+        <div class="set-title">Pages web</div>
+        <div class="set-sub">Les pages que Luna prépare pour toi (tableau de bord, page de suivi…). Elle rédige des <b>brouillons</b> ; c'est toi qui relis et publies. Une page publiée est accessible sur ton réseau à <span class="mono-chip">/p/&lt;nom&gt;</span>.</div>
+        <div class="set-cards">
+          <div class="set-card" style="grid-column: 1 / -1;">
+            <div class="set-card-h">Pages <span id="pages-count" class="set-count"></span></div>
+            <div id="pages-list" class="pages-list"></div>
           </div>
         </div>
       </section>
@@ -353,6 +365,20 @@
   <div id="alert-banner" class="alert-banner" role="alert" hidden>
     <span id="alert-text"></span>
     <button id="alert-close" type="button" aria-label="Fermer l'alerte">✕</button>
+  </div>
+
+  <!-- Aperçu d'une page (iframe cloisonnée : allow-scripts sans allow-same-origin) -->
+  <div id="page-preview" class="page-preview" hidden>
+    <header class="pp-head">
+      <span id="pp-title" class="pp-title"></span>
+      <span id="pp-url" class="pp-url"></span>
+      <div class="pp-actions">
+        <button id="pp-publish" type="button" class="mini-btn">Publier</button>
+        <button id="pp-open" type="button" class="win-icon" title="Ouvrir la page publiée" hidden>↗</button>
+        <button id="pp-close" type="button" class="win-icon" aria-label="Fermer l'aperçu">✕</button>
+      </div>
+    </header>
+    <iframe id="pp-frame" class="pp-frame" sandbox="allow-scripts" title="Aperçu de la page"></iframe>
   </div>
 
   <div id="toast" class="toast" role="alert" hidden></div>

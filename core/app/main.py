@@ -6,9 +6,10 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
                             proposal_decision, wake_start, wake_stop, ping —
                             les requêtes de lecture des panneaux (dev_tasks,
                             dev_log, dev_diff, sante, historique, mail, memoires,
-                            speakers), la gestion de la mémoire (memoire_add,
-                            memoire_delete) et des profils vocaux (speaker_add,
-                            speaker_delete, speaker_enroll_start/end)
+                            speakers, pages), la gestion de la mémoire (memoire_add,
+                            memoire_delete), des profils vocaux (speaker_add,
+                            speaker_delete, speaker_enroll_start/end) et des pages
+                            web (page_get, page_publish, page_unpublish, page_delete)
   Client → serveur (binaire) : PCM 16 bits mono (tour de parole, veille, ou
                                enrôlement d'une empreinte vocale)
   Serveur → clients (JSON) : hello, status, message, assistant_start,
@@ -41,7 +42,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -236,6 +237,7 @@ class Sentinel:
             self.ha, self.engine, self.protocols, store,
             health=self.health, docker=self._docker, worker=self._worker,
             mail=self.mail, on_memory_change=self._broadcast_memoires,
+            on_pages_change=self._broadcast_pages,
         )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
@@ -335,6 +337,15 @@ class Sentinel:
 
     async def _broadcast_speakers(self) -> None:
         await self.hub.broadcast(await self._speakers_payload())
+
+    # ── Pages web (Phase 5) ──────────────────────────────────────────────
+
+    async def _pages_payload(self) -> dict:
+        return {"type": "pages", "pages": await self.store.list_pages()}
+
+    async def _broadcast_pages(self) -> None:
+        """Rafraîchit Paramètres › Pages web sur tous les appareils connectés."""
+        await self.hub.broadcast(await self._pages_payload())
 
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
@@ -1081,6 +1092,21 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "speaker_enroll_end":
         await _speaker_enroll_finish(sentinel, client)
 
+    elif mtype == "pages":
+        await sentinel.hub.send(client, await sentinel._pages_payload())
+
+    elif mtype == "page_get":
+        await _page_get(sentinel, client, msg)
+
+    elif mtype == "page_publish":
+        await _page_action(sentinel, msg, "publish")
+
+    elif mtype == "page_unpublish":
+        await _page_action(sentinel, msg, "unpublish")
+
+    elif mtype == "page_delete":
+        await _page_action(sentinel, msg, "delete")
+
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
 
@@ -1249,6 +1275,37 @@ async def _memoire_delete(sentinel: Sentinel, msg: dict) -> None:
     await sentinel._broadcast_memoires()
 
 
+# ── Pages web : aperçu + publication/dépublication/suppression (cockpit) ──────
+#
+# Luna RÉDIGE (outils creer_page/modifier_page) ; publier, dépublier et supprimer
+# sont des actions du COCKPIT (canal du propriétaire) — la revue humaine avant
+# mise en ligne, jamais contournée. L'aperçu renvoie le HTML du brouillon au seul
+# demandeur, affiché dans une iframe cloisonnée (jamais servi à une URL publique).
+
+
+async def _page_get(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    page = await sentinel.store.get_page(str(msg.get("id") or "").strip())
+    if page is None:
+        return
+    await sentinel.hub.send(client, {
+        "type": "page", "id": page["id"], "title": page["title"], "slug": page["slug"],
+        "html": page["html"], "published": page["published_html"] is not None,
+    })
+
+
+async def _page_action(sentinel: Sentinel, msg: dict, action: str) -> None:
+    page_id = str(msg.get("id") or "").strip()
+    if not page_id:
+        return
+    if action == "publish":
+        await sentinel.store.publish_page(page_id)
+    elif action == "unpublish":
+        await sentinel.store.unpublish_page(page_id)
+    elif action == "delete":
+        await sentinel.store.delete_page(page_id)
+    await sentinel._broadcast_pages()
+
+
 # ── Profils vocaux : création, suppression, enrôlement (Paramètres › Profils) ──
 #
 # Géré depuis le cockpit (canal de confiance, comme les décisions sensibles). Le
@@ -1319,6 +1376,33 @@ async def _speaker_enroll_finish(sentinel: Sentinel, client: Client) -> None:
         return
     await sentinel.hub.send(client, {"type": "enroll_result", "ok": True, "text": "Échantillon enregistré."})
     await sentinel._broadcast_speakers()
+
+
+# ── Pages web publiées (Phase 5) — servies sur le LAN à /p/<slug> ────────────
+#
+# Ne sert QUE la version publiée (jamais un brouillon). CSP stricte : la page peut
+# être interactive (styles/scripts en ligne) mais NE PEUT PAS contacter le réseau
+# (`connect-src 'none'`) — son JS ne peut donc jamais rappeler l'API/WS de Sentinel.
+_PAGE_CSP = (
+    "default-src 'self' 'unsafe-inline' data:; connect-src 'none'; "
+    "base-uri 'none'; form-action 'none'"
+)
+
+
+@app.get("/p/{slug}")
+async def serve_page(slug: str, request: Request) -> HTMLResponse:
+    sentinel: Sentinel = request.app.state.sentinel
+    page = await sentinel.store.get_published_page(slug)
+    if page is None:
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'><title>Introuvable</title>"
+            "<body style='font-family:sans-serif;background:#08090B;color:#E9E7E2;"
+            "display:grid;place-items:center;height:100vh;margin:0'>"
+            "<p>Cette page n'existe pas ou n'est pas publiée.</p>",
+            status_code=404,
+            headers={"Content-Security-Policy": _PAGE_CSP},
+        )
+    return HTMLResponse(page["published_html"], headers={"Content-Security-Policy": _PAGE_CSP})
 
 
 # L'UI statique en dernier : les routes déclarées avant restent prioritaires.
