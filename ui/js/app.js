@@ -123,6 +123,18 @@ const els = {
   ppPublish: document.getElementById('pp-publish'),
   ppOpen: document.getElementById('pp-open'),
   ppClose: document.getElementById('pp-close'),
+  // auto-amélioration (Paramètres › Évolutions)
+  navEvolutions: document.getElementById('nav-evolutions'),
+  evolutionsList: document.getElementById('evolutions-list'),
+  evolutionsCount: document.getElementById('evolutions-count'),
+  evoReview: document.getElementById('evo-review'),
+  evoTitle: document.getElementById('evo-title'),
+  evoTarget: document.getElementById('evo-target'),
+  evoWhy: document.getElementById('evo-why'),
+  evoDiff: document.getElementById('evo-diff'),
+  evoAccept: document.getElementById('evo-accept'),
+  evoReject: document.getElementById('evo-reject'),
+  evoClose: document.getElementById('evo-close'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -329,6 +341,7 @@ ws.addEventListener('event', (e) => {
       devConfigured = !!msg.dev_configured;
       els.liaisonGithub.hidden = !devConfigured;
       els.mailBtn.hidden = !(msg.config && msg.config.mail);
+      if (els.navEvolutions) els.navEvolutions.hidden = !(msg.config && msg.config.self_improve);
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -381,6 +394,8 @@ ws.addEventListener('event', (e) => {
     case 'enroll_result': onEnrollResult(msg); break;
     case 'pages': renderPages(msg); break;
     case 'page': showPagePreview(msg); break;
+    case 'evolutions': renderEvolutions(msg); break;
+    case 'evolution': showEvolution(msg); break;
     default: break;
   }
 });
@@ -1088,6 +1103,7 @@ function setSettingsSection(name) {
   if (name === 'memoire' && ws.alive) ws.sendJSON({ type: 'memoires' });
   if (name === 'profils' && ws.alive) ws.sendJSON({ type: 'speakers' });
   if (name === 'pages' && ws.alive) ws.sendJSON({ type: 'pages' });
+  if (name === 'evolutions' && ws.alive) ws.sendJSON({ type: 'evolutions' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 
@@ -1330,6 +1346,102 @@ els.ppPublish.addEventListener('click', () => {
 });
 els.ppClose.addEventListener('click', closePagePreview);
 
+// ── Auto-amélioration (Paramètres › Évolutions) ───────────────────────────
+const EVO_STATUS = { pending: 'en attente', accepted: 'acceptée', rejected: 'rejetée' };
+
+function renderEvolutions(msg) {
+  const list = msg.suggestions || [];
+  els.evolutionsCount.textContent = list.length ? String(list.length) : '';
+  els.evolutionsList.textContent = '';
+  if (!list.length) {
+    els.evolutionsList.appendChild(emptyLine('Aucune proposition. Demande à Luna : « propose une amélioration de… » — elle prépare un diff que tu relis ici.'));
+    return;
+  }
+  for (const s of list) {
+    const row = document.createElement('div');
+    row.className = 'evo-row';
+    const main = document.createElement('div');
+    main.className = 'evo-main';
+    const title = document.createElement('div');
+    title.className = 'evo-title';
+    title.textContent = s.title;
+    const meta = document.createElement('div');
+    meta.className = 'evo-meta';
+    const kind = document.createElement('span');
+    kind.className = 'evo-kind ' + (s.kind === 'config' ? 'config' : 'code');
+    kind.textContent = s.kind === 'config' ? 'config' : 'code';
+    meta.appendChild(kind);
+    const stt = document.createElement('span');
+    stt.className = 'evo-state ' + s.status;
+    stt.textContent = EVO_STATUS[s.status] || s.status;
+    meta.appendChild(stt);
+    if (s.target) {
+      const tg = document.createElement('span');
+      tg.className = 'evo-target-chip';
+      tg.textContent = s.target;
+      meta.appendChild(tg);
+    }
+    main.append(title, meta);
+
+    const acts = document.createElement('div');
+    acts.className = 'evo-acts';
+    acts.appendChild(pageBtn('Relire le diff', () => ws.sendJSON({ type: 'evolution_get', id: s.id })));
+    acts.appendChild(pageBtn('Supprimer', () => {
+      if (confirm(`Supprimer la proposition « ${s.title} » ?`)) ws.sendJSON({ type: 'evolution_delete', id: s.id });
+    }, true));
+    row.append(main, acts);
+    els.evolutionsList.appendChild(row);
+  }
+}
+
+let reviewEvo = null;
+function colorizeDiff(pre, diff) {
+  pre.textContent = '';
+  for (const line of (diff || '').split('\n')) {
+    const el = document.createElement('span');
+    el.className = 'dl';
+    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ')) el.classList.add('dl-meta');
+    else if (line.startsWith('@@')) el.classList.add('dl-hunk');
+    else if (line.startsWith('+')) el.classList.add('dl-add');
+    else if (line.startsWith('-')) el.classList.add('dl-del');
+    el.textContent = line || ' ';
+    pre.appendChild(el);
+  }
+}
+
+function showEvolution(msg) {
+  reviewEvo = { id: msg.id, status: msg.status };
+  els.evoTitle.textContent = msg.title || 'Proposition';
+  const files = (msg.paths || []).join(', ') || msg.target || '';
+  els.evoTarget.textContent = `${files}  ·  +${msg.added || 0} −${msg.removed || 0}`;
+  els.evoWhy.textContent = msg.rationale || '';
+  els.evoWhy.hidden = !msg.rationale;
+  colorizeDiff(els.evoDiff, msg.diff);
+  const decided = msg.status !== 'pending';
+  els.evoAccept.hidden = decided;
+  els.evoReject.hidden = decided;
+  els.evoAccept.textContent = 'Accepter';
+  els.evoReview.hidden = false;
+}
+function closeEvolution() {
+  els.evoReview.hidden = true;
+  els.evoDiff.textContent = '';
+  reviewEvo = null;
+}
+els.evoAccept.addEventListener('click', () => {
+  if (!reviewEvo) return;
+  ws.sendJSON({ type: 'evolution_accept', id: reviewEvo.id });
+  toast('Proposition acceptée — applique le diff quand tu veux.');
+  closeEvolution();
+});
+els.evoReject.addEventListener('click', () => {
+  if (!reviewEvo) return;
+  ws.sendJSON({ type: 'evolution_reject', id: reviewEvo.id });
+  toast('Proposition rejetée.');
+  closeEvolution();
+});
+els.evoClose.addEventListener('click', closeEvolution);
+
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────
 let wakeRetryTimer = null;
 let gestureHooked = false;
@@ -1486,6 +1598,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     micAction();
   } else if (e.key === 'Escape') {
+    if (!els.evoReview.hidden) { closeEvolution(); return; }
     if (!els.pagePreview.hidden) { closePagePreview(); return; }
     if (anyDrawerOpen()) { closeDrawers(); return; }
     if (st.listening) stopListening(false);

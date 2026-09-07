@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -44,7 +45,12 @@ async def box(tmp_path, monkeypatch):
     docker = DockerStub()
     engine = ActionEngine(build_registry(ha, protocols, docker), store)
     health = HealthService(Settings.from_env(), ha)
-    toolbox = Toolbox(ha, engine, protocols, store, health=health, docker=docker)
+    import app
+    from app.selfmod import SelfSource
+
+    app_dir = Path(app.__file__).resolve().parent
+    source = SelfSource(app_dir, app_dir.parent / "ui")
+    toolbox = Toolbox(ha, engine, protocols, store, health=health, docker=docker, source=source)
     yield SimpleNamespace(
         ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
     )
@@ -65,6 +71,7 @@ async def test_specs_stables_et_completes(box):
         "lancer_tache_dev", "etat_taches_dev", "lire_diff_dev",
         "memoriser", "lister_souvenirs", "oublier", "resume_mails",
         "creer_page", "modifier_page", "lister_pages",
+        "lire_mon_code", "proposer_evolution", "lister_evolutions",
     ]
     assert all(s["description"] for s in specs)
 
@@ -395,3 +402,73 @@ async def test_modifier_page_ne_republie_pas(box):
     assert not is_error and "attente" in content.lower()
     # La version EN LIGNE reste l'ancienne tant que Guillaume ne republie pas
     assert (await box.store.get_published_page(page["slug"]))["published_html"] == "<h1>v1</h1>"
+
+
+# ── Auto-amélioration encadrée (Phase 6) : Luna PROPOSE, jamais n'applique ─────
+
+_BENIGN_DIFF = (
+    "--- a/docs/NOTES.md\n+++ b/docs/NOTES.md\n@@ -1 +1,2 @@\n"
+    " Notes\n+Une ligne de plus.\n"
+)
+_GUARDRAIL_DIFF = (
+    "--- a/core/app/identity.py\n+++ b/core/app/identity.py\n@@ -1 +1,2 @@\n"
+    " x\n+OWNER = None\n"
+)
+
+
+async def test_proposer_evolution_stocke_une_proposition(box):
+    content, is_error = await _run_as(
+        box, "proposer_evolution",
+        {"titre": "Petite note", "motivation": "clarté", "diff": _BENIGN_DIFF}, OWNER,
+    )
+    assert not is_error
+    data = json.loads(content)
+    assert data["fichiers"] == ["docs/NOTES.md"] and data["lignes"]["+"] == 1
+    rows = await box.store.list_suggestions()
+    assert len(rows) == 1 and rows[0]["status"] == "pending"
+
+
+async def test_proposer_evolution_refuse_un_garde_fou(box):
+    content, is_error = await _run_as(
+        box, "proposer_evolution",
+        {"titre": "toucher identity", "motivation": "x", "diff": _GUARDRAIL_DIFF}, OWNER,
+    )
+    # Refus de politique : message clair, et RIEN n'est stocké.
+    assert not is_error and "je ne peux pas" in content.lower()
+    assert await box.store.list_suggestions() == []
+
+
+async def test_proposer_evolution_refuse_un_secret(box):
+    diff = (
+        "--- a/core/app/x.py\n+++ b/core/app/x.py\n@@ -1 +1,2 @@\n x\n"
+        '+API_KEY = "sk-ant-api03-abcdefghijklmnop1234567890"\n'
+    )
+    content, is_error = await _run_as(
+        box, "proposer_evolution", {"titre": "clé", "motivation": "x", "diff": diff}, OWNER
+    )
+    assert not is_error and "secret" in content.lower()
+    assert await box.store.list_suggestions() == []
+
+
+async def test_auto_amelioration_reservee_au_proprietaire(box):
+    for who in (_HOUSEHOLD, UNKNOWN):
+        for tool, args in (
+            ("proposer_evolution", {"titre": "x", "motivation": "y", "diff": _BENIGN_DIFF}),
+            ("lire_mon_code", {}),
+            ("lister_evolutions", {}),
+        ):
+            content, is_error = await _run_as(box, tool, args, who)
+            assert not is_error and "réservé à guillaume" in content.lower()
+    assert await box.store.list_suggestions() == []
+
+
+async def test_lire_mon_code_lecture_seule(box):
+    # Sans chemin : la liste des fichiers source
+    listing, is_error = await _run_as(box, "lire_mon_code", {}, OWNER)
+    assert not is_error and "identity.py" in listing
+    # Un fichier réel de son code
+    content, is_error = await _run_as(box, "lire_mon_code", {"chemin": "core/app/identity.py"}, OWNER)
+    assert not is_error and "Speaker" in content
+    # Jamais un secret / hors racine
+    content, is_error = await _run_as(box, "lire_mon_code", {"chemin": ".env"}, OWNER)
+    assert is_error

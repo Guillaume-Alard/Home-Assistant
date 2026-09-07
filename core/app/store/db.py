@@ -110,6 +110,26 @@ CREATE TABLE IF NOT EXISTS pages (
     updated_at     TEXT NOT NULL,
     published_at   TEXT
 );
+
+-- Auto-amélioration encadrée (Phase 6) : Luna PROPOSE une évolution de son
+-- propre code / sa config sous forme de DIFF. Rien ne s'applique jamais tout
+-- seul — c'est une proposition, relue et appliquée par Guillaume (revue humaine
+-- avant exécution, jamais contournée). Le diff est passé au crible de la
+-- politique (selfmod/policy.py) AVANT d'arriver ici : aucun garde-fou de
+-- sécurité, aucun secret. `status` : pending | accepted | rejected.
+CREATE TABLE IF NOT EXISTS suggestions (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL DEFAULT 'code',    -- code | config
+    title       TEXT NOT NULL,
+    rationale   TEXT NOT NULL DEFAULT '',        -- pourquoi (motivation)
+    target      TEXT NOT NULL DEFAULT '',        -- fichier(s) / réglage visé
+    diff        TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'pending',
+    created_at  TEXT NOT NULL,
+    decided_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_suggestions_status
+    ON suggestions (status, created_at);
 """
 
 
@@ -510,5 +530,71 @@ class Store:
     async def delete_page(self, page_id: str) -> bool:
         assert self._db is not None, "Store non ouvert"
         cursor = await self._db.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # ── Auto-amélioration : propositions d'évolution (Phase 6) ───────────────
+
+    async def add_suggestion(
+        self, *, kind: str, title: str, rationale: str = "", target: str = "", diff: str = "",
+    ) -> dict:
+        assert self._db is not None, "Store non ouvert"
+        record = {
+            "id": uuid.uuid4().hex[:12],
+            "kind": kind if kind in ("code", "config") else "code",
+            "title": title,
+            "rationale": rationale,
+            "target": target,
+            "diff": diff,
+            "status": "pending",
+            "created_at": _now_iso(),
+            "decided_at": None,
+        }
+        await self._db.execute(
+            "INSERT INTO suggestions (id, kind, title, rationale, target, diff, status, created_at, decided_at)"
+            " VALUES (:id, :kind, :title, :rationale, :target, :diff, :status, :created_at, :decided_at)",
+            record,
+        )
+        await self._db.commit()
+        return record
+
+    async def get_suggestion(self, sug_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT * FROM suggestions WHERE id = ?", (sug_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_suggestions(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        """Métadonnées (SANS le diff) : plus récentes d'abord."""
+        assert self._db is not None, "Store non ouvert"
+        cols = "id, kind, title, target, status, created_at, decided_at"
+        if status:
+            cursor = await self._db.execute(
+                f"SELECT {cols} FROM suggestions WHERE status = ?"
+                " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (status, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                f"SELECT {cols} FROM suggestions ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (limit,),
+            )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def decide_suggestion(self, sug_id: str, status: str) -> dict | None:
+        """Guillaume accepte / rejette une proposition (revue humaine)."""
+        assert self._db is not None, "Store non ouvert"
+        if status not in ("accepted", "rejected", "pending"):
+            return await self.get_suggestion(sug_id)
+        await self._db.execute(
+            "UPDATE suggestions SET status = ?, decided_at = ? WHERE id = ?",
+            (status, _now_iso() if status != "pending" else None, sug_id),
+        )
+        await self._db.commit()
+        return await self.get_suggestion(sug_id)
+
+    async def delete_suggestion(self, sug_id: str) -> bool:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("DELETE FROM suggestions WHERE id = ?", (sug_id,))
         await self._db.commit()
         return cursor.rowcount > 0

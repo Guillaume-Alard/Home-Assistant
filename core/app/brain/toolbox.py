@@ -16,6 +16,7 @@ from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
 from ..identity import OWNER, Speaker
 from ..devwork.worker_client import WorkerClient, WorkerError
 from ..mail import GmailClient, MailError
+from ..selfmod import SelfSource, evaluate as evaluate_diff, summarize as summarize_diff
 from ..ha.client import HAClient
 from ..ha.protocols import ProtocolBook
 from ..monitors.docker import DockerError, DockerMonitor
@@ -56,6 +57,9 @@ ACTIVITY_LABELS = {
     "creer_page": "rédige une page web…",
     "modifier_page": "modifie une page web…",
     "lister_pages": "relit tes pages web…",
+    "lire_mon_code": "relit son propre code…",
+    "proposer_evolution": "prépare une évolution d'elle-même…",
+    "lister_evolutions": "relit ses évolutions proposées…",
 }
 
 
@@ -74,8 +78,11 @@ class Toolbox:
         docker: DockerMonitor | None = None,
         worker: WorkerClient | None = None,
         mail: GmailClient | None = None,
+        source: SelfSource | None = None,
+        self_improve: bool = True,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_pages_change: Callable[[], Awaitable[None]] | None = None,
+        on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
     ):
         self._ha = ha
         self._engine = engine
@@ -85,11 +92,17 @@ class Toolbox:
         self._docker = docker
         self._worker = worker
         self._mail = mail
+        # Lecteur (SEULE lecture) du propre code de Luna, pour rédiger des diffs
+        # justes (Phase 6). `self_improve` retire les outils d'auto-amélioration.
+        self._source = source
+        self._self_improve = self_improve
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
         # Rafraîchit la liste des pages web quand Luna en rédige/modifie une.
         self._on_pages_change = on_pages_change
+        # Rafraîchit Paramètres › Évolutions quand Luna propose une auto-amélioration.
+        self._on_suggestions_change = on_suggestions_change
 
     _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
     _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova/Docker non configurés)."
@@ -98,7 +111,7 @@ class Toolbox:
 
     def specs(self) -> list[dict]:
         protocol_names = [p.display for p in self._protocols.all()] or ["(aucun protocole configuré)"]
-        return [
+        specs: list[dict] = [
             {
                 "name": "etat_maison",
                 "description": (
@@ -404,6 +417,62 @@ class Toolbox:
                 "input_schema": {"type": "object", "properties": {}},
             },
         ]
+        # Auto-amélioration encadrée (Phase 6) — outils réservés au propriétaire,
+        # retirés si SENTINEL_SELF_IMPROVE=off. Ordre STABLE (cache de prompt).
+        if self._self_improve:
+            specs += [
+                {
+                    "name": "lire_mon_code",
+                    "description": (
+                        "Lit (EN SEULE LECTURE) ton propre code source, pour préparer une "
+                        "proposition d'évolution juste. Sans `chemin` : la liste de tes "
+                        "fichiers. Avec `chemin` (ex. « core/app/brain/toolbox.py ») : le "
+                        "contenu du fichier. Tu ne lis jamais .env ni aucun secret."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "chemin": {"type": "string", "description": "Fichier de app/ ou ui/ (optionnel)."},
+                        },
+                    },
+                },
+                {
+                    "name": "proposer_evolution",
+                    "description": (
+                        "PROPOSE une évolution de ton propre code ou de ta configuration, sous "
+                        "forme d'un DIFF unifié soumis à la validation de Guillaume. Tu "
+                        "n'appliques JAMAIS rien toi-même : c'est une proposition qu'il relit "
+                        "puis applique. Interdit (refusé d'office) : toucher un garde-fou de "
+                        "sécurité (niveaux de confiance, moteur d'actions, isolation de "
+                        "l'atelier, secrets) ou introduire un secret. Une évolution « config » "
+                        "ne modifie que .env.example, une clé de réglage. Relis d'abord le "
+                        "code concerné avec lire_mon_code pour un diff exact."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["code", "config"], "description": "code | config"},
+                            "titre": {"type": "string"},
+                            "motivation": {"type": "string", "description": "Pourquoi cette évolution est utile."},
+                            "cible": {"type": "string", "description": "Fichier(s) ou réglage visé."},
+                            "diff": {"type": "string", "description": "Diff unifié (en-têtes --- / +++)."},
+                        },
+                        "required": ["titre", "motivation", "diff"],
+                    },
+                },
+                {
+                    "name": "lister_evolutions",
+                    "description": (
+                        "Liste tes propositions d'évolution et leur statut (en attente, "
+                        "acceptée, rejetée). Guillaume les relit dans Paramètres › Évolutions."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"statut": {"type": "string", "description": "pending | accepted | rejected"}},
+                    },
+                },
+            ]
+        return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
 
@@ -422,6 +491,9 @@ class Toolbox:
         "etat_taches_dev": "owner", "lire_diff_dev": "owner",
         "resume_mails": "owner",  # courriel personnel : Guillaume seul
         "creer_page": "owner", "modifier_page": "owner", "lister_pages": "owner",
+        # Auto-amélioration (Phase 6) : proposer des changements sur soi-même =
+        # administration, réservée à Guillaume. La reconnaissance n'élève rien.
+        "lire_mon_code": "owner", "proposer_evolution": "owner", "lister_evolutions": "owner",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -879,4 +951,67 @@ class Toolbox:
              "etat": "publiée" if p["published"] else "brouillon",
              "modifs_en_attente": p["dirty"]}
             for p in pages
+        ]), False
+
+    # Auto-amélioration encadrée (Phase 6 — Luna PROPOSE ; Guillaume applique) ──
+    #
+    # Luna ne modifie jamais rien elle-même : `proposer_evolution` passe le diff au
+    # crible de la politique (selfmod/policy.py) — un garde-fou de sécurité ou un
+    # secret est refusé d'office — puis le range comme proposition à relire. Aucun
+    # code n'écrit sur le disque ni ne lance de processus ici.
+
+    async def _notify_suggestions_change(self) -> None:
+        if self._on_suggestions_change is not None:
+            try:
+                await self._on_suggestions_change()
+            except Exception:
+                log.exception("Notification de changement d'évolutions impossible")
+
+    async def _tool_lire_mon_code(self, args, _utt, _src):
+        if self._source is None:
+            return "La lecture de mon code n'est pas disponible.", True
+        chemin = str(args.get("chemin") or "").strip()
+        if not chemin:
+            return _compact({"fichiers": self._source.listing()})[:6000], False
+        content, is_error = self._source.read(chemin)
+        if is_error:
+            return content, True
+        return f"# {chemin}\n{content}", False
+
+    async def _tool_proposer_evolution(self, args, _utt, _src):
+        titre = str(args.get("titre") or "").strip()[:160]
+        diff = str(args.get("diff") or "")
+        kind = str(args.get("kind") or "code").strip().lower()
+        if kind not in ("code", "config"):
+            kind = "code"
+        if not titre or not diff.strip():
+            return "Donne un titre et un diff unifié.", True
+        # Le garde-fou : la politique décide si cette proposition est même recevable.
+        verdict = evaluate_diff(diff, kind=kind)
+        if not verdict.allowed:
+            # Refus de politique : ce n'est pas une erreur d'outil, Luna le relaie.
+            return f"Je ne peux pas proposer ça. {verdict.reason}", False
+        stats = summarize_diff(diff)
+        sug = await self._store.add_suggestion(
+            kind=kind, title=titre,
+            rationale=str(args.get("motivation") or "").strip()[:1000],
+            target=str(args.get("cible") or ", ".join(stats["paths"]))[:300],
+            diff=diff,
+        )
+        await self._notify_suggestions_change()
+        return _compact({
+            "id": sug["id"], "fichiers": stats["paths"],
+            "lignes": {"+": stats["added"], "-": stats["removed"]},
+            "etat": "proposé — à relire puis appliquer par Guillaume (Paramètres › Évolutions)",
+        }), False
+
+    async def _tool_lister_evolutions(self, args, _utt, _src):
+        status = str(args.get("statut") or "").strip() or None
+        items = await self._store.list_suggestions(status)
+        if not items:
+            return "Aucune proposition d'évolution pour l'instant.", False
+        return _compact([
+            {"id": s["id"], "kind": s["kind"], "titre": s["title"],
+             "cible": s["target"], "statut": s["status"]}
+            for s in items
         ]), False

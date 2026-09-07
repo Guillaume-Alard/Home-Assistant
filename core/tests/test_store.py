@@ -136,3 +136,33 @@ async def test_pages_cycle_de_vie(tmp_path):
         assert await store.delete_page(p["id"]) is True
     finally:
         await store.close()
+
+
+async def test_suggestions_cycle_de_vie(tmp_path):
+    store = Store(tmp_path / "sug.db")
+    await store.open()
+    try:
+        s = await store.add_suggestion(
+            kind="config", title="Monter l'effort de réflexion",
+            rationale="Réponses plus travaillées le soir",
+            target=".env.example",
+            diff="--- a/.env.example\n+++ b/.env.example\n@@\n-SENTINEL_EFFORT=low\n+SENTINEL_EFFORT=medium\n",
+        )
+        assert s["status"] == "pending" and s["kind"] == "config"
+
+        # La liste ne porte PAS le diff (métadonnées seulement) ; le get, oui.
+        rows = await store.list_suggestions()
+        assert rows[0]["id"] == s["id"] and "diff" not in rows[0]
+        full = await store.get_suggestion(s["id"])
+        assert "SENTINEL_EFFORT=medium" in full["diff"]
+
+        # Décision humaine : acceptée → horodatée, filtrable par statut
+        decided = await store.decide_suggestion(s["id"], "accepted")
+        assert decided["status"] == "accepted" and decided["decided_at"]
+        assert [r["id"] for r in await store.list_suggestions("accepted")] == [s["id"]]
+        assert await store.list_suggestions("pending") == []
+
+        assert await store.delete_suggestion(s["id"]) is True
+        assert await store.get_suggestion(s["id"]) is None
+    finally:
+        await store.close()

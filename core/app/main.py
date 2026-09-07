@@ -8,8 +8,10 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
                             dev_log, dev_diff, sante, historique, mail, memoires,
                             speakers, pages), la gestion de la mémoire (memoire_add,
                             memoire_delete), des profils vocaux (speaker_add,
-                            speaker_delete, speaker_enroll_start/end) et des pages
+                            speaker_delete, speaker_enroll_start/end), des pages
                             web (page_get, page_publish, page_unpublish, page_delete)
+                            et des propositions d'évolution (evolutions, evolution_get,
+                            evolution_accept, evolution_reject, evolution_delete)
   Client → serveur (binaire) : PCM 16 bits mono (tour de parole, veille, ou
                                enrôlement d'une empreinte vocale)
   Serveur → clients (JSON) : hello, status, message, assistant_start,
@@ -39,6 +41,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -61,6 +64,7 @@ from .ha.client import HAClient
 from .ha.protocols import ProtocolBook
 from .mail import GmailClient, MailError
 from .monitors import AtriumMonitor, DockerMonitor, HealthService
+from .selfmod import SelfSource, summarize as summarize_diff
 from .store import Store
 from .voice.session import CaptureSession
 from .voice.wyoming import (
@@ -233,11 +237,16 @@ class Sentinel:
                 load_rules(settings.config_dir / "alerts.yml"), self.ha, self.engine, self.announce
             )
 
+        # Auto-amélioration encadrée (Phase 6) : lecteur SEULE lecture de son propre
+        # code (app/ + ui/), pour que Luna rédige des diffs justes.
+        self.source = SelfSource(Path(__file__).resolve().parent, settings.ui_dir)
         toolbox = Toolbox(
             self.ha, self.engine, self.protocols, store,
             health=self.health, docker=self._docker, worker=self._worker,
-            mail=self.mail, on_memory_change=self._broadcast_memoires,
+            mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
+            on_memory_change=self._broadcast_memoires,
             on_pages_change=self._broadcast_pages,
+            on_suggestions_change=self._broadcast_evolutions,
         )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
@@ -346,6 +355,19 @@ class Sentinel:
     async def _broadcast_pages(self) -> None:
         """Rafraîchit Paramètres › Pages web sur tous les appareils connectés."""
         await self.hub.broadcast(await self._pages_payload())
+
+    # ── Auto-amélioration encadrée (Phase 6) ─────────────────────────────
+
+    async def _evolutions_payload(self) -> dict:
+        return {
+            "type": "evolutions",
+            "enabled": self.settings.self_improve_enabled,
+            "suggestions": await self.store.list_suggestions(),
+        }
+
+    async def _broadcast_evolutions(self) -> None:
+        """Rafraîchit Paramètres › Évolutions quand Luna propose une auto-amélioration."""
+        await self.hub.broadcast(await self._evolutions_payload())
 
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
@@ -916,6 +938,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "speaker": sentinel.speaker_embedder is not None,
                 "mail": sentinel.mail is not None,
                 "web_search": sentinel.settings.web_search_enabled and bool(sentinel.settings.anthropic_api_key),
+                "self_improve": sentinel.settings.self_improve_enabled,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
@@ -1106,6 +1129,21 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "page_delete":
         await _page_action(sentinel, msg, "delete")
+
+    elif mtype == "evolutions":
+        await sentinel.hub.send(client, await sentinel._evolutions_payload())
+
+    elif mtype == "evolution_get":
+        await _evolution_get(sentinel, client, msg)
+
+    elif mtype == "evolution_accept":
+        await _evolution_action(sentinel, msg, "accepted")
+
+    elif mtype == "evolution_reject":
+        await _evolution_action(sentinel, msg, "rejected")
+
+    elif mtype == "evolution_delete":
+        await _evolution_action(sentinel, msg, "delete")
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
@@ -1304,6 +1342,39 @@ async def _page_action(sentinel: Sentinel, msg: dict, action: str) -> None:
     elif action == "delete":
         await sentinel.store.delete_page(page_id)
     await sentinel._broadcast_pages()
+
+
+# ── Auto-amélioration : revue des propositions d'évolution (cockpit) ──────────
+#
+# Luna PROPOSE (outil proposer_evolution, déjà filtré par selfmod/policy.py) ;
+# accepter/rejeter/supprimer sont des actions du COCKPIT (canal du propriétaire) —
+# la revue humaine avant toute application, jamais contournée. « Accepter »
+# n'exécute RIEN : c'est la décision de Guillaume, qui applique ensuite le diff
+# lui-même (git/déploiement). Aucun code n'applique un diff automatiquement.
+
+
+async def _evolution_get(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    sug = await sentinel.store.get_suggestion(str(msg.get("id") or "").strip())
+    if sug is None:
+        return
+    stats = summarize_diff(sug.get("diff") or "")
+    await sentinel.hub.send(client, {
+        "type": "evolution", "id": sug["id"], "kind": sug["kind"],
+        "title": sug["title"], "rationale": sug["rationale"], "target": sug["target"],
+        "status": sug["status"], "diff": sug["diff"],
+        "added": stats["added"], "removed": stats["removed"], "paths": stats["paths"],
+    })
+
+
+async def _evolution_action(sentinel: Sentinel, msg: dict, action: str) -> None:
+    sug_id = str(msg.get("id") or "").strip()
+    if not sug_id:
+        return
+    if action == "delete":
+        await sentinel.store.delete_suggestion(sug_id)
+    else:  # accepted | rejected — décision humaine, n'applique aucun code
+        await sentinel.store.decide_suggestion(sug_id, action)
+    await sentinel._broadcast_evolutions()
 
 
 # ── Profils vocaux : création, suppression, enrôlement (Paramètres › Profils) ──

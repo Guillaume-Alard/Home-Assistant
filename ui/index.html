@@ -189,6 +189,7 @@
       <button class="set-navitem" type="button" data-sec="profils" aria-selected="false">Profils vocaux</button>
       <button class="set-navitem" type="button" data-sec="memoire" aria-selected="false">Mémoire</button>
       <button class="set-navitem" type="button" data-sec="pages" aria-selected="false">Pages web</button>
+      <button class="set-navitem" type="button" data-sec="evolutions" aria-selected="false" id="nav-evolutions">Évolutions</button>
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false">Moteur</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false">Confidentialité</button>
       <div class="set-nav-note">Sentinel tourne en local.<br>Aucune donnée n'est envoyée sans ton accord.</div>
@@ -276,6 +277,17 @@
           <div class="set-card" style="grid-column: 1 / -1;">
             <div class="set-card-h">Pages <span id="pages-count" class="set-count"></span></div>
             <div id="pages-list" class="pages-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="evolutions" hidden>
+        <div class="set-title">Évolutions</div>
+        <div class="set-sub">Luna peut te <b>proposer</b> des améliorations de son propre code ou de sa configuration, toujours sous forme d'un <b>diff</b> que tu relis puis appliques toi-même. Elle n'applique <b>jamais</b> rien seule, et ne peut pas proposer de toucher un garde-fou de sécurité (niveaux de confiance, moteur d'actions, isolation, secrets) : ces diffs sont refusés d'office.</div>
+        <div class="set-cards">
+          <div class="set-card" style="grid-column: 1 / -1;">
+            <div class="set-card-h">Propositions <span id="evolutions-count" class="set-count"></span></div>
+            <div id="evolutions-list" class="evo-list"></div>
           </div>
         </div>
       </section>
@@ -379,6 +391,21 @@
       </div>
     </header>
     <iframe id="pp-frame" class="pp-frame" sandbox="allow-scripts" title="Aperçu de la page"></iframe>
+  </div>
+
+  <!-- Revue d'une proposition d'évolution : le diff, relu avant toute application -->
+  <div id="evo-review" class="page-preview" hidden>
+    <header class="pp-head">
+      <span id="evo-title" class="pp-title"></span>
+      <span id="evo-target" class="pp-url"></span>
+      <div class="pp-actions">
+        <button id="evo-accept" type="button" class="mini-btn">Accepter</button>
+        <button id="evo-reject" type="button" class="mini-btn ghost">Rejeter</button>
+        <button id="evo-close" type="button" class="win-icon" aria-label="Fermer">✕</button>
+      </div>
+    </header>
+    <div id="evo-why" class="evo-why"></div>
+    <pre id="evo-diff" class="evo-diff" tabindex="0" aria-label="Diff de la proposition"></pre>
   </div>
 
   <div id="toast" class="toast" role="alert" hidden></div>

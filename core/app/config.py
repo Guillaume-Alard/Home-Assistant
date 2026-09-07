@@ -122,6 +122,12 @@ class Settings:
     web_search_enabled: bool = True
     web_search_max_uses: int = 5
 
+    # Auto-amélioration encadrée (Phase 6) — Luna PROPOSE des diffs sur son propre
+    # code / sa config, relus et appliqués par Guillaume ; jamais d'exécution
+    # automatique, jamais de garde-fou de sécurité modifiable. SENTINEL_SELF_IMPROVE=off
+    # retire les outils correspondants (les propositions existantes restent lisibles).
+    self_improve_enabled: bool = True
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -184,6 +190,8 @@ class Settings:
             web_search_enabled=os.environ.get("SENTINEL_WEB_SEARCH", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             web_search_max_uses=_int(os.environ.get("SENTINEL_WEB_SEARCH_MAX"), 5),
+            self_improve_enabled=os.environ.get("SENTINEL_SELF_IMPROVE", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
         )
 
     @property

@@ -93,3 +93,80 @@ def test_restart_docker_uniquement_dans_les_executeurs():
             raise AssertionError(f"écriture Docker hors du moteur d'actions : {rel}")
         if "def restart_container(" in src and rel != "monitors/docker.py":
             raise AssertionError(f"restart_container redéfini hors monitors/docker.py : {rel}")
+
+
+# ── Auto-amélioration encadrée (Phase 6) : verrous statiques ─────────────────
+#
+# Luna PROPOSE des diffs ; elle n'en applique JAMAIS aucun. On le prouve
+# statiquement : le paquet selfmod (et le flux d'auto-amélioration) n'écrit sur
+# aucun fichier, ne lance aucun processus, n'applique aucun patch.
+
+SELFMOD_DIR = APP_DIR / "selfmod"
+
+# Jamais d'écriture ni d'exécution dans le paquet selfmod (lecture pure).
+_SELFMOD_INTERDITS = (
+    "open(", "subprocess", "os.system", "os.popen", "Popen(",
+    ".write_text(", ".write_bytes(", ".write(", "shutil.",
+    "os.remove", "os.unlink", ".unlink(", "git apply",
+)
+
+
+def test_selfmod_n_applique_jamais_rien():
+    """Le paquet selfmod ne fait que LIRE et évaluer : aucune écriture/exécution."""
+    offenders = []
+    for path in sorted(SELFMOD_DIR.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        for needle in _SELFMOD_INTERDITS:
+            if needle in src:
+                offenders.append(f"{path.name} contient « {needle} »")
+    assert not offenders, (
+        "selfmod doit rester en lecture pure (jamais d'exécution automatique) : "
+        + ", ".join(offenders)
+    )
+
+
+def test_aucune_application_de_diff_dans_le_flux():
+    """Le flux d'auto-amélioration (toolbox, main, selfmod) n'applique aucun diff :
+    ni « git apply », ni patch, ni processus — l'application reste manuelle."""
+    concernes = [
+        APP_DIR / "brain" / "toolbox.py",
+        APP_DIR / "main.py",
+        *SELFMOD_DIR.glob("*.py"),
+    ]
+    for path in concernes:
+        src = path.read_text(encoding="utf-8")
+        for needle in ("git apply", "subprocess", "os.system", "Popen("):
+            assert needle not in src, f"{path.name} ne doit jamais {needle} (pas d'exécution auto)"
+
+
+def test_la_politique_protege_tous_les_garde_fous():
+    """`is_protected_path` doit refuser chaque fichier-garde-fou de sécurité.
+    Ajouter un garde-fou au dépôt sans l'inscrire dans la politique casse ce test."""
+    from app.selfmod import is_protected_path
+
+    garde_fous = [
+        "core/app/identity.py",
+        "core/app/actions/engine.py",
+        "core/app/actions/executors.py",
+        "core/app/ha/client.py",
+        "core/app/monitors/docker.py",
+        "core/app/mail/client.py",
+        "core/app/mail/authorize.py",
+        "core/app/selfmod/policy.py",
+        "core/app/selfmod/source.py",
+        "worker/app.py",
+        "docker-compose.yml",
+        "core/tests/test_invariant.py",
+        ".env",
+    ]
+    manquants = [p for p in garde_fous if is_protected_path(p) is None]
+    assert not manquants, "Garde-fous non protégés par la politique : " + ", ".join(manquants)
+
+
+def test_proposer_evolution_passe_par_la_politique():
+    """L'outil de proposition doit router le diff par la politique (jamais le stocker
+    sans l'évaluer)."""
+    toolbox = (APP_DIR / "brain" / "toolbox.py").read_text(encoding="utf-8")
+    assert "evaluate_diff(" in toolbox, "proposer_evolution doit appeler la politique (evaluate)"
+    # La proposition est bien conditionnée par le verdict.
+    assert "if not verdict.allowed" in toolbox

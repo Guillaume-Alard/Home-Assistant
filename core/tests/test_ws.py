@@ -160,7 +160,8 @@ def test_hello_et_sante(client):
         for key in ("effort", "whisper_model", "piper_voice", "wake_model", "tz"):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
-        for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker", "mail", "web_search"):
+        for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker",
+                    "mail", "web_search", "self_improve"):
             assert key in hello["config"]
 
 
@@ -190,6 +191,60 @@ def test_memoire_via_ws(client):
         ws.send_text(json.dumps({"type": "memoire_delete", "id": mem_id}))
         after = json.loads(ws.receive()["text"])
         assert after["type"] == "memoires" and after["memories"] == []
+
+
+def test_evolutions_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """Revue des propositions d'évolution par l'UI : liste, diff, décision, suppression.
+    « Accepter » ne fait que marquer la décision — aucun code n'est appliqué."""
+    import asyncio
+
+    from app.store import Store
+
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    data = tmp_path / "data"
+    data.mkdir(parents=True, exist_ok=True)
+
+    async def seed():
+        store = Store(data / "sentinel.db")
+        await store.open()
+        s = await store.add_suggestion(
+            kind="config", title="Monter l'effort", rationale="soir", target=".env.example",
+            diff="--- a/.env.example\n+++ b/.env.example\n@@ -1 +1 @@\n-SENTINEL_EFFORT=low\n+SENTINEL_EFFORT=medium\n",
+        )
+        await store.close()
+        return s["id"]
+
+    sug_id = asyncio.run(seed())
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            assert hello["config"]["self_improve"] is True
+
+            ws.send_text(json.dumps({"type": "evolutions"}))
+            payload = json.loads(ws.receive()["text"])
+            assert payload["type"] == "evolutions" and payload["enabled"] is True
+            assert [s["id"] for s in payload["suggestions"]] == [sug_id]
+            assert payload["suggestions"][0]["status"] == "pending"
+
+            # Diff complet au seul demandeur, avec les compteurs
+            ws.send_text(json.dumps({"type": "evolution_get", "id": sug_id}))
+            full = json.loads(ws.receive()["text"])
+            assert full["type"] == "evolution" and "SENTINEL_EFFORT=medium" in full["diff"]
+            assert full["added"] == 1 and full["removed"] == 1
+
+            # Décision humaine : accepter → rediffusion avec le statut à jour
+            ws.send_text(json.dumps({"type": "evolution_accept", "id": sug_id}))
+            after = json.loads(ws.receive()["text"])
+            assert after["type"] == "evolutions" and after["suggestions"][0]["status"] == "accepted"
+
+            # Suppression → liste vide
+            ws.send_text(json.dumps({"type": "evolution_delete", "id": sug_id}))
+            empty = json.loads(ws.receive()["text"])
+            assert empty["type"] == "evolutions" and empty["suggestions"] == []
 
 
 def test_page_publiee_servie_avec_csp(fake_wyoming, tmp_path, monkeypatch):
