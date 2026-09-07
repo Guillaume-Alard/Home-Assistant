@@ -5,17 +5,21 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
   Client → serveur (JSON) : chat, audio_start, audio_end, audio_cancel, cancel,
                             proposal_decision, wake_start, wake_stop, ping —
                             les requêtes de lecture des panneaux (dev_tasks,
-                            dev_log, dev_diff, sante, historique, memoires) et la
-                            gestion de la mémoire (memoire_add, memoire_delete)
-  Client → serveur (binaire) : PCM 16 bits mono (entre audio_start et audio_end)
+                            dev_log, dev_diff, sante, historique, memoires,
+                            speakers), la gestion de la mémoire (memoire_add,
+                            memoire_delete) et des profils vocaux (speaker_add,
+                            speaker_delete, speaker_enroll_start/end)
+  Client → serveur (binaire) : PCM 16 bits mono (tour de parole, veille, ou
+                               enrôlement d'une empreinte vocale)
   Serveur → clients (JSON) : hello, status, message, assistant_start,
                              assistant_delta, assistant_end, speak_start,
                              speak_end, notice, error, alert, ha_status,
                              activity, proposal_new, proposal_update,
                              dev_status, wake, wake_error, pong — les réponses de
                              panneaux (dev_tasks, dev_log, dev_diff, sante,
-                             historique, au seul client demandeur) et memoires
-                             (rediffusé à tous après un changement de mémoire)
+                             historique, au seul client demandeur), memoires et
+                             speakers (rediffusés à tous après un changement),
+                             speaker (locuteur reconnu), enroll_result
   Serveur → client d'origine (binaire) : PCM de la voix de Sentinel
 
 Le fil de conversation est unique et partagé : chaque événement de conversation
@@ -50,6 +54,7 @@ from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.toolbox import Toolbox
 from .config import Settings, find_ui_dir
 from .devwork import DevWatcher, WorkerClient, WorkerError
+from .identity import OWNER, Speaker, identify
 from .ha.alerts import AlertEngine, load_rules
 from .ha.client import HAClient
 from .ha.protocols import ProtocolBook
@@ -60,6 +65,7 @@ from .voice.wyoming import (
     ClonedTTS,
     FallbackTTS,
     PiperTTS,
+    SpeakerEmbedder,
     VoiceServiceError,
     WakeStream,
     WakeWordDetector,
@@ -78,6 +84,9 @@ class Client:
         self.capture = CaptureSession(max_seconds=max_utterance_seconds)
         self.wake: WakeStream | None = None  # veille au mot d'éveil (Phase 5A)
         self.wake_rate = 16000
+        # Enrôlement d'une empreinte vocale (Phase 2) — capture courte dédiée.
+        self.enroll = CaptureSession(max_seconds=15)
+        self.enroll_id: str | None = None
 
 
 class Hub:
@@ -168,6 +177,14 @@ class Sentinel:
             if settings.wake_host
             else None
         )
+        # Reconnaissance de locuteur (Phase 2) — désactivée si SPEAKER_HOST vide.
+        self.speaker_embedder: SpeakerEmbedder | None = (
+            SpeakerEmbedder(
+                settings.speaker_host, settings.speaker_port, settings.wyoming_timeout_seconds
+            )
+            if settings.speaker_host
+            else None
+        )
         self.state = "idle"
         self._turn_task: asyncio.Task | None = None
         self._turn_lock = asyncio.Lock()
@@ -244,24 +261,63 @@ class Sentinel:
 
     # ── Mémoire persistante (Phase 1) ────────────────────────────────────
 
-    async def _memory_context(self) -> str:
-        """Bloc « ce que je sais de toi » injecté dans le prompt (vide si coupée)."""
-        if not self.settings.memory_enabled:
+    async def _memory_context(self, subject: str | None) -> str:
+        """Bloc « ce que je sais de toi » du locuteur courant (vide si invité/coupée)."""
+        if not self.settings.memory_enabled or not subject:
             return ""
         try:
-            mems = await self.store.list_memories(limit=self.settings.memory_window)
+            mems = await self.store.list_memories(subject=subject, limit=self.settings.memory_window)
         except Exception:
             log.exception("Lecture de la mémoire impossible")
             return ""
         return format_profile(mems)
 
     async def _memoires_payload(self) -> dict:
-        mems = await self.store.list_memories(limit=500)
+        # Paramètres › Mémoire montre la mémoire de Guillaume (les profils de la
+        # maisonnée gèrent la leur à la voix — pas de surveillance croisée).
+        mems = await self.store.list_memories(subject="guillaume", limit=500)
         return {"type": "memoires", "enabled": self.settings.memory_enabled, "memories": mems}
 
-    async def _broadcast_memoires(self) -> None:
-        """Rafraîchit Paramètres › Mémoire sur tous les appareils connectés."""
+    async def _broadcast_memoires(self, subject: str | None = None) -> None:
+        """Rafraîchit Paramètres › Mémoire (mémoire de Guillaume) sur tous les appareils."""
+        if subject not in (None, "guillaume"):
+            return  # un changement dans un autre profil n'affecte pas le panneau
         await self.hub.broadcast(await self._memoires_payload())
+
+    # ── Reconnaissance de locuteur (Phase 2) ─────────────────────────────
+
+    async def identify_speaker(self, pcm: bytes, rate: int) -> Speaker:
+        """Qui parle ? Empreinte du PCM → meilleur profil au-dessus du seuil.
+
+        Reconnaissance désactivée (pas de service) → propriétaire (comportement
+        d'avant, aucune restriction). Service actif mais voix non reconnue, ou
+        service en panne → invité (prudent). La reconnaissance ne peut jamais
+        ÉLEVER un droit : au mieux elle confirme le propriétaire.
+        """
+        if self.speaker_embedder is None:
+            return OWNER
+        try:
+            profiles = await self.store.speaker_profiles()
+            if not profiles:
+                return OWNER  # personne n'est encore enrôlé : ne bloque pas la maison
+            vector = await self.speaker_embedder.embed(pcm, rate=rate)
+        except VoiceServiceError as exc:
+            log.warning("Reconnaissance de locuteur indisponible : %s", exc)
+            return OWNER  # panne du service : on ne verrouille pas Guillaume dehors
+        except Exception:
+            log.exception("Reconnaissance de locuteur en échec")
+            return OWNER
+        return identify(vector, profiles, self.settings.speaker_threshold)
+
+    async def _speakers_payload(self) -> dict:
+        return {
+            "type": "speakers",
+            "enabled": self.speaker_embedder is not None,
+            "speakers": await self.store.list_speakers(),
+        }
+
+    async def _broadcast_speakers(self) -> None:
+        await self.hub.broadcast(await self._speakers_payload())
 
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
@@ -433,12 +489,17 @@ class Sentinel:
             await self.set_state("idle")
             return
 
-        await self.run_reply_turn(origin, text, source="voice", speak=True)
+        # Qui parle ? (Phase 2) — personnalise et, si inconnu, restreint.
+        speaker = await self.identify_speaker(pcm, rate)
+        await self.hub.broadcast({"type": "speaker", **_speaker_event(speaker)})
+        await self.run_reply_turn(origin, text, source="voice", speak=True, speaker=speaker)
 
     async def run_reply_turn(
-        self, origin: Client, text: str, source: str, speak: bool
+        self, origin: Client, text: str, source: str, speak: bool,
+        speaker: Speaker | None = None,
     ) -> None:
         """Un tour complet : message utilisateur → réponse LLM en streaming (+ TTS)."""
+        who = speaker or OWNER  # écrit/UI : propriétaire (la voix seule identifie)
         assistant_id = uuid.uuid4().hex[:12]
         parts: list[str] = []
         cancelled = False
@@ -451,15 +512,18 @@ class Sentinel:
             await self.hub.broadcast({"type": "message", "message": user_msg})
             await self.set_state("thinking")
 
-            # Intents locaux d'abord : domotique courante sans LLM, hors Internet
-            intent_reply = await self.intents.handle(text, source)
+            # Intents locaux d'abord : domotique courante sans LLM, hors Internet.
+            # Un invité (who.can_act == False) ne déclenche aucune action locale.
+            intent_reply = await self.intents.handle(text, source, can_act=who.can_act)
             if intent_reply is not None:
                 stream = _single_reply(intent_reply)
             else:
                 history = _build_history(
                     await self.store.recent_messages(self.settings.history_window)
                 )
-                stream = self.brain.stream_reply(history, utterance=text, source=source)
+                stream = self.brain.stream_reply(
+                    history, utterance=text, source=source, speaker=who
+                )
 
             await self.hub.broadcast({"type": "assistant_start", "id": assistant_id})
 
@@ -616,6 +680,18 @@ class Sentinel:
         finally:
             if started:
                 await self.hub.send(origin, {"type": "speak_end"})
+
+
+def _speaker_event(speaker: Speaker) -> dict:
+    """Champs du locuteur reconnu, diffusés à l'UI (indicateur « qui parle »)."""
+    return {
+        "key": speaker.key,
+        "name": speaker.name,
+        "label": speaker.label,
+        "known": speaker.known,
+        "is_owner": speaker.is_owner,
+        "score": round(speaker.score, 3),
+    }
 
 
 async def _single_reply(text: str):
@@ -809,7 +885,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "anthropic": bool(sentinel.settings.anthropic_api_key),
                 "daily_report": sentinel.settings.daily_report,
                 "memory": sentinel.settings.memory_enabled,
+                "speaker": sentinel.speaker_embedder is not None,
             },
+            # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
+            "speakers": await sentinel.store.list_speakers(),
         },
     )
 
@@ -846,6 +925,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
 
 async def _on_audio_chunk(sentinel: Sentinel, client: Client, data: bytes) -> None:
+    # Enrôlement d'une empreinte vocale (Phase 2) : l'audio va au tampon dédié.
+    if client.enroll_id is not None and client.enroll.active:
+        if not client.enroll.add(data):
+            await _speaker_enroll_finish(sentinel, client)  # durée max : on prend ce qu'on a
+        return
+
     if client.capture.active:
         if not client.capture.add(data):
             # Durée maximale atteinte : on transcrit ce qui a été capté
@@ -958,6 +1043,21 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "memoire_delete":
         await _memoire_delete(sentinel, msg)
+
+    elif mtype == "speakers":
+        await sentinel.hub.send(client, await sentinel._speakers_payload())
+
+    elif mtype == "speaker_add":
+        await _speaker_add(sentinel, client, msg)
+
+    elif mtype == "speaker_delete":
+        await _speaker_delete(sentinel, msg)
+
+    elif mtype == "speaker_enroll_start":
+        await _speaker_enroll_start(sentinel, client, msg)
+
+    elif mtype == "speaker_enroll_end":
+        await _speaker_enroll_finish(sentinel, client)
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
@@ -1109,6 +1209,78 @@ async def _memoire_delete(sentinel: Sentinel, msg: dict) -> None:
         return
     await sentinel.store.delete_memory(mem_id)
     await sentinel._broadcast_memoires()
+
+
+# ── Profils vocaux : création, suppression, enrôlement (Paramètres › Profils) ──
+#
+# Géré depuis le cockpit (canal de confiance, comme les décisions sensibles). Le
+# service ne fait que « audio → empreinte » ; core stocke et compare. La
+# reconnaissance ne débloque jamais rien de sensible : voir docs/PHASE2-LOCUTEUR.md.
+
+
+async def _speaker_add(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    name = str(msg.get("name") or "").strip()[:60]
+    if not name:
+        return
+    await sentinel.store.add_speaker(name, is_owner=bool(msg.get("is_owner")))
+    await sentinel._broadcast_speakers()
+
+
+async def _speaker_delete(sentinel: Sentinel, msg: dict) -> None:
+    speaker_id = str(msg.get("id") or "").strip()
+    if not speaker_id:
+        return
+    await sentinel.store.delete_speaker(speaker_id)
+    await sentinel._broadcast_speakers()
+
+
+async def _speaker_enroll_start(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    speaker_id = str(msg.get("id") or "").strip()
+    if sentinel.speaker_embedder is None:
+        await sentinel.hub.send(
+            client,
+            {"type": "enroll_result", "ok": False,
+             "text": "La reconnaissance de locuteur n'est pas activée (SPEAKER_HOST)."},
+        )
+        return
+    if not speaker_id or await sentinel.store.get_speaker(speaker_id) is None:
+        await sentinel.hub.send(
+            client, {"type": "enroll_result", "ok": False, "text": "Profil inconnu."}
+        )
+        return
+    try:
+        rate = int(msg.get("rate", 16000))
+    except (TypeError, ValueError):
+        rate = 16000
+    client.enroll_id = speaker_id
+    client.enroll.start(rate=rate)
+
+
+async def _speaker_enroll_finish(sentinel: Sentinel, client: Client) -> None:
+    speaker_id = client.enroll_id
+    client.enroll_id = None
+    if speaker_id is None:
+        return
+    pcm, rate = client.enroll.finish()
+    if sentinel.speaker_embedder is None or not pcm:
+        await sentinel.hub.send(
+            client, {"type": "enroll_result", "ok": False, "text": "Échantillon vide."}
+        )
+        return
+    try:
+        vector = await sentinel.speaker_embedder.embed(pcm, rate=rate)
+        await sentinel.store.add_speaker_sample(speaker_id, vector)
+    except VoiceServiceError as exc:
+        await sentinel.hub.send(client, {"type": "enroll_result", "ok": False, "text": str(exc)})
+        return
+    except Exception:
+        log.exception("Enrôlement d'empreinte en échec")
+        await sentinel.hub.send(
+            client, {"type": "enroll_result", "ok": False, "text": "Enrôlement impossible."}
+        )
+        return
+    await sentinel.hub.send(client, {"type": "enroll_result", "ok": True, "text": "Échantillon enregistré."})
+    await sentinel._broadcast_speakers()
 
 
 # L'UI statique en dernier : les routes déclarées avant restent prioritaires.

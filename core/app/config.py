@@ -18,6 +18,13 @@ def _int(value: str | None, default: int) -> int:
         return default
 
 
+def _float(value: str | None, default: float) -> float:
+    try:
+        return float(value) if value not in (None, "") else default
+    except ValueError:
+        return default
+
+
 def _find_dir(name: str) -> Path:
     # Conteneur : /opt/sentinel/app/config.py → /opt/sentinel/<name>
     # Dépôt     : core/app/config.py         → <racine>/<name>
@@ -54,6 +61,12 @@ class Settings:
     wake_host: str
     wake_port: int
     wake_model: str
+
+    # Reconnaissance de locuteur (Phase 2) — SPEAKER_HOST vide = désactivée.
+    # Le service extrait une empreinte vocale ; core compare aux profils enrôlés.
+    speaker_host: str
+    speaker_port: int
+    speaker_threshold: float
 
     # Voix de Luna (clonage local) — TTS_ENGINE=cloned pour l'activer ; sinon Piper.
     # Le serveur clone est appelé via une API compatible OpenAI (/v1/audio/speech).
@@ -122,6 +135,9 @@ class Settings:
             wake_host=os.environ.get("WAKE_HOST", "").strip(),
             wake_port=_int(os.environ.get("WAKE_PORT"), 10400),
             wake_model=os.environ.get("WAKEWORD_MODEL", "hey_jarvis").strip() or "hey_jarvis",
+            speaker_host=os.environ.get("SPEAKER_HOST", "").strip(),
+            speaker_port=_int(os.environ.get("SPEAKER_PORT"), 10500),
+            speaker_threshold=_float(os.environ.get("SPEAKER_THRESHOLD"), 0.75),
             tts_engine=(os.environ.get("TTS_ENGINE", "piper").strip().lower() or "piper")
             if os.environ.get("TTS_ENGINE", "piper").strip().lower() in ("piper", "cloned")
             else "piper",

@@ -94,79 +94,84 @@ class LocalIntents:
 
     # ── Point d'entrée ───────────────────────────────────────────────────
 
-    async def handle(self, text: str, source: str) -> str | None:
-        """Tente de traiter la phrase localement. None = à passer au LLM."""
+    async def handle(self, text: str, source: str, can_act: bool = True) -> str | None:
+        """Tente de traiter la phrase localement. None = à passer au LLM.
+
+        `can_act` (Phase 2) : un locuteur non reconnu (invité) ne peut PAS
+        déclencher d'action ni piloter les propositions — ces phrases retombent
+        alors sur le LLM, qui décline poliment. Les lectures (heure, date, santé,
+        température) et la conversation restent ouvertes à tous.
+        """
         norm = normalize(text)
         if not norm:
             return None
 
-        # 1) Confirmation / annulation d'une action sensible en attente
-        if _CONFIRM_RE.match(norm):
+        # 1) Confirmation / annulation d'une action sensible en attente (action)
+        if can_act and _CONFIRM_RE.match(norm):
             if self._engine is None:
                 return "Il n'y a rien à confirmer."
             outcome = await self._engine.confirm_pending(source=source)
             return outcome.text
-        if _CANCEL_RE.match(norm):
+        if can_act and _CANCEL_RE.match(norm):
             if self._engine and self._engine.cancel_pending():
                 return "D'accord, j'annule."
             return None  # « annule » sans contexte : on laisse le LLM répondre
 
-        # 2) Heure et date (local, gratuit, hors ligne)
+        # 2) Heure et date (local, gratuit, hors ligne) — lecture, ouverte à tous
         if _TIME_RE.search(norm):
             return self._time_reply()
         if _DATE_RE.search(norm):
             return self._date_reply()
 
-        # 2 bis) Santé des systèmes — résumé déterministe, sans LLM
+        # 2 bis) Santé des systèmes — résumé déterministe, sans LLM (lecture)
         if self._health is not None and _HEALTH_RE.search(norm):
             return await self._health.resume_texte()
 
-        # 3) Gestion des propositions
-        match = _PROPOSAL_RE.search(norm)
-        if match:
-            return await self._decide_proposal(match, source)
-        if _LIST_PROPOSALS_RE.search(norm):
-            return await self._list_proposals()
+        # 3) Gestion des propositions (action : réservée aux personnes reconnues)
+        if can_act:
+            match = _PROPOSAL_RE.search(norm)
+            if match:
+                return await self._decide_proposal(match, source)
+            if _LIST_PROPOSALS_RE.search(norm):
+                return await self._list_proposals()
 
         # Tout le reste exige Nova
         if self._ha is None or self._engine is None:
             return None
 
-        # 4) Protocoles (phrases de déclenchement exactes)
-        proto = self._protocols.find_in_text(norm)
-        if proto:
-            outcome = await self._engine.run_direct(
-                "protocol.run", {"name": proto.key}, utterance=text, source=source
-            )
-            return outcome.text
+        # 4) Protocoles (phrases de déclenchement exactes) — action
+        if can_act:
+            proto = self._protocols.find_in_text(norm)
+            if proto:
+                outcome = await self._engine.run_direct(
+                    "protocol.run", {"name": proto.key}, utterance=text, source=source
+                )
+                return outcome.text
 
         if not self._ha.connected:
-            if self._domotic_looking(norm):
+            if can_act and self._domotic_looking(norm):
                 return "Nova est injoignable pour l'instant — je ne peux pas piloter la maison."
             return None
 
-        # 5) Température — LECTURE seulement : un réglage (« mets à 21 ») ou la
-        # météo extérieure partent au LLM et à ses outils
+        # 5) Température — LECTURE seulement (ouverte à tous) : un réglage
+        # (« mets à 21 ») ou la météo extérieure partent au LLM et à ses outils
         if _TEMP_RE.search(norm):
             words = set(norm.split())
             if words & _TEMP_SET_VERBS or words & {"dehors", "exterieur", "exterieure"}:
                 return None
             return self._temperature_reply(norm)
 
-        # 6) Volets
-        reply = await self._covers(norm, text, source)
-        if reply:
-            return reply
-
-        # 7) Serrures (verrouille / déverrouille)
-        reply = await self._locks(norm, text, source)
-        if reply:
-            return reply
-
-        # 8) Lumières
-        reply = await self._lights(norm, text, source)
-        if reply:
-            return reply
+        # 6-8) Volets, serrures, lumières — actions réservées aux personnes reconnues
+        if can_act:
+            reply = await self._covers(norm, text, source)
+            if reply:
+                return reply
+            reply = await self._locks(norm, text, source)
+            if reply:
+                return reply
+            reply = await self._lights(norm, text, source)
+            if reply:
+                return reply
 
         return None
 

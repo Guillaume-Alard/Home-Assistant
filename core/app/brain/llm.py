@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import anthropic
 
 from ..config import Settings
+from ..identity import OWNER, Speaker
 from ..norm import date_francaise
 from .toolbox import ACTIVITY_LABELS, Toolbox
 
@@ -112,7 +113,29 @@ mentionne que c'est le protocole de sécurité.
 """
 
 
-def _system_blocks(settings: Settings, memory_text: str = "") -> list[dict]:
+def _speaker_line(speaker: Speaker | None) -> str:
+    """Ligne « à qui tu parles » injectée par tour (variable, hors cache)."""
+    if speaker is None or speaker.is_owner:
+        return ""  # propriétaire (écrit/UI ou voix reconnue) : comportement normal
+    if speaker.known:
+        return (
+            f"Tu parles à {speaker.name} (pas Guillaume). Appelle-la/le par son prénom, "
+            "adapte-toi à cette personne, et n'utilise pas les souvenirs de Guillaume. "
+            "La domotique courante lui est ouverte ; l'administration (dev, conteneurs) "
+            "reste réservée à Guillaume."
+        )
+    return (
+        "Tu ne reconnais pas la voix : traite cette personne comme un INVITÉ. Reste "
+        "courtoise et en retrait — tu peux discuter et lire l'état de la maison, mais "
+        "tu n'agis pas sur la domotique et tu n'utilises aucune mémoire personnelle. "
+        "Si on te demande une action, explique gentiment que seul Guillaume (ou une "
+        "personne reconnue) peut la déclencher, et qu'il peut le faire depuis l'interface."
+    )
+
+
+def _system_blocks(
+    settings: Settings, memory_text: str = "", speaker: Speaker | None = None
+) -> list[dict]:
     try:
         tz = ZoneInfo(settings.tz)
     except Exception:  # tzdata absente ou TZ invalide : on ne casse pas un tour pour ça
@@ -128,12 +151,17 @@ def _system_blocks(settings: Settings, memory_text: str = "") -> list[dict]:
         # Bloc variable (date/heure) après le point de cache
         {"type": "text", "text": date_fr},
     ]
+    # À qui tu parles (Phase 2) : bloc variable, après le cache.
+    speaker_line = _speaker_line(speaker)
+    if speaker_line:
+        blocks.append({"type": "text", "text": speaker_line})
     # Mémoire persistante : bloc variable, APRÈS le point de cache (il évolue).
     if memory_text:
+        who = "de cette personne" if (speaker and speaker.known and not speaker.is_owner) else "de Guillaume"
         blocks.append({
             "type": "text",
             "text": (
-                "Ce que tu sais de Guillaume (mémoire persistante, apprise au fil de vos "
+                f"Ce que tu sais {who} (mémoire persistante, apprise au fil de vos "
                 "échanges). Sers-t'en pour personnaliser tes réponses et respecter ses "
                 "préférences ; ne la récite pas telle quelle, ne l'évoque que si c'est "
                 "utile.\n" + memory_text
@@ -163,7 +191,8 @@ class Brain:
         )
 
     async def stream_reply(
-        self, history: list[dict], *, utterance: str = "", source: str = "text"
+        self, history: list[dict], *, utterance: str = "", source: str = "text",
+        speaker: Speaker | None = None,
     ) -> AsyncIterator[str]:
         """Produit la réponse de Sentinel en streaming, outils compris.
 
@@ -177,14 +206,16 @@ class Brain:
                 "ANTHROPIC_API_KEY dans le fichier .env puis redémarre Sentinel."
             )
         s = self._settings
+        who = speaker or OWNER
         messages: list[dict] = list(history)
         tools = self._toolbox.specs() if self._toolbox else None
 
-        # Mémoire lue une seule fois pour tout le tour (stable entre les rounds d'outils).
+        # Mémoire du locuteur courant, lue une fois pour tout le tour (stable entre
+        # les rounds d'outils). Un invité (subject None) n'a aucune mémoire injectée.
         memory_text = ""
         if self._memory_provider is not None:
             try:
-                memory_text = await self._memory_provider()
+                memory_text = await self._memory_provider(who.subject)
             except Exception:
                 log.exception("Lecture de la mémoire impossible — tour sans profil")
                 memory_text = ""
@@ -194,7 +225,7 @@ class Brain:
                 kwargs: dict = dict(
                     model=s.model,
                     max_tokens=s.max_tokens,
-                    system=_system_blocks(s, memory_text),
+                    system=_system_blocks(s, memory_text, who),
                     output_config={"effort": s.effort},
                     messages=messages,
                 )
@@ -226,7 +257,8 @@ class Brain:
                         continue
                     await self._notify_activity(block.name)
                     content, is_error = await self._toolbox.run(
-                        block.name, dict(block.input or {}), utterance=utterance, source=source
+                        block.name, dict(block.input or {}),
+                        utterance=utterance, source=source, speaker=who,
                     )
                     item: dict = {
                         "type": "tool_result",

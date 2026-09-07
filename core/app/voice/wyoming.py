@@ -254,6 +254,45 @@ class ClonedTTS:
         return None
 
 
+class SpeakerEmbedder:
+    """Client du service de reconnaissance de locuteur (Phase 2).
+
+    Envoie le PCM brut (16 bits mono) et reçoit une empreinte vocale (vecteur de
+    flottants). Le service ne fait QUE « audio → vecteur » : toute la logique
+    d'identité et de droits vit dans core (là où sont les profils et la sécurité).
+    Un client HTTP par requête, comme les autres services vocaux.
+    """
+
+    def __init__(self, host: str, port: int, timeout: int = 120):
+        self._url = f"http://{host}:{port}/embed"
+        self._timeout = timeout
+        self._label = "Le service de reconnaissance de locuteur"
+
+    async def embed(self, pcm: bytes, rate: int = 16000, width: int = 2, channels: int = 1) -> list[float]:
+        if not pcm:
+            raise VoiceServiceError(f"{self._label} : aucun audio à analyser.")
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    self._url,
+                    params={"rate": rate, "width": width, "channels": channels},
+                    content=pcm,
+                    headers={"content-type": "application/octet-stream"},
+                )
+                if resp.status_code != 200:
+                    raise VoiceServiceError(f"{self._label} a répondu {resp.status_code}.")
+                data = resp.json()
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            raise VoiceServiceError(f"{self._label} injoignable ({exc}).") from exc
+        vector = data.get("embedding") if isinstance(data, dict) else None
+        if not isinstance(vector, list) or not vector:
+            raise VoiceServiceError(f"{self._label} n'a pas renvoyé d'empreinte exploitable.")
+        return [float(x) for x in vector]
+
+    async def close(self) -> None:
+        return None
+
+
 class FallbackTTS:
     """Essaie une voix principale (clonée) ; bascule sur une voix de repli (Piper)
     si la principale échoue AVANT d'avoir produit le moindre son. Si elle échoue

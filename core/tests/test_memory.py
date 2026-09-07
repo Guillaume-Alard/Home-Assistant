@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from app.brain.llm import _system_blocks
+from app.brain.llm import _speaker_line, _system_blocks
 from app.brain.memory import format_profile, normalize_category
 from app.config import Settings
+from app.identity import OWNER, UNKNOWN, Speaker
 
 
 def _mem(content, category="fait"):
@@ -56,3 +57,30 @@ def test_system_blocks_sans_memoire_reste_inchange():
     # Sans profil : bloc stable + date uniquement, aucun bloc mémoire ajouté
     assert len(base) == 2
     assert not any("mémoire persistante" in b["text"].lower() for b in base)
+
+
+# ── Locuteur → prompt (Phase 2) ──────────────────────────────────────────────
+
+def test_speaker_line_proprietaire_muet():
+    # Propriétaire (écrit/UI ou voix reconnue) : aucune ligne — comportement normal
+    assert _speaker_line(None) == ""
+    assert _speaker_line(OWNER) == ""
+
+
+def test_speaker_line_maisonnee_nomme_la_personne():
+    line = _speaker_line(Speaker(key="c", name="Camille", known=True, is_owner=False, score=0.9))
+    assert "Camille" in line and "pas Guillaume" in line
+
+
+def test_speaker_line_invite_restreint():
+    line = _speaker_line(UNKNOWN)
+    low = line.lower()
+    assert "invité" in low and "n'agis pas" in low and "interface" in low
+
+
+def test_system_blocks_injecte_le_locuteur():
+    settings = Settings.from_env()
+    guest = _system_blocks(settings, "", UNKNOWN)
+    assert any("invité" in b["text"].lower() for b in guest)
+    # Le bloc locuteur reste après le point de cache (variable)
+    assert "cache_control" not in guest[-1]

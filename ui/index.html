@@ -102,6 +102,7 @@
       <div class="voice-status">
         <span class="head-dot state-dot" aria-hidden="true"></span>
         <span class="head-title">État · <span id="state-label">hors ligne</span></span>
+        <span id="who-speaks" class="who-speaks" hidden></span>
         <span class="head-meta voice-loc">fr-FR</span>
       </div>
 
@@ -184,6 +185,7 @@
       <div class="set-nav-title">Paramètres</div>
       <button class="set-navitem" type="button" data-sec="connexions" aria-selected="true">Connexions</button>
       <button class="set-navitem" type="button" data-sec="voix" aria-selected="false">Voix &amp; réveil</button>
+      <button class="set-navitem" type="button" data-sec="profils" aria-selected="false">Profils vocaux</button>
       <button class="set-navitem" type="button" data-sec="memoire" aria-selected="false">Mémoire</button>
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false">Moteur</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false">Confidentialité</button>
@@ -215,6 +217,27 @@
             <div class="set-row"><span class="set-k">Moteur</span><span class="set-v" id="set-voice-engine">—</span></div>
             <div class="set-row"><span class="set-k">Voix</span><span class="set-v" id="set-voice">—</span></div>
             <p class="set-note">Voix clonée locale prise en charge (repli Piper automatique si le serveur de clonage est indisponible).</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="profils" hidden>
+        <div class="set-title">Profils vocaux</div>
+        <div class="set-sub">Luna reconnaît qui parle pour personnaliser son discours et sa mémoire, et rester prudente avec une voix inconnue. Enrôle chaque voix avec quelques échantillons (à la voix, micro requis). La reconnaissance ne débloque jamais rien de sensible : déverrouillage et désarmement restent réservés à l'interface, pour tout le monde.</div>
+        <div class="set-cards">
+          <div class="set-card">
+            <div class="set-card-h">Nouveau profil</div>
+            <form id="speaker-form" class="memoire-form" autocomplete="off">
+              <input id="speaker-name" type="text" maxlength="60"
+                     placeholder="Prénom (ex. : Camille)" aria-label="Nom du profil">
+              <label class="spk-owner"><input type="checkbox" id="speaker-owner"> C'est Guillaume</label>
+              <button type="submit" class="mini-btn">Créer</button>
+            </form>
+            <p class="set-note" id="speaker-state">Astuce : 3 échantillons ou plus par personne pour une bonne reconnaissance.</p>
+          </div>
+          <div class="set-card">
+            <div class="set-card-h">Voix enrôlées <span id="speaker-count" class="set-count"></span></div>
+            <div id="speaker-list" class="memoire-list"></div>
           </div>
         </div>
       </section>

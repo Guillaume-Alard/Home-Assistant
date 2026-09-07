@@ -103,6 +103,14 @@ const els = {
   memoireInput: document.getElementById('memoire-input'),
   memoireList: document.getElementById('memoire-list'),
   memoireCount: document.getElementById('memoire-count'),
+  // profils vocaux (Paramètres)
+  speakerForm: document.getElementById('speaker-form'),
+  speakerName: document.getElementById('speaker-name'),
+  speakerOwner: document.getElementById('speaker-owner'),
+  speakerList: document.getElementById('speaker-list'),
+  speakerCount: document.getElementById('speaker-count'),
+  speakerState: document.getElementById('speaker-state'),
+  whoSpeaks: document.getElementById('who-speaks'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -318,6 +326,7 @@ ws.addEventListener('event', (e) => {
       renderProposals();
       updateChatMeta();
       renderSettings();
+      renderSpeakers({ enabled: !!(msg.config && msg.config.speaker), speakers: msg.speakers || [] });
       refreshUi();
       break;
     case 'ha_status': setNova(!!msg.connected); break;
@@ -351,6 +360,9 @@ ws.addEventListener('event', (e) => {
     case 'sante': renderSante(msg); break;
     case 'historique': renderHistory(msg); break;
     case 'memoires': renderMemoires(msg); break;
+    case 'speakers': renderSpeakers(msg); break;
+    case 'speaker': updateWhoSpeaks(msg); break;
+    case 'enroll_result': onEnrollResult(msg); break;
     default: break;
   }
 });
@@ -991,6 +1003,7 @@ function setSettingsSection(name) {
   document.querySelectorAll('.set-navitem').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.sec === name)));
   document.querySelectorAll('.set-sec').forEach((s) => { s.hidden = s.dataset.sec !== name; });
   if (name === 'memoire' && ws.alive) ws.sendJSON({ type: 'memoires' });
+  if (name === 'profils' && ws.alive) ws.sendJSON({ type: 'speakers' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 
@@ -1045,6 +1058,93 @@ els.memoireForm.addEventListener('submit', (e) => {
   if (!content || !ws.alive) return;
   ws.sendJSON({ type: 'memoire_add', content, category: els.memoireCat.value });
   els.memoireInput.value = '';
+});
+
+// ── Profils vocaux (Paramètres › Profils vocaux) ──────────────────────────
+let speakerEnabled = false;
+let enrolling = false;
+
+function renderSpeakers(msg) {
+  speakerEnabled = msg.enabled !== false;
+  const list = msg.speakers || [];
+  els.speakerCount.textContent = list.length ? String(list.length) : '';
+  els.speakerList.textContent = '';
+  if (!speakerEnabled) {
+    els.speakerList.appendChild(emptyLine('Reconnaissance désactivée (SPEAKER_HOST vide). Luna traite tout le monde comme le propriétaire.'));
+    return;
+  }
+  if (!list.length) {
+    els.speakerList.appendChild(emptyLine('Aucune voix enrôlée. Crée un profil, puis enregistre quelques échantillons.'));
+    return;
+  }
+  for (const s of list) {
+    const row = document.createElement('div');
+    row.className = 'mem-row';
+    const name = document.createElement('span');
+    name.className = 'mem-text';
+    const n = s.samples || 0;
+    name.textContent = `${s.name} · ${n} échantillon${n > 1 ? 's' : ''}`;
+    row.appendChild(name);
+    if (s.is_owner) {
+      const b = document.createElement('span');
+      b.className = 'mem-badge';
+      b.textContent = 'propriétaire';
+      row.appendChild(b);
+    }
+    const enroll = document.createElement('button');
+    enroll.type = 'button';
+    enroll.className = 'mem-enroll';
+    enroll.textContent = '🎙 échantillon';
+    enroll.addEventListener('click', () => enrollSample(s.id, enroll));
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'mem-del';
+    del.textContent = '✕';
+    del.title = 'Supprimer ce profil';
+    del.setAttribute('aria-label', `Supprimer ${s.name}`);
+    del.addEventListener('click', () => ws.sendJSON({ type: 'speaker_delete', id: s.id }));
+    row.append(enroll, del);
+    els.speakerList.appendChild(row);
+  }
+}
+
+async function enrollSample(id, btn) {
+  if (enrolling || !ws.alive) return;
+  if (!speakerEnabled) { toast('La reconnaissance de locuteur n’est pas activée.'); return; }
+  try { await ensureCapture(); }
+  catch { toast('Micro indisponible : vérifie l’autorisation du navigateur et l’accès HTTPS.'); return; }
+  enrolling = true;
+  if (st.wakeStreaming) { st.wakeStreaming = false; ws.sendJSON({ type: 'wake_stop' }); }
+  btn.classList.add('rec');
+  els.speakerState.textContent = 'Parle maintenant… (environ 3 secondes)';
+  ws.sendJSON({ type: 'speaker_enroll_start', id, rate: 16000 });
+  capture.start();
+  await new Promise((r) => setTimeout(r, 3200));
+  capture.stop();
+  ws.sendJSON({ type: 'speaker_enroll_end' });
+  btn.classList.remove('rec');
+  enrolling = false;
+}
+
+function onEnrollResult(msg) {
+  els.speakerState.textContent = msg.text || (msg.ok ? 'Échantillon enregistré.' : 'Enrôlement impossible.');
+  toast(msg.text || (msg.ok ? 'Échantillon enregistré.' : 'Enrôlement impossible.'));
+}
+
+function updateWhoSpeaks(msg) {
+  if (!msg || !msg.label) { els.whoSpeaks.hidden = true; return; }
+  els.whoSpeaks.hidden = false;
+  els.whoSpeaks.textContent = msg.known ? `🎙 ${msg.name || msg.label}` : '🎙 invité';
+  els.whoSpeaks.classList.toggle('guest', !msg.known);
+}
+
+els.speakerForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = els.speakerName.value.trim();
+  if (!name || !ws.alive) return;
+  ws.sendJSON({ type: 'speaker_add', name, is_owner: els.speakerOwner.checked });
+  els.speakerName.value = '';
+  els.speakerOwner.checked = false;
 });
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────

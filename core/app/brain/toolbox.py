@@ -13,6 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
+from ..identity import OWNER, Speaker
 from ..devwork.worker_client import WorkerClient, WorkerError
 from ..ha.client import HAClient
 from ..ha.protocols import ProtocolBook
@@ -67,7 +68,7 @@ class Toolbox:
         health: HealthService | None = None,
         docker: DockerMonitor | None = None,
         worker: WorkerClient | None = None,
-        on_memory_change: Callable[[], Awaitable[None]] | None = None,
+        on_memory_change: Callable[[str], Awaitable[None]] | None = None,
     ):
         self._ha = ha
         self._engine = engine
@@ -345,12 +346,43 @@ class Toolbox:
 
     # ── Exécution ────────────────────────────────────────────────────────
 
-    async def run(self, name: str, args: dict, *, utterance: str, source: str) -> tuple[str, bool]:
+    # Niveau requis par outil (Phase 2). Absent = public : lecture d'état et
+    # conversation, ouvertes à tous, invité compris. « known » = personne reconnue
+    # (propriétaire ou maisonnée) : domotique courante et mémoire. « owner » =
+    # Guillaume seul : administration (dev, conteneurs, audit, journaux).
+    # La reconnaissance ne peut JAMAIS élever un droit : les actions sensibles
+    # (déverrouillage, désarmement) restent barrées au moteur pour tout le monde.
+    _TOOL_LEVEL = {
+        "action_domotique": "known", "lancer_protocole": "known",
+        "creer_proposition": "known", "lister_propositions": "known",
+        "memoriser": "known", "lister_souvenirs": "known", "oublier": "known",
+        "sante_systemes": "owner", "logs_conteneur": "owner", "audit_systemes": "owner",
+        "redemarrer_conteneur": "owner", "lancer_tache_dev": "owner",
+        "etat_taches_dev": "owner", "lire_diff_dev": "owner",
+    }
+    _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
+
+    async def run(
+        self, name: str, args: dict, *, utterance: str, source: str,
+        speaker: Speaker | None = None,
+    ) -> tuple[str, bool]:
         """Exécute un outil. Renvoie (contenu, is_error)."""
+        who = speaker or OWNER  # canaux sans voix (écrit/UI/Assist) = propriétaire
+        level = self._TOOL_LEVEL.get(name)
+        if level == "owner" and not who.is_owner:
+            return "C'est réservé à Guillaume (administration de Sentinel).", False
+        if level == "known" and not who.can_act:
+            return (
+                "Je ne peux pas faire ça pour une personne que je ne reconnais pas. "
+                "Seul Guillaume — ou quelqu'un que je reconnais — peut le demander, "
+                "au besoin depuis l'interface.", False
+            )
         try:
             handler = getattr(self, f"_tool_{name}", None)
             if handler is None:
                 return f"Outil inconnu : {name}", True
+            if name in self._MEMORY_TOOLS:
+                return await handler(args, who)
             return await handler(args, utterance, source)
         except Exception:
             log.exception("Outil %s en échec", name)
@@ -663,34 +695,36 @@ class Toolbox:
 
     # Mémoire (enrichissement de contexte — JAMAIS le moteur d'actions) ────
 
-    async def _notify_memory_change(self) -> None:
+    async def _notify_memory_change(self, subject: str) -> None:
         if self._on_memory_change is not None:
             try:
-                await self._on_memory_change()
+                await self._on_memory_change(subject)
             except Exception:
                 log.exception("Notification de changement de mémoire impossible")
 
-    async def _tool_memoriser(self, args, _utt, _src):
+    async def _tool_memoriser(self, args, who: Speaker):
         from ..norm import normalize
         from .memory import normalize_category
 
+        subject = who.subject or "guillaume"
         contenu = str(args.get("contenu") or "").strip()[:500]
         if not contenu:
             return "Précise ce que je dois retenir.", True
         category = normalize_category(args.get("categorie"))
         # Anti-doublon : on ne réécrit pas ce qu'on sait déjà (comparaison sans accents/casse)
         target = normalize(contenu)
-        for m in await self._store.list_memories(subject="guillaume", limit=200):
+        for m in await self._store.list_memories(subject=subject, limit=200):
             if normalize(m.get("content") or "") == target:
                 return "C'est déjà noté.", False
         await self._store.add_memory(
-            contenu, category=category, subject="guillaume", source="luna"
+            contenu, category=category, subject=subject, source="luna"
         )
-        await self._notify_memory_change()
+        await self._notify_memory_change(subject)
         return "C'est noté.", False
 
-    async def _tool_lister_souvenirs(self, _args, _utt, _src):
-        mems = await self._store.list_memories(subject="guillaume", limit=200)
+    async def _tool_lister_souvenirs(self, _args, who: Speaker):
+        subject = who.subject or "guillaume"
+        mems = await self._store.list_memories(subject=subject, limit=200)
         if not mems:
             return "Je n'ai encore rien retenu de particulier.", False
         return _compact([
@@ -698,12 +732,16 @@ class Toolbox:
             for m in mems
         ]), False
 
-    async def _tool_oublier(self, args, _utt, _src):
+    async def _tool_oublier(self, args, who: Speaker):
+        subject = who.subject or "guillaume"
         mem_id = str(args.get("id") or "").strip()
         if not mem_id:
             return "Précise l'identifiant du souvenir à oublier.", True
-        removed = await self._store.delete_memory(mem_id)
-        if not removed:
+        # On ne supprime qu'un souvenir DU locuteur courant (on ne touche pas à
+        # la mémoire d'un autre profil via un identifiant deviné).
+        mem = await self._store.get_memory(mem_id)
+        if mem is None or mem.get("subject") != subject:
             return "Je n'ai pas trouvé ce souvenir.", True
-        await self._notify_memory_change()
+        await self._store.delete_memory(mem_id)
+        await self._notify_memory_change(subject)
         return "C'est oublié.", False

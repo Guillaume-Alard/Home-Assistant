@@ -74,6 +74,26 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_subject
     ON memories (subject, created_at);
+
+-- Reconnaissance de locuteur (Phase 2) : profils vocaux (Guillaume, conjointe,
+-- fils…) et leurs empreintes d'enrôlement. L'empreinte est un vecteur (JSON) ;
+-- la reconnaissance NE PEUT JAMAIS élever les droits (les actions sensibles
+-- restent réservées à l'interface pour tout le monde) — elle personnalise et,
+-- pour un inconnu, restreint.
+CREATE TABLE IF NOT EXISTS speakers (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    is_owner    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS speaker_samples (
+    id          TEXT PRIMARY KEY,
+    speaker_id  TEXT NOT NULL,
+    vector      TEXT NOT NULL,              -- JSON : liste de flottants (empreinte)
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_speaker_samples
+    ON speaker_samples (speaker_id);
 """
 
 
@@ -300,3 +320,79 @@ class Store:
         cursor = await self._db.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
         await self._db.commit()
         return cursor.rowcount > 0
+
+    # ── Profils vocaux (Phase 2) ─────────────────────────────────────────
+
+    async def add_speaker(self, name: str, *, is_owner: bool = False) -> dict:
+        assert self._db is not None, "Store non ouvert"
+        record = {
+            "id": uuid.uuid4().hex[:12],
+            "name": name,
+            "is_owner": 1 if is_owner else 0,
+            "created_at": _now_iso(),
+        }
+        await self._db.execute(
+            "INSERT INTO speakers (id, name, is_owner, created_at)"
+            " VALUES (:id, :name, :is_owner, :created_at)",
+            record,
+        )
+        await self._db.commit()
+        return record
+
+    async def get_speaker(self, speaker_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT * FROM speakers WHERE id = ?", (speaker_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_speakers(self) -> list[dict]:
+        """Les profils vocaux avec leur nombre d'empreintes enrôlées."""
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT s.id, s.name, s.is_owner, s.created_at,"
+            " (SELECT COUNT(*) FROM speaker_samples e WHERE e.speaker_id = s.id) AS samples"
+            " FROM speakers s ORDER BY s.is_owner DESC, s.created_at"
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def delete_speaker(self, speaker_id: str) -> bool:
+        assert self._db is not None, "Store non ouvert"
+        await self._db.execute("DELETE FROM speaker_samples WHERE speaker_id = ?", (speaker_id,))
+        cursor = await self._db.execute("DELETE FROM speakers WHERE id = ?", (speaker_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def add_speaker_sample(self, speaker_id: str, vector: list[float]) -> dict:
+        assert self._db is not None, "Store non ouvert"
+        record = {
+            "id": uuid.uuid4().hex[:12],
+            "speaker_id": speaker_id,
+            "vector": json.dumps(vector),
+            "created_at": _now_iso(),
+        }
+        await self._db.execute(
+            "INSERT INTO speaker_samples (id, speaker_id, vector, created_at)"
+            " VALUES (:id, :speaker_id, :vector, :created_at)",
+            record,
+        )
+        await self._db.commit()
+        return record
+
+    async def speaker_profiles(self) -> list[dict]:
+        """Profils prêts pour la reconnaissance : {id, name, is_owner, vectors[]}."""
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT s.id, s.name, s.is_owner, e.vector"
+            " FROM speakers s JOIN speaker_samples e ON e.speaker_id = s.id"
+        )
+        by_id: dict[str, dict] = {}
+        for row in await cursor.fetchall():
+            prof = by_id.setdefault(
+                row["id"],
+                {"id": row["id"], "name": row["name"], "is_owner": bool(row["is_owner"]), "vectors": []},
+            )
+            try:
+                prof["vectors"].append(json.loads(row["vector"]))
+            except (ValueError, TypeError):
+                continue
+        return list(by_id.values())

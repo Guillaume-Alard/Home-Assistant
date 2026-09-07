@@ -26,6 +26,12 @@ services:
       WAKE_HOST: sentinel-openwakeword
       WAKE_PORT: 10400
       WAKEWORD_MODEL: ${WAKEWORD_MODEL:-hey_jarvis}
+      # Reconnaissance de locuteur (Phase 2). Pour la DÉSACTIVER : mettre
+      # SPEAKER_HOST= (vide) dans .env — Luna traite alors tout le monde comme le
+      # propriétaire, exactement comme avant. Voir docs/PHASE2-LOCUTEUR.md.
+      SPEAKER_HOST: ${SPEAKER_HOST-sentinel-speaker}
+      SPEAKER_PORT: "10500"
+      SPEAKER_THRESHOLD: ${SPEAKER_THRESHOLD:-0.75}
       # Voix de Luna : TTS_ENGINE=cloned pour la voix clonée (repli Piper auto),
       # sinon Piper. Le serveur de clonage est le service « sentinel-xtts »
       # (profil « voix », désactivé par défaut). Voir docs/VOICE.md.
@@ -44,6 +50,7 @@ services:
       - sentinel-whisper
       - sentinel-piper
       - sentinel-openwakeword
+      - sentinel-speaker
     healthcheck:
       test: ["CMD", "python", "healthcheck.py"]
       interval: 30s
@@ -144,6 +151,16 @@ services:
       - ./config/voix/voices:/app/voices
       - xtts-cache:/app/voices/tts
     # aucun port publié : joignable uniquement par sentinel-core en interne
+
+  # Reconnaissance de locuteur (Phase 2) : empreinte vocale via Resemblyzer (CPU).
+  # Sert UNIQUEMENT « audio → vecteur » ; l'identité, les profils et les droits
+  # vivent dans sentinel-core. Image construite localement (~1–1,5 Go, PyTorch CPU).
+  # aucun port publié : joignable uniquement par sentinel-core en interne.
+  sentinel-speaker:
+    build:
+      context: ./speaker
+    container_name: sentinel-speaker
+    restart: unless-stopped
 
   sentinel-worker:
     build:

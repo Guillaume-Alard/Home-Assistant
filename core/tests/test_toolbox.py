@@ -259,3 +259,69 @@ async def test_memoire_ne_cree_jamais_de_proposition(box):
     await _run(box, "oublier", {"id": "peu importe"})
     assert await box.store.list_proposals() == []
     assert box.calls == []  # aucun appel de service Home Assistant
+
+
+# ── Reconnaissance de locuteur (Phase 2) : droits selon qui parle ─────────────
+
+from app.identity import OWNER, UNKNOWN, Speaker  # noqa: E402
+
+_HOUSEHOLD = Speaker(key="cam", name="Camille", known=True, is_owner=False, score=0.9)
+
+
+async def _run_as(box, name, args, speaker):
+    return await box.toolbox.run(
+        name, args, utterance="demande", source="voice", speaker=speaker
+    )
+
+
+async def test_invite_ne_peut_pas_agir(box):
+    content, is_error = await _run_as(
+        box, "action_domotique", {"operation": "allumer", "zone": "salon"}, UNKNOWN
+    )
+    assert not is_error and "reconnais pas" in content.lower()
+    assert box.calls == []  # RIEN n'a été envoyé à Nova
+
+
+async def test_invite_lecture_autorisee(box):
+    # Lecture d'état : ouverte à tous, invité compris
+    content, is_error = await _run_as(box, "etat_maison", {"zone": "salon"}, UNKNOWN)
+    assert not is_error
+    assert json.loads(content)["piece"] == "Salon"
+
+
+async def test_invite_pas_de_memoire(box):
+    content, is_error = await _run_as(box, "memoriser", {"contenu": "test"}, UNKNOWN)
+    assert not is_error and "reconnais pas" in content.lower()
+    assert await box.store.list_memories() == []
+
+
+async def test_maisonnee_agit_mais_pas_admin(box):
+    # Une personne reconnue (non-propriétaire) pilote la domotique courante…
+    content, is_error = await _run_as(
+        box, "action_domotique", {"operation": "allumer", "zone": "salon"}, _HOUSEHOLD
+    )
+    assert not is_error and box.calls  # action passée au moteur
+
+    # … mais pas les outils d'administration (réservés à Guillaume)
+    content, is_error = await _run_as(
+        box, "lancer_tache_dev", {"depot": "atrium", "instruction": "x"}, _HOUSEHOLD
+    )
+    assert not is_error and "réservé à guillaume" in content.lower()
+
+
+async def test_memoire_rangee_par_locuteur(box):
+    await _run_as(box, "memoriser", {"contenu": "aime le jazz"}, OWNER)
+    await _run_as(box, "memoriser", {"contenu": "préfère le thé"}, _HOUSEHOLD)
+    gui = await box.store.list_memories(subject="guillaume")
+    cam = await box.store.list_memories(subject="cam")
+    assert [m["content"] for m in gui] == ["aime le jazz"]
+    assert [m["content"] for m in cam] == ["préfère le thé"]
+
+
+async def test_oublier_ne_traverse_pas_les_profils(box):
+    await _run_as(box, "memoriser", {"contenu": "secret de Guillaume"}, OWNER)
+    mem_id = (await box.store.list_memories(subject="guillaume"))[0]["id"]
+    # Camille tente d'oublier un souvenir de Guillaume via son id → refus
+    content, is_error = await _run_as(box, "oublier", {"id": mem_id}, _HOUSEHOLD)
+    assert is_error and "pas trouvé" in content.lower()
+    assert len(await box.store.list_memories(subject="guillaume")) == 1

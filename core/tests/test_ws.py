@@ -192,6 +192,33 @@ def test_memoire_via_ws(client):
         assert after["type"] == "memoires" and after["memories"] == []
 
 
+def test_profils_vocaux_via_ws(client):
+    """Création / enrôlement / suppression de profils vocaux (Phase 2)."""
+    with client.websocket_connect("/ws") as ws:
+        hello = json.loads(ws.receive()["text"])
+        # Pas de service de reconnaissance en test → désactivé, aucun profil
+        assert hello["config"]["speaker"] is False
+        assert hello["speakers"] == []
+
+        # Créer un profil → la liste est rediffusée
+        ws.send_text(json.dumps({"type": "speaker_add", "name": "Camille"}))
+        pushed = json.loads(ws.receive()["text"])
+        assert pushed["type"] == "speakers"
+        assert [s["name"] for s in pushed["speakers"]] == ["Camille"]
+        sid = pushed["speakers"][0]["id"]
+        assert pushed["speakers"][0]["samples"] == 0
+
+        # Enrôlement impossible sans service actif : échec explicite, pas de plantage
+        ws.send_text(json.dumps({"type": "speaker_enroll_start", "id": sid}))
+        res = json.loads(ws.receive()["text"])
+        assert res["type"] == "enroll_result" and res["ok"] is False
+
+        # Suppression → liste vide
+        ws.send_text(json.dumps({"type": "speaker_delete", "id": sid}))
+        after = json.loads(ws.receive()["text"])
+        assert after["type"] == "speakers" and after["speakers"] == []
+
+
 def test_tour_ecrit(client, fake_brain):
     with client.websocket_connect("/ws") as ws:
         ws.receive()  # hello

@@ -56,3 +56,46 @@ async def test_memoire_list_borne_aux_plus_recents(tmp_path):
         assert [m["content"] for m in recents] == ["fait 3", "fait 4"]
     finally:
         await store.close()
+
+
+async def test_memoire_par_sujet(tmp_path):
+    store = Store(tmp_path / "mem3.db")
+    await store.open()
+    try:
+        await store.add_memory("aime le jazz", subject="guillaume")
+        await store.add_memory("préfère le thé", subject="camille")
+        gui = await store.list_memories(subject="guillaume")
+        cam = await store.list_memories(subject="camille")
+        assert [m["content"] for m in gui] == ["aime le jazz"]
+        assert [m["content"] for m in cam] == ["préfère le thé"]
+    finally:
+        await store.close()
+
+
+async def test_profils_vocaux_crud(tmp_path):
+    store = Store(tmp_path / "spk.db")
+    await store.open()
+    try:
+        g = await store.add_speaker("Guillaume", is_owner=True)
+        c = await store.add_speaker("Camille")
+        await store.add_speaker_sample(g["id"], [1.0, 0.0, 0.0])
+        await store.add_speaker_sample(g["id"], [0.9, 0.1, 0.0])
+        await store.add_speaker_sample(c["id"], [0.0, 1.0, 0.0])
+
+        # Liste avec compte d'empreintes, propriétaire en tête
+        speakers = await store.list_speakers()
+        assert speakers[0]["name"] == "Guillaume" and speakers[0]["is_owner"] == 1
+        by_name = {s["name"]: s for s in speakers}
+        assert by_name["Guillaume"]["samples"] == 2 and by_name["Camille"]["samples"] == 1
+
+        # Profils prêts pour la reconnaissance : vecteurs regroupés
+        profiles = {p["id"]: p for p in await store.speaker_profiles()}
+        assert len(profiles[g["id"]]["vectors"]) == 2
+        assert profiles[g["id"]]["is_owner"] is True
+
+        # Suppression en cascade des empreintes
+        assert await store.delete_speaker(g["id"]) is True
+        remaining = await store.speaker_profiles()
+        assert [p["id"] for p in remaining] == [c["id"]]
+    finally:
+        await store.close()
