@@ -368,7 +368,8 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
 
 /* ── Tiroirs latéraux (propositions / santé / historique) ────────────────── */
 .drawer {
-  position: fixed; top: 14px; right: 14px; bottom: 14px; width: min(420px, calc(100vw - 28px)); z-index: 60;
+  /* commence SOUS la barre du haut (54px) pour la laisser visible et cliquable */
+  position: fixed; top: 66px; right: 14px; bottom: 14px; width: min(420px, calc(100vw - 28px)); z-index: 60;
   background: var(--bg-2); border: 1px solid var(--edge-2); border-radius: 16px;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
   display: flex; flex-direction: column; overflow: hidden; animation: slidein 0.2s ease;
@@ -555,7 +556,7 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
   .liaisons, .brand-tag { display: none; }
   .cockpit { grid-template-columns: 1fr; grid-auto-rows: auto; overflow-y: auto; }
   .col { min-height: 300px; }
-  .drawer { top: 10px; right: 10px; bottom: 10px; width: calc(100vw - 20px); }
+  .drawer { top: 58px; right: 10px; bottom: 10px; width: calc(100vw - 20px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
