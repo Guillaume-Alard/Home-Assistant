@@ -368,10 +368,10 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
 
 /* ── Tiroirs latéraux (propositions / santé / historique) ────────────────── */
 .drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); z-index: 60;
-  background: var(--bg-2); border-left: 1px solid var(--edge);
-  box-shadow: -18px 0 46px rgba(0, 0, 0, 0.5);
-  display: flex; flex-direction: column; animation: slidein 0.2s ease;
+  position: fixed; top: 14px; right: 14px; bottom: 14px; width: min(420px, calc(100vw - 28px)); z-index: 60;
+  background: var(--bg-2); border: 1px solid var(--edge-2); border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  display: flex; flex-direction: column; overflow: hidden; animation: slidein 0.2s ease;
 }
 @keyframes slidein { from { transform: translateX(24px); opacity: 0; } }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--edge); }
@@ -555,7 +555,7 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
   .liaisons, .brand-tag { display: none; }
   .cockpit { grid-template-columns: 1fr; grid-auto-rows: auto; overflow-y: auto; }
   .col { min-height: 300px; }
-  .drawer { width: 100vw; }
+  .drawer { top: 10px; right: 10px; bottom: 10px; width: calc(100vw - 20px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
