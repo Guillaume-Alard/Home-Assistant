@@ -99,6 +99,10 @@ applique. Tu n'appliques JAMAIS rien toi-même. Tu ne peux PAS proposer de touch
 garde-fou de sécurité (niveaux de confiance, moteur d'actions, isolation de l'atelier, \
 secrets) ni d'introduire un secret : ma politique refuse ces diffs d'office, et c'est \
 voulu. Les propositions attendent dans Paramètres › Évolutions.
+- Poser des MINUTEURS (`minuteur`) et des RAPPELS datés (`rappel`) — « minuteur 10 min \
+pour les pâtes », « rappelle-moi dans 20 min de sortir le plat », « à 18h d'appeler le \
+garage ». Pour un rappel à heure fixe, calcule la date/heure absolue ISO à partir de la \
+date du jour (donnée plus bas). À l'échéance tu carillonnes et l'annonces. 100% local.
 - Piloter la MUSIQUE sur les lecteurs de Nova (`musique`) : lecture/pause, volume, \
 source, et transfert d'une pièce à l'autre (« envoie-le aussi dans la cuisine »). \
 Cible une pièce ; sans cible, agis sur ce qui joue déjà. `etat_musique` dit ce qui \

@@ -49,6 +49,9 @@
         ✦ <span id="proactive-count" class="tool-badge">0</span>
       </button>
       <button id="media-btn" class="tool" type="button" hidden title="Musique" aria-label="Musique">♫</button>
+      <button id="reminders-btn" class="tool" type="button" hidden title="Minuteurs &amp; rappels" aria-label="Minuteurs et rappels">
+        ⏰ <span id="reminders-count" class="tool-badge">0</span>
+      </button>
       <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel">✉</button>
       <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé">✚</button>
       <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique">↺</button>
@@ -416,6 +419,16 @@
       </div>
     </header>
     <div id="mail-body" class="drawer-list"></div>
+  </aside>
+
+  <aside id="reminders-panel" class="drawer" hidden aria-label="Minuteurs et rappels">
+    <header class="drawer-head">
+      <h2>Rappels <span class="drawer-sub">minuteurs &amp; rappels</span></h2>
+      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+    </header>
+    <div id="reminders-body" class="drawer-list"></div>
+    <p class="drawer-hint">« Luna, minuteur 10 minutes » · « rappelle-moi dans 20 min de… ».
+      À l'heure dite, elle carillonne et te le dit.</p>
   </aside>
 
   <aside id="media-panel" class="drawer" hidden aria-label="Musique">

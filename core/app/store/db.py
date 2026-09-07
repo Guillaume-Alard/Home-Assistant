@@ -181,6 +181,22 @@ CREATE TABLE IF NOT EXISTS routines (
     last_run_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_routines_status ON routines (status, created_at);
+
+-- Minuteurs & rappels vocaux (Phase 10) : 100% local. Un minuteur (« pâtes, 10
+-- min ») ou un rappel daté (« sortir le plat, dans 20 min ») ; à l'échéance,
+-- Luna carillonne et le dit. `due_at` en UTC ISO (comparable). kind : timer |
+-- reminder. status : active | fired | cancelled.
+CREATE TABLE IF NOT EXISTS reminders (
+    id         TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL DEFAULT 'reminder',
+    label      TEXT NOT NULL DEFAULT '',
+    due_at     TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'active',
+    subject    TEXT NOT NULL DEFAULT 'guillaume',
+    created_at TEXT NOT NULL,
+    fired_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_active ON reminders (status, due_at);
 """
 
 
@@ -850,3 +866,55 @@ class Store:
         cursor = await self._db.execute("DELETE FROM routines WHERE id = ?", (routine_id,))
         await self._db.commit()
         return cursor.rowcount > 0
+
+    # ── Minuteurs & rappels (Phase 10) ───────────────────────────────────────
+
+    async def add_reminder(
+        self, *, kind: str, label: str, due_at: str, subject: str = "guillaume",
+    ) -> dict:
+        assert self._db is not None, "Store non ouvert"
+        record = {
+            "id": uuid.uuid4().hex[:12],
+            "kind": kind if kind in ("timer", "reminder") else "reminder",
+            "label": label, "due_at": due_at, "status": "active",
+            "subject": subject or "guillaume", "created_at": _now_iso(), "fired_at": None,
+        }
+        await self._db.execute(
+            "INSERT INTO reminders (id, kind, label, due_at, status, subject, created_at, fired_at)"
+            " VALUES (:id, :kind, :label, :due_at, :status, :subject, :created_at, :fired_at)",
+            record,
+        )
+        await self._db.commit()
+        return record
+
+    async def get_reminder(self, reminder_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_reminders(self, status: str = "active", limit: int = 100) -> list[dict]:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT * FROM reminders WHERE status = ? ORDER BY due_at LIMIT ?", (status, limit)
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def due_reminders(self) -> list[dict]:
+        """Rappels actifs dont l'échéance est passée (UTC)."""
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT * FROM reminders WHERE status = 'active' AND due_at <= ? ORDER BY due_at",
+            (_now_iso(),),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def set_reminder_status(self, reminder_id: str, status: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        fired = _now_iso() if status == "fired" else None
+        await self._db.execute(
+            "UPDATE reminders SET status = ?, fired_at = ? WHERE id = ?",
+            (status, fired, reminder_id),
+        )
+        await self._db.commit()
+        return await self.get_reminder(reminder_id)

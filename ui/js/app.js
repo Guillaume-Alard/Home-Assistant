@@ -151,6 +151,10 @@ const els = {
   // musique (Phase 9)
   mediaBtn: document.getElementById('media-btn'),
   mediaBody: document.getElementById('media-body'),
+  // minuteurs & rappels (Phase 10)
+  remindersBtn: document.getElementById('reminders-btn'),
+  remindersCount: document.getElementById('reminders-count'),
+  remindersBody: document.getElementById('reminders-body'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -158,6 +162,7 @@ const drawers = {
   proposals: document.getElementById('proposals-panel'),
   proactive: document.getElementById('proactive-panel'),
   media: document.getElementById('media-panel'),
+  reminders: document.getElementById('reminders-panel'),
   sante: document.getElementById('sante-panel'),
   history: document.getElementById('history-panel'),
   mail: document.getElementById('mail-panel'),
@@ -366,6 +371,8 @@ ws.addEventListener('event', (e) => {
       renderProactive({ suggestions: msg.proactive || [], muted: msg.proactive_muted || [] });
       renderRoutines({ routines: msg.routines || [] });
       renderMedia({ players: msg.media || [], enabled: !!(msg.config && msg.config.music) });
+      remindersEnabled = !!(msg.config && msg.config.reminders);
+      renderReminders({ reminders: msg.reminders || [] });
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -423,6 +430,8 @@ ws.addEventListener('event', (e) => {
     case 'proactive': renderProactive(msg); break;
     case 'routines': renderRoutines(msg); break;
     case 'media': renderMedia(msg); break;
+    case 'reminders': renderReminders(msg); break;
+    case 'reminder_fired': onReminderFired(msg); break;
     default: break;
   }
 });
@@ -543,12 +552,14 @@ function drawersChanged() {
   if (!drawers.mail.hidden) ws.sendJSON({ type: 'mail' });
   if (!drawers.proactive.hidden) ws.sendJSON({ type: 'proactive' });
   if (!drawers.media.hidden) ws.sendJSON({ type: 'media' });
+  if (!drawers.reminders.hidden) ws.sendJSON({ type: 'reminders' });
 }
 els.proposalsBtn.addEventListener('click', () => openDrawer('proposals'));
 els.santeBtn.addEventListener('click', () => openDrawer('sante'));
 els.historyBtn.addEventListener('click', () => openDrawer('history'));
 els.mailBtn.addEventListener('click', () => openDrawer('mail'));
 els.mediaBtn.addEventListener('click', () => openDrawer('media'));
+els.remindersBtn.addEventListener('click', () => openDrawer('reminders'));
 document.getElementById('mail-refresh').addEventListener('click', () => ws.sendJSON({ type: 'mail' }));
 document.getElementById('media-refresh').addEventListener('click', () => ws.sendJSON({ type: 'media' }));
 document.querySelectorAll('.drawer-x').forEach((btn) => btn.addEventListener('click', closeDrawers));
@@ -1775,6 +1786,72 @@ function mediaCard(p) {
     card.appendChild(sel);
   }
   return card;
+}
+
+// ── Minuteurs & rappels (tiroir ⏰) ───────────────────────────────────────
+let remindersEnabled = false;
+let lastReminders = [];
+
+function fmtRemaining(dueIso) {
+  const rem = Date.parse(dueIso) - Date.now();
+  if (rem <= 0) return 'maintenant';
+  const s = Math.round(rem / 1000);
+  if (s < 3600) { const m = Math.floor(s / 60), ss = s % 60; return `dans ${m}:${String(ss).padStart(2, '0')}`; }
+  const d = new Date(dueIso);
+  const t = d.getMinutes() ? `${d.getHours()}h${String(d.getMinutes()).padStart(2, '0')}` : `${d.getHours()}h`;
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return `à ${t}`;
+  return `le ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} à ${t}`;
+}
+
+function renderReminders(msg) {
+  if (msg && msg.reminders) lastReminders = msg.reminders;
+  els.remindersBtn.hidden = !remindersEnabled && drawers.reminders.hidden;
+  const list = lastReminders;
+  els.remindersCount.textContent = list.length ? String(list.length) : '';
+  els.remindersBtn.classList.toggle('attention', list.length > 0);
+  els.remindersBody.textContent = '';
+  if (!list.length) {
+    els.remindersBody.appendChild(emptyLine('Aucun minuteur ni rappel. Dis « Luna, minuteur 10 minutes ».'));
+    return;
+  }
+  for (const r of list) {
+    const row = document.createElement('div');
+    row.className = 'rem-row';
+    const ic = document.createElement('span');
+    ic.className = 'rem-ic';
+    ic.textContent = r.kind === 'timer' ? '⏱' : '⏰';
+    const main = document.createElement('div');
+    main.className = 'rem-main';
+    const label = document.createElement('div');
+    label.className = 'rem-label';
+    label.textContent = r.label || (r.kind === 'timer' ? 'Minuteur' : 'Rappel');
+    const cd = document.createElement('div');
+    cd.className = 'rem-cd';
+    cd.dataset.due = r.due_at;
+    cd.textContent = fmtRemaining(r.due_at);
+    main.append(label, cd);
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'rem-x';
+    cancel.textContent = '✕';
+    cancel.title = 'Annuler';
+    cancel.addEventListener('click', () => ws.sendJSON({ type: 'reminder_cancel', id: r.id }));
+    row.append(ic, main, cancel);
+    els.remindersBody.appendChild(row);
+  }
+}
+
+// Décompte vivant : met à jour les échéances chaque seconde (léger, uniquement le texte).
+setInterval(() => {
+  document.querySelectorAll('.rem-cd').forEach((el) => { el.textContent = fmtRemaining(el.dataset.due); });
+}, 1000);
+
+function onReminderFired(msg) {
+  try { chime(); } catch { /* audio pas prêt */ }
+  const what = msg.label ? ` — ${msg.label}` : '';
+  toast(`${msg.kind === 'timer' ? '⏱ Minuteur terminé' : '⏰ Rappel'}${what}`);
+  if (ws.alive) ws.sendJSON({ type: 'reminders' });  // rafraîchit la liste (l'échu part)
 }
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────

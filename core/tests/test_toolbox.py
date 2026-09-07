@@ -69,7 +69,7 @@ async def box(tmp_path, monkeypatch):
     media = MediaConfig(presets={"jazz": {"source": "Spotify"}}, default_room="Salon")
     toolbox = Toolbox(
         ha, engine, protocols, store, health=health, docker=docker,
-        source=source, routines=routines, media=media,
+        source=source, routines=routines, media=media, reminders=True, tz="Europe/Paris",
     )
     yield SimpleNamespace(
         ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
@@ -94,6 +94,7 @@ async def test_specs_stables_et_completes(box):
         "lire_mon_code", "proposer_evolution", "lister_evolutions",
         "proposer_routine", "lancer_routine", "lister_routines",
         "etat_musique", "musique",
+        "minuteur", "rappel", "lister_rappels", "annuler_rappel",
     ]
     assert all(s["description"] for s in specs)
 
@@ -595,3 +596,52 @@ async def test_musique_refusee_a_l_invite(box):
     content, is_error = await _run_as(box, "musique", {"operation": "pause", "zone": "salon"}, UNKNOWN)
     assert not is_error and "reconnais pas" in content.lower()
     assert box.calls == []
+
+
+# ── Minuteurs & rappels (Phase 10) ───────────────────────────────────────────
+
+async def test_minuteur_et_liste(box):
+    content, is_error = await _run_as(box, "minuteur", {"minutes": 10, "libelle": "pâtes"}, _HOUSEHOLD)
+    assert not is_error and "10 min" in content and "pâtes" in content
+    rows = await box.store.list_reminders("active")
+    assert len(rows) == 1 and rows[0]["kind"] == "timer" and rows[0]["label"] == "pâtes"
+
+    listing, _ = await _run_as(box, "lister_rappels", {}, _HOUSEHOLD)
+    assert "pâtes" in listing and "minuteur" in listing
+
+
+async def test_rappel_relatif_et_absolu(box):
+    content, is_error = await _run_as(box, "rappel", {"libelle": "sortir le plat", "dans_minutes": 20}, OWNER)
+    assert not is_error and "sortir le plat" in content
+    # Absolu : une heure ISO future
+    from datetime import datetime, timedelta
+    future = (datetime.now() + timedelta(hours=3)).replace(microsecond=0).isoformat()
+    content, is_error = await _run_as(box, "rappel", {"libelle": "appeler le garage", "a": future}, OWNER)
+    assert not is_error
+    kinds = [r["kind"] for r in await box.store.list_reminders("active")]
+    assert kinds.count("reminder") == 2
+
+
+async def test_rappel_sans_echeance_ni_passe(box):
+    content, is_error = await _run_as(box, "rappel", {"libelle": "x"}, OWNER)
+    assert not is_error and "précise quand" in content.lower()
+    # Une heure déjà passée est refusée
+    from datetime import datetime, timedelta
+    past = (datetime.now() - timedelta(hours=1)).isoformat()
+    content, _ = await _run_as(box, "rappel", {"libelle": "x", "a": past}, OWNER)
+    assert "précise quand" in content.lower()
+    assert await box.store.list_reminders("active") == []
+
+
+async def test_annuler_rappel(box):
+    await _run_as(box, "minuteur", {"minutes": 5}, OWNER)
+    rid = (await box.store.list_reminders("active"))[0]["id"]
+    content, is_error = await _run_as(box, "annuler_rappel", {"id": rid}, OWNER)
+    assert not is_error and "annul" in content.lower()
+    assert await box.store.list_reminders("active") == []
+
+
+async def test_rappels_refuses_a_l_invite(box):
+    content, is_error = await _run_as(box, "minuteur", {"minutes": 5}, UNKNOWN)
+    assert not is_error and "reconnais pas" in content.lower()
+    assert await box.store.list_reminders("active") == []

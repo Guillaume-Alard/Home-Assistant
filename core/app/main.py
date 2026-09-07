@@ -66,6 +66,7 @@ from .ha.protocols import ProtocolBook
 from .mail import GmailClient, MailError
 from .monitors import AtriumMonitor, DockerMonitor, HealthService
 from .proactive import ProactiveEngine
+from .reminders import ReminderScheduler
 from .routines import RoutineService
 from .selfmod import SelfSource, summarize as summarize_diff
 from .store import Store
@@ -259,6 +260,14 @@ class Sentinel:
             if self.ha and settings.music_enabled else None
         )
         self._media_last = 0.0  # anti-rafale des diffusions d'état média
+        # Minuteurs & rappels (Phase 10) : 100% local, indépendant de Nova.
+        self.reminders: ReminderScheduler | None = (
+            ReminderScheduler(
+                settings, store, announce=self.say_proactive,
+                on_change=self._broadcast_reminders, on_fire=self._on_reminder_fired,
+            )
+            if settings.reminders_enabled else None
+        )
 
         # Auto-amélioration encadrée (Phase 6) : lecteur SEULE lecture de son propre
         # code (app/ + ui/), pour que Luna rédige des diffs justes.
@@ -268,9 +277,11 @@ class Sentinel:
             health=self.health, docker=self._docker, worker=self._worker,
             mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
             routines=self.routines, media=self.media_cfg,
+            reminders=settings.reminders_enabled, tz=settings.tz,
             on_memory_change=self._broadcast_memoires,
             on_pages_change=self._broadcast_pages,
             on_suggestions_change=self._broadcast_evolutions,
+            on_reminders_change=self._broadcast_reminders,
         )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
@@ -449,6 +460,25 @@ class Sentinel:
     async def _broadcast_media(self) -> None:
         await self.hub.broadcast(self._media_payload())
 
+    # ── Minuteurs & rappels (Phase 10) ───────────────────────────────────
+
+    async def _reminders_payload(self) -> dict:
+        return {
+            "type": "reminders",
+            "enabled": self.reminders is not None,
+            "reminders": await self.store.list_reminders("active"),
+        }
+
+    async def _broadcast_reminders(self) -> None:
+        await self.hub.broadcast(await self._reminders_payload())
+
+    async def _on_reminder_fired(self, reminder: dict) -> None:
+        """Carillon + petit signal pour l'UI quand un minuteur/rappel sonne."""
+        await self.hub.broadcast({
+            "type": "reminder_fired", "kind": reminder.get("kind"),
+            "label": reminder.get("label") or "",
+        })
+
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
     async def announce(self, text: str, severity: str = "info", speak: bool = True) -> None:
@@ -531,6 +561,8 @@ class Sentinel:
         self._proactive_task = None
         if self.routines:
             await self.routines.stop()
+        if self.reminders:
+            await self.reminders.stop()
         await self.health.close()
         if self._worker:
             await self._worker.close()
@@ -880,6 +912,8 @@ async def lifespan(app: FastAPI):
     sentinel.start_proactive()
     if sentinel.routines:
         sentinel.routines.start_scanner()
+    if sentinel.reminders:
+        sentinel.reminders.start()
     log.info(
         "Sentinel %s démarré — modèle %s, effort %s, UI %s",
         __version__, settings.model, settings.effort, settings.ui_dir,
@@ -1034,6 +1068,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "proactive": sentinel.proactive is not None,
                 "routines": sentinel.routines is not None,
                 "music": sentinel.media_cfg is not None,
+                "reminders": sentinel.reminders is not None,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
@@ -1044,6 +1079,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "routines": await sentinel.store.list_routines(),
             # Musique (Phase 9) — tuile lecteur (lecteurs actifs à l'instant)
             "media": sentinel._media_payload()["players"],
+            # Minuteurs & rappels (Phase 10) — actifs
+            "reminders": await sentinel.store.list_reminders("active"),
         },
     )
 
@@ -1266,6 +1303,15 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "media_control":
         await _media_control(sentinel, client, msg)
+
+    elif mtype == "reminders":
+        await sentinel.hub.send(client, await sentinel._reminders_payload())
+
+    elif mtype == "reminder_cancel":
+        rid = str(msg.get("id") or "").strip()
+        if rid and (r := await sentinel.store.get_reminder(rid)) and r["status"] == "active":
+            await sentinel.store.set_reminder_status(rid, "cancelled")
+            await sentinel._broadcast_reminders()
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})

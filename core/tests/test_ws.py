@@ -160,8 +160,8 @@ def test_hello_et_sante(client):
         for key in ("effort", "whisper_model", "piper_voice", "wake_model", "tz"):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
-        for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker",
-                    "mail", "web_search", "self_improve", "proactive", "routines", "music"):
+        for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker", "mail",
+                    "web_search", "self_improve", "proactive", "routines", "music", "reminders"):
             assert key in hello["config"]
 
 
@@ -377,6 +377,47 @@ def test_media_via_ws(fake_wyoming, fake_ha, tmp_path, monkeypatch):
 
     # La commande a bien été demandée à Nova (via le moteur)
     assert any(c[0] == "media_player" and c[1] == "media_play" for c in fake_ha.calls)
+
+
+def test_reminders_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """Minuteurs & rappels : le cockpit voit un rappel actif et peut l'annuler."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from app.store import Store
+
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")  # 100% local, aucune domotique requise
+    data = tmp_path / "data"
+    data.mkdir(parents=True, exist_ok=True)
+
+    async def seed():
+        store = Store(data / "sentinel.db")
+        await store.open()
+        due = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(timespec="milliseconds")
+        r = await store.add_reminder(kind="reminder", label="appeler le garage", due_at=due)
+        await store.close()
+        return r["id"]
+
+    rid = asyncio.run(seed())
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            assert hello["config"]["reminders"] is True
+            assert any(r["id"] == rid for r in hello["reminders"])
+
+            ws.send_text(json.dumps({"type": "reminders"}))
+            events, _ = _drain(ws, {"reminders"})
+            payload = next(e for e in events if e["type"] == "reminders")
+            assert payload["enabled"] and any(r["id"] == rid for r in payload["reminders"])
+
+            ws.send_text(json.dumps({"type": "reminder_cancel", "id": rid}))
+            events, _ = _drain(ws, {"reminders"})
+            payload = next(e for e in events if e["type"] == "reminders")
+            assert not any(r["id"] == rid for r in payload["reminders"])
 
 
 def test_page_publiee_servie_avec_csp(fake_wyoming, tmp_path, monkeypatch):

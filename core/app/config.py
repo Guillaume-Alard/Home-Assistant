@@ -147,6 +147,9 @@ class Settings:
     # et tuile musique retirés. Préréglages : config/media.yml.
     music_enabled: bool = True
 
+    # Minuteurs & rappels vocaux (Phase 10) — 100% local. Off = outils retirés.
+    reminders_enabled: bool = True
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -219,6 +222,8 @@ class Settings:
             routine_habit_min_days=_int(os.environ.get("SENTINEL_ROUTINE_MIN_DAYS"), 3),
             routine_habit_lookback=_int(os.environ.get("SENTINEL_ROUTINE_LOOKBACK"), 21),
             music_enabled=os.environ.get("SENTINEL_MUSIC", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            reminders_enabled=os.environ.get("SENTINEL_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
         )
 

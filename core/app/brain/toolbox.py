@@ -16,6 +16,7 @@ from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
 from ..identity import OWNER, Speaker
 from ..devwork.worker_client import WorkerClient, WorkerError
 from ..mail import GmailClient, MailError
+from ..reminders import compute_due_iso
 from ..routines import RoutineError, RoutineService
 from ..selfmod import SelfSource, evaluate as evaluate_diff, summarize as summarize_diff
 from ..ha.client import HAClient
@@ -80,6 +81,10 @@ ACTIVITY_LABELS = {
     "lister_routines": "relit tes routines…",
     "musique": "règle la musique…",
     "etat_musique": "écoute ce qui joue…",
+    "minuteur": "lance un minuteur…",
+    "rappel": "note un rappel…",
+    "lister_rappels": "relit tes rappels…",
+    "annuler_rappel": "annule un rappel…",
 }
 
 
@@ -102,9 +107,12 @@ class Toolbox:
         self_improve: bool = True,
         routines: RoutineService | None = None,
         media: MediaConfig | None = None,
+        reminders: bool = False,
+        tz: str = "Europe/Paris",
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_pages_change: Callable[[], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
+        on_reminders_change: Callable[[], Awaitable[None]] | None = None,
     ):
         self._ha = ha
         self._engine = engine
@@ -122,6 +130,10 @@ class Toolbox:
         self._routines = routines
         # Musique multi-pièces (Phase 9). Absent = fonction désactivée.
         self._media = media
+        # Minuteurs & rappels (Phase 10). self._reminders = disponibilité de l'outil.
+        self._reminders = reminders
+        self._tz = tz
+        self._on_reminders_change = on_reminders_change
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
@@ -597,6 +609,58 @@ class Toolbox:
                     },
                 },
             ]
+        # Minuteurs & rappels (Phase 10) — 100% local.
+        if self._reminders:
+            specs += [
+                {
+                    "name": "minuteur",
+                    "description": (
+                        "Lance un minuteur (compte à rebours) — ex. « minuteur 10 minutes pour "
+                        "les pâtes ». À l'échéance, tu carillonnes et l'annonces. Donne la durée "
+                        "en minutes et/ou secondes."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "minutes": {"type": "number"},
+                            "secondes": {"type": "number"},
+                            "libelle": {"type": "string", "description": "Ce que c'est (ex. « pâtes »)."},
+                        },
+                    },
+                },
+                {
+                    "name": "rappel",
+                    "description": (
+                        "Programme un rappel daté — ex. « rappelle-moi dans 20 min de sortir le "
+                        "plat », « à 18h d'appeler le garage ». Donne le `libelle` (quoi) et QUAND : "
+                        "soit `dans_minutes` (relatif), soit `a` (date/heure absolue au format ISO, "
+                        "que TU calcules à partir de la date du jour, ex. « 2026-09-07T18:00 »)."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "libelle": {"type": "string", "description": "Ce dont il faut se souvenir."},
+                            "dans_minutes": {"type": "number", "description": "Délai en minutes (relatif)."},
+                            "a": {"type": "string", "description": "Date/heure ISO absolue (ex. « 2026-09-07T18:00 »)."},
+                        },
+                        "required": ["libelle"],
+                    },
+                },
+                {
+                    "name": "lister_rappels",
+                    "description": "Liste les minuteurs et rappels en cours (avec leur échéance et leur id).",
+                    "input_schema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "annuler_rappel",
+                    "description": "Annule un minuteur ou un rappel. Donne son `id` (via lister_rappels).",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}},
+                        "required": ["id"],
+                    },
+                },
+            ]
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -625,6 +689,9 @@ class Toolbox:
         # Musique (Phase 9) : piloter = personne reconnue (courant, non sensible) ;
         # lire ce qui joue = public. (etat_musique absent → public.)
         "musique": "known",
+        # Minuteurs & rappels (Phase 10) : personne reconnue (usage courant).
+        "minuteur": "known", "rappel": "known",
+        "lister_rappels": "known", "annuler_rappel": "known",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -1281,3 +1348,81 @@ class Toolbox:
             "ha.media", params, utterance=utterance, source=f"{source} (via LLM)"
         )
         return outcome.text, not outcome.ok
+
+    # Minuteurs & rappels (Phase 10 — 100% local) ─────────────────────────
+
+    def _reminder_tz(self):
+        from zoneinfo import ZoneInfo
+        try:
+            return ZoneInfo(self._tz)
+        except Exception:
+            return None
+
+    def _fmt_when(self, due_iso: str) -> str:
+        from datetime import datetime
+        tz = self._reminder_tz()
+        try:
+            local = datetime.fromisoformat(due_iso).astimezone(tz)
+        except ValueError:
+            return "bientôt"
+        now = datetime.now(tz)
+        t = f"{local.hour}h{local.minute:02d}" if local.minute else f"{local.hour}h"
+        days = (local.date() - now.date()).days
+        if days == 0:
+            return f"à {t}"
+        if days == 1:
+            return f"demain à {t}"
+        return f"le {local.day:02d}/{local.month:02d} à {t}"
+
+    async def _notify_reminders_change(self) -> None:
+        if self._on_reminders_change is not None:
+            try:
+                await self._on_reminders_change()
+            except Exception:
+                log.exception("Notification de changement de rappels impossible")
+
+    async def _tool_minuteur(self, args, _utt, _src):
+        minutes = args.get("minutes")
+        secondes = args.get("secondes")
+        due = compute_due_iso(tz=self._reminder_tz(), minutes=minutes, seconds=secondes)
+        if due is None:
+            return "Donne-moi une durée (ex. 10 minutes).", False
+        libelle = str(args.get("libelle") or "").strip()[:120]
+        await self._store.add_reminder(kind="timer", label=libelle, due_at=due)
+        await self._notify_reminders_change()
+        total = int((float(minutes or 0) * 60) + float(secondes or 0))
+        m, s = divmod(total, 60)
+        dur = (f"{m} min" + (f" {s} s" if s else "")) if m else f"{s} s"
+        return f"C'est parti — minuteur de {dur}{f' pour « {libelle} »' if libelle else ''}.", False
+
+    async def _tool_rappel(self, args, _utt, _src):
+        libelle = str(args.get("libelle") or "").strip()[:200]
+        if not libelle:
+            return "De quoi veux-tu que je te rappelle ?", False
+        due = compute_due_iso(
+            tz=self._reminder_tz(), dans_minutes=args.get("dans_minutes"), a=args.get("a")
+        )
+        if due is None:
+            return "Précise quand (ex. « dans 20 minutes » ou « à 18h »).", False
+        await self._store.add_reminder(kind="reminder", label=libelle, due_at=due)
+        await self._notify_reminders_change()
+        return f"C'est noté. Je te le rappellerai {self._fmt_when(due)} : {libelle}.", False
+
+    async def _tool_lister_rappels(self, _args, _utt, _src):
+        items = await self._store.list_reminders("active")
+        if not items:
+            return "Aucun minuteur ni rappel en cours.", False
+        return _compact([
+            {"id": r["id"], "type": "minuteur" if r["kind"] == "timer" else "rappel",
+             "libelle": r["label"], "echeance": self._fmt_when(r["due_at"])}
+            for r in items
+        ]), False
+
+    async def _tool_annuler_rappel(self, args, _utt, _src):
+        rid = str(args.get("id") or "").strip()
+        r = await self._store.get_reminder(rid)
+        if r is None or r["status"] != "active":
+            return "Je n'ai pas trouvé ce rappel actif.", False
+        await self._store.set_reminder_status(rid, "cancelled")
+        await self._notify_reminders_change()
+        return "C'est annulé.", False
