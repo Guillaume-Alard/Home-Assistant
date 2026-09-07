@@ -15,7 +15,7 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
                              assistant_delta, assistant_end, speak_start,
                              speak_end, notice, error, alert, ha_status,
                              activity, proposal_new, proposal_update,
-                             dev_status, wake, wake_error, pong — les réponses de
+                             dev_status, wake, wake_error, sources, pong — les réponses de
                              panneaux (dev_tasks, dev_log, dev_diff, sante,
                              historique, au seul client demandeur), memoires et
                              speakers (rediffusés à tous après un changement),
@@ -244,6 +244,7 @@ class Sentinel:
         self.brain = Brain(
             settings, toolbox,
             on_activity=self._on_activity, memory_provider=self._memory_context,
+            on_sources=self._broadcast_sources,
         )
         self._report_task: asyncio.Task | None = None
         self._devwatch_task: asyncio.Task | None = None
@@ -266,6 +267,10 @@ class Sentinel:
 
     async def _on_activity(self, label: str) -> None:
         await self.hub.broadcast({"type": "activity", "text": label})
+
+    async def _broadcast_sources(self, sources: list[dict]) -> None:
+        """Sources web citées par Luna (Phase 4) — rattachées au dernier message."""
+        await self.hub.broadcast({"type": "sources", "sources": sources})
 
     async def _on_proposal_change(self, change: str, proposal: dict) -> None:
         kind = "proposal_new" if change == "new" else "proposal_update"
@@ -899,6 +904,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "memory": sentinel.settings.memory_enabled,
                 "speaker": sentinel.speaker_embedder is not None,
                 "mail": sentinel.mail is not None,
+                "web_search": sentinel.settings.web_search_enabled and bool(sentinel.settings.anthropic_api_key),
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),

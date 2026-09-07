@@ -353,6 +353,7 @@ ws.addEventListener('event', (e) => {
     case 'assistant_start': thread.startStream(msg.id); break;
     case 'assistant_delta': thread.addDelta(msg.id, msg.text); updateTranscript(); break;
     case 'assistant_end': thread.endStream(msg.id, msg.message, msg.cancelled); updateChatMeta(); break;
+    case 'sources': thread.addSources(msg.sources); break;
     case 'speak_start': if (player) player.begin(msg.rate); break;
     case 'speak_end': if (player) player.end(); break;
     case 'notice': thread.notice(msg.text); break;
@@ -1055,6 +1056,7 @@ function renderConnexions(h, cfg) {
   if (cfg.docker) real.push({ ic: 'DK', name: 'Surveillance Docker', status: 'Active · lecture', statusCls: 'on', desc: 'État des conteneurs, mémoire, redémarrage sur proposition.' });
   if (cfg.atrium) real.push({ ic: 'AT', name: 'Atrium', status: 'Surveillé', statusCls: 'on', desc: 'Disponibilité et latence du service.' });
   if (cfg.mail) real.push({ ic: 'GM', name: 'Gmail (lecture seule)', status: 'Connecté', statusCls: 'on', desc: 'Résumé de tes non-lus, pour toi seul. Aucun envoi ni suppression.' });
+  if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées.' });
   for (const s of real) grid.appendChild(svcCard(s));
 
   const soon = [

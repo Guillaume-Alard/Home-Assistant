@@ -116,6 +116,12 @@ class Settings:
     gmail_refresh_token: str = ""
     mail_max: int = 10  # nombre de non-lus détaillés dans un résumé
 
+    # Recherche web (Phase 4) — outil natif Anthropic (web_search), citations
+    # intégrées. Contrôlée : plafond d'usages par tour ; réservée aux personnes
+    # reconnues (owner + maisonnée). SENTINEL_WEB_SEARCH=off pour la désactiver.
+    web_search_enabled: bool = True
+    web_search_max_uses: int = 5
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -175,6 +181,9 @@ class Settings:
             gmail_client_secret=os.environ.get("GMAIL_CLIENT_SECRET", "").strip(),
             gmail_refresh_token=os.environ.get("GMAIL_REFRESH_TOKEN", "").strip(),
             mail_max=_int(os.environ.get("MAIL_MAX"), 10),
+            web_search_enabled=os.environ.get("SENTINEL_WEB_SEARCH", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            web_search_max_uses=_int(os.environ.get("SENTINEL_WEB_SEARCH_MAX"), 5),
         )
 
     @property

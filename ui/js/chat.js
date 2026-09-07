@@ -62,6 +62,10 @@ const timeFr = (iso) => {
   } catch { return ''; }
 };
 
+const hostOf = (url) => {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+};
+
 export class Thread {
   constructor(el) {
     this.el = el;
@@ -129,6 +133,34 @@ export class Thread {
     const bodies = this.el.querySelectorAll('.msg.assistant .body');
     const last = bodies[bodies.length - 1];
     return last ? last.textContent : '';
+  }
+
+  // Sources web citées (Phase 4) : rattachées au message assistant courant.
+  addSources(sources) {
+    if (!sources || !sources.length) return;
+    const bubbles = this.el.querySelectorAll('.msg.assistant');
+    const target = this.streamEl || bubbles[bubbles.length - 1];
+    if (!target) return;
+    const old = target.querySelector('.sources');
+    if (old) old.remove();
+    const box = document.createElement('div');
+    box.className = 'sources';
+    const label = document.createElement('span');
+    label.className = 'sources-label';
+    label.textContent = 'Sources';
+    box.appendChild(label);
+    for (const s of sources) {
+      const a = document.createElement('a');
+      a.className = 'source';
+      a.href = s.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = hostOf(s.url);
+      a.title = s.title || s.url;
+      box.appendChild(a);
+    }
+    target.appendChild(box);
+    this._stick();
   }
 
   notice(text) { this._line(text, 'line'); }

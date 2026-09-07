@@ -195,6 +195,11 @@ body.online.nova-on .conn-dot.nova { background: var(--ok); box-shadow: 0 0 8px 
 @keyframes blink { 50% { opacity: 0; } }
 .msg.cancelled .body { opacity: 0.7; }
 .msg .interrupted { font-size: 11px; color: var(--muted); font-style: italic; }
+/* Sources web citées (Phase 4) sous une réponse de Luna */
+.sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--edge); }
+.sources-label { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.source { font-size: 11px; color: var(--muted-2); border: 1px solid var(--edge-2); border-radius: 999px; padding: 2px 9px; text-decoration: none; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
+.source:hover { color: var(--accent); border-color: var(--accent-line); }
 .msg .body p { margin: 0 0 8px; } .msg .body p:last-child { margin-bottom: 0; }
 .msg .body ul { margin: 4px 0; padding-left: 20px; }
 .msg .body a { color: var(--accent); }

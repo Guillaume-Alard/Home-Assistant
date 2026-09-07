@@ -160,7 +160,7 @@ def test_hello_et_sante(client):
         for key in ("effort", "whisper_model", "piper_voice", "wake_model", "tz"):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
-        for key in ("ha", "worker", "assist", "anthropic", "memory"):
+        for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker", "mail", "web_search"):
             assert key in hello["config"]
 
 
