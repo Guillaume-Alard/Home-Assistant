@@ -128,6 +128,12 @@ class Settings:
     # retire les outils correspondants (les propositions existantes restent lisibles).
     self_improve_enabled: bool = True
 
+    # Proactivité contextuelle (Phase 7) — Luna observe l'état de la maison + l'heure
+    # + ce qu'elle sait de toi, et te SUGGÈRE (jamais n'exécute) : au mieux une
+    # proposition à valider. SENTINEL_PROACTIVE=off la coupe entièrement.
+    proactive_enabled: bool = True
+    proactive_interval: int = 150  # secondes entre deux évaluations de fond
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -192,6 +198,9 @@ class Settings:
             web_search_max_uses=_int(os.environ.get("SENTINEL_WEB_SEARCH_MAX"), 5),
             self_improve_enabled=os.environ.get("SENTINEL_SELF_IMPROVE", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
+            proactive_enabled=os.environ.get("SENTINEL_PROACTIVE", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            proactive_interval=_int(os.environ.get("SENTINEL_PROACTIVE_INTERVAL"), 150),
         )
 
     @property

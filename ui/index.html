@@ -45,6 +45,9 @@
       <button id="proposals-btn" class="tool" type="button" hidden aria-label="Propositions en attente">
         ▤ <span id="prop-count" class="tool-badge">0</span>
       </button>
+      <button id="proactive-btn" class="tool" type="button" hidden title="Suggestions de Luna" aria-label="Suggestions de Luna">
+        ✦ <span id="proactive-count" class="tool-badge">0</span>
+      </button>
       <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel">✉</button>
       <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé">✚</button>
       <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique">↺</button>
@@ -190,6 +193,7 @@
       <button class="set-navitem" type="button" data-sec="memoire" aria-selected="false">Mémoire</button>
       <button class="set-navitem" type="button" data-sec="pages" aria-selected="false">Pages web</button>
       <button class="set-navitem" type="button" data-sec="evolutions" aria-selected="false" id="nav-evolutions">Évolutions</button>
+      <button class="set-navitem" type="button" data-sec="proactivite" aria-selected="false" id="nav-proactivite">Proactivité</button>
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false">Moteur</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false">Confidentialité</button>
       <div class="set-nav-note">Sentinel tourne en local.<br>Aucune donnée n'est envoyée sans ton accord.</div>
@@ -292,6 +296,29 @@
         </div>
       </section>
 
+      <section class="set-sec" data-sec="proactivite" hidden>
+        <div class="set-title">Proactivité</div>
+        <div class="set-sub">Luna observe l'état de la maison et l'heure, et te <b>suggère</b> quand quelque chose mérite ton attention (un volet resté ouvert le soir, des lumières allumées tard…). Elle n'agit <b>jamais</b> seule : au mieux, sur ton accord, elle prépare une <b>proposition</b> à approuver. Ses suggestions arrivent dans le tiroir <span class="mono-chip">✦ Suggestions</span> ; les alertes de sécurité sont dites à voix haute, les simples constats restent silencieux la nuit.</div>
+        <div class="set-cards">
+          <div class="set-card">
+            <div class="set-card-h">Ce que Luna surveille</div>
+            <ul class="set-list">
+              <li>Volet ou porte de garage encore <b>ouvert le soir</b> <span class="lock" style="color:var(--warn);border-color:rgba(239,168,60,.4)">sécurité</span></li>
+              <li>Porte / fenêtre restée ouverte la nuit</li>
+              <li>Lumières allumées <b>tard</b>, ou <b>personne à la maison</b></li>
+              <li>Fenêtre ouverte alors que le <b>chauffage</b> tourne</li>
+              <li>Pièce trop chaude ou trop fraîche</li>
+            </ul>
+            <p class="set-note">Tu peux ajuster son rythme (heures calmes, seuils) dans <span class="mono-chip">config/proactive.yml</span> — ou demander à Luna de te le proposer (Évolutions).</p>
+          </div>
+          <div class="set-card">
+            <div class="set-card-h">Suggestions tues <span id="mutes-count" class="set-count"></span></div>
+            <div class="set-sub" style="margin:0 0 8px">Les règles que tu as demandé de taire (« ne plus me suggérer ça »). Réactive-les quand tu veux.</div>
+            <div id="mutes-list" class="memoire-list"></div>
+          </div>
+        </div>
+      </section>
+
       <section class="set-sec" data-sec="moteur" hidden>
         <div class="set-title">Moteur</div>
         <div class="set-cards">
@@ -372,6 +399,16 @@
       </div>
     </header>
     <div id="mail-body" class="drawer-list"></div>
+  </aside>
+
+  <aside id="proactive-panel" class="drawer" hidden aria-label="Suggestions de Luna">
+    <header class="drawer-head">
+      <h2>Suggestions <span class="drawer-sub">Luna anticipe</span></h2>
+      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+    </header>
+    <div id="proactive-body" class="drawer-list"></div>
+    <p class="drawer-hint">Luna observe la maison et te suggère — elle n'agit jamais seule.
+      « Préparer » crée une <em>proposition</em> à approuver.</p>
   </aside>
 
   <div id="alert-banner" class="alert-banner" role="alert" hidden>

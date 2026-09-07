@@ -161,7 +161,7 @@ def test_hello_et_sante(client):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
         for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker",
-                    "mail", "web_search", "self_improve"):
+                    "mail", "web_search", "self_improve", "proactive"):
             assert key in hello["config"]
 
 
@@ -245,6 +245,58 @@ def test_evolutions_via_ws(fake_wyoming, tmp_path, monkeypatch):
             ws.send_text(json.dumps({"type": "evolution_delete", "id": sug_id}))
             empty = json.loads(ws.receive()["text"])
             assert empty["type"] == "evolutions" and empty["suggestions"] == []
+
+
+def test_proactive_via_ws(fake_wyoming, fake_ha, tmp_path, monkeypatch):
+    """Le tiroir Suggestions : lecture, « plus tard », « ne plus me suggérer ça ».
+    Le veilleur ne s'active qu'avec Nova ; on seede une suggestion, on la gère."""
+    import asyncio
+
+    from app.store import Store
+
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", f"http://127.0.0.1:{fake_ha.port}")
+    monkeypatch.setenv("HA_TOKEN", fake_ha.token)
+    monkeypatch.setenv("SENTINEL_CONFIG_DIR", str(_write_config(tmp_path)))
+    data = tmp_path / "data"
+    data.mkdir(parents=True, exist_ok=True)
+
+    async def seed():
+        store = Store(data / "sentinel.db")
+        await store.open()
+        s = await store.add_proactive(
+            key="volet_nuit:cover.demo", rule="volet_nuit", title="Fermer le volet",
+            detail="Le volet est encore ouvert.", severity="warning", category="securite",
+            action={"action_id": "ha.turn_off", "params": {"entity_ids": ["light.salon"]},
+                    "title": "Éteindre", "risk": "low"},
+        )
+        await store.close()
+        return s["id"]
+
+    sug_id = asyncio.run(seed())
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        _wait_ha(tc)
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            assert hello["config"]["proactive"] is True
+            assert any(s["id"] == sug_id for s in hello["proactive"])
+
+            # Lecture explicite du tiroir
+            ws.send_text(json.dumps({"type": "proactive"}))
+            events, _ = _drain(ws, {"proactive"})
+            payload = next(e for e in events if e["type"] == "proactive")
+            assert payload["enabled"] is True
+            assert any(s["id"] == sug_id for s in payload["suggestions"])
+
+            # « Ne plus me suggérer ça » : la règle est tue, la suggestion écartée
+            ws.send_text(json.dumps({"type": "proactive_mute", "rule": "volet_nuit"}))
+            events, _ = _drain(ws, {"proactive"})
+            payload = next(e for e in events if e["type"] == "proactive")
+            assert "volet_nuit" in payload["muted"]
+            assert not any(s["id"] == sug_id for s in payload["suggestions"])
 
 
 def test_page_publiee_servie_avec_csp(fake_wyoming, tmp_path, monkeypatch):

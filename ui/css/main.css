@@ -567,6 +567,23 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
 .evo-diff .dl-hunk { color: var(--accent); }
 .evo-diff .dl-meta { color: var(--muted); }
 
+/* ── Proactivité : cartes de suggestion (tiroir) + règles tues ────────────── */
+.pro-card { border: 1px solid var(--edge); border-left: 3px solid var(--edge-2); background: var(--panel); border-radius: 10px; padding: 11px 13px; margin-bottom: 9px; }
+.pro-card.warning { border-left-color: var(--warn); }
+.pro-card.info { border-left-color: var(--accent-line); }
+.pro-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.pro-cat { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 999px; padding: 1px 7px; border: 1px solid var(--edge-2); color: var(--muted); flex: 0 0 auto; }
+.pro-cat.securite { color: var(--warn); border-color: rgba(239, 168, 60, 0.4); }
+.pro-cat.confort { color: var(--accent); border-color: var(--accent-line); }
+.pro-cat.energie { color: var(--ok); border-color: rgba(86, 224, 160, 0.4); }
+.pro-title { font-size: 12.5px; font-weight: 600; min-width: 0; }
+.pro-detail { font-size: 12.5px; color: var(--muted-2); line-height: 1.5; }
+.pro-acts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.pro-acts button { border: 1px solid var(--edge-2); background: transparent; color: var(--muted-2); cursor: pointer; font-size: 11px; border-radius: 7px; padding: 3px 9px; transition: color 0.15s, border-color 0.15s; }
+.pro-acts button.primary { color: var(--accent); border-color: var(--accent-line); }
+.pro-acts button:hover { color: var(--accent); border-color: var(--accent-line); }
+.pro-acts button.danger:hover { color: var(--danger); border-color: rgba(255, 95, 82, 0.45); }
+
 .switch { width: 40px; height: 23px; border-radius: 999px; border: 1px solid var(--edge-2); background: rgba(255, 255, 255, 0.12); cursor: pointer; position: relative; flex: 0 0 auto; transition: background 0.2s; padding: 0; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #8A8F98; transition: transform 0.2s, background 0.2s; }
 .switch[aria-checked="true"] { background: var(--accent); border-color: transparent; }

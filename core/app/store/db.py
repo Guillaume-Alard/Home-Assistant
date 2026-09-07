@@ -130,6 +130,35 @@ CREATE TABLE IF NOT EXISTS suggestions (
 );
 CREATE INDEX IF NOT EXISTS idx_suggestions_status
     ON suggestions (status, created_at);
+
+-- Proactivité contextuelle (Phase 7) : Luna observe (état maison + heure + ce
+-- qu'elle sait) et SUGGÈRE — jamais n'exécute. Une suggestion actionnable peut,
+-- sur ton accord, devenir une PROPOSITION (moteur d'actions), elle-même à
+-- approuver. `key` sert à l'anti-répétition ; `rule` au « ne plus me suggérer ça ».
+-- status : active | snoozed | dismissed | acted.
+CREATE TABLE IF NOT EXISTS proactive (
+    id           TEXT PRIMARY KEY,
+    key          TEXT NOT NULL,
+    rule         TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    detail       TEXT NOT NULL DEFAULT '',
+    severity     TEXT NOT NULL DEFAULT 'info',
+    category     TEXT NOT NULL DEFAULT '',
+    action       TEXT,                        -- JSON de l'action proposable (NULL = simple constat)
+    status       TEXT NOT NULL DEFAULT 'active',
+    proposal_num INTEGER,                      -- n° de la proposition créée (si « acted »)
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    snooze_until TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proactive_key ON proactive (key, created_at);
+CREATE INDEX IF NOT EXISTS idx_proactive_status ON proactive (status, created_at);
+
+-- Règles que Guillaume a demandé de taire (« ne plus me suggérer ça »).
+CREATE TABLE IF NOT EXISTS proactive_mutes (
+    rule       TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -598,3 +627,103 @@ class Store:
         cursor = await self._db.execute("DELETE FROM suggestions WHERE id = ?", (sug_id,))
         await self._db.commit()
         return cursor.rowcount > 0
+
+    # ── Proactivité contextuelle (Phase 7) ───────────────────────────────────
+
+    @staticmethod
+    def _proactive_row(row) -> dict:
+        d = dict(row)
+        d["action"] = json.loads(d["action"]) if d.get("action") else None
+        return d
+
+    async def add_proactive(
+        self, *, key: str, rule: str, title: str, detail: str = "",
+        severity: str = "info", category: str = "", action: dict | None = None,
+    ) -> dict:
+        assert self._db is not None, "Store non ouvert"
+        now = _now_iso()
+        record = {
+            "id": uuid.uuid4().hex[:12], "key": key, "rule": rule, "title": title,
+            "detail": detail, "severity": severity, "category": category,
+            "action": json.dumps(action, ensure_ascii=False) if action else None,
+            "status": "active", "proposal_num": None,
+            "created_at": now, "updated_at": now, "snooze_until": None,
+        }
+        await self._db.execute(
+            "INSERT INTO proactive (id, key, rule, title, detail, severity, category, action,"
+            " status, proposal_num, created_at, updated_at, snooze_until)"
+            " VALUES (:id, :key, :rule, :title, :detail, :severity, :category, :action,"
+            " :status, :proposal_num, :created_at, :updated_at, :snooze_until)",
+            record,
+        )
+        await self._db.commit()
+        record["action"] = action
+        return record
+
+    async def get_proactive(self, sug_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT * FROM proactive WHERE id = ?", (sug_id,))
+        row = await cursor.fetchone()
+        return self._proactive_row(row) if row else None
+
+    async def list_proactive(self, statuses: tuple[str, ...] = ("active", "snoozed"), limit: int = 50) -> list[dict]:
+        """Suggestions visibles au cockpit (actives + reportées non expirées), récentes d'abord."""
+        assert self._db is not None, "Store non ouvert"
+        placeholders = ",".join("?" for _ in statuses)
+        cursor = await self._db.execute(
+            f"SELECT * FROM proactive WHERE status IN ({placeholders})"
+            " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (*statuses, limit),
+        )
+        rows = [self._proactive_row(r) for r in await cursor.fetchall()]
+        # Une suggestion « reportée » dont l'heure est passée redevient invisible ici.
+        now = _now_iso()
+        return [r for r in rows if not (r["status"] == "snoozed" and (r["snooze_until"] or "") <= now)]
+
+    async def find_live_proactive(self, key: str, cutoff_iso: str) -> dict | None:
+        """Anti-répétition : une suggestion pour cette `key` encore « vivante »
+        (active, reportée non expirée, ou trop récente) supprime un doublon."""
+        assert self._db is not None, "Store non ouvert"
+        now = _now_iso()
+        cursor = await self._db.execute(
+            "SELECT * FROM proactive WHERE key = ? AND ("
+            " status = 'active'"
+            " OR (status = 'snoozed' AND snooze_until > ?)"
+            " OR (status IN ('dismissed','acted') AND created_at > ?)"
+            ") ORDER BY created_at DESC LIMIT 1",
+            (key, now, cutoff_iso),
+        )
+        row = await cursor.fetchone()
+        return self._proactive_row(row) if row else None
+
+    async def update_proactive(self, sug_id: str, **fields) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        allowed = {"status", "proposal_num", "snooze_until"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return await self.get_proactive(sug_id)
+        sets["updated_at"] = _now_iso()
+        assignments = ", ".join(f"{k} = ?" for k in sets)
+        await self._db.execute(
+            f"UPDATE proactive SET {assignments} WHERE id = ?", (*sets.values(), sug_id)
+        )
+        await self._db.commit()
+        return await self.get_proactive(sug_id)
+
+    async def add_proactive_mute(self, rule: str) -> None:
+        assert self._db is not None, "Store non ouvert"
+        await self._db.execute(
+            "INSERT OR IGNORE INTO proactive_mutes (rule, created_at) VALUES (?, ?)",
+            (rule, _now_iso()),
+        )
+        await self._db.commit()
+
+    async def remove_proactive_mute(self, rule: str) -> None:
+        assert self._db is not None, "Store non ouvert"
+        await self._db.execute("DELETE FROM proactive_mutes WHERE rule = ?", (rule,))
+        await self._db.commit()
+
+    async def list_proactive_mutes(self) -> list[str]:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT rule FROM proactive_mutes ORDER BY created_at")
+        return [r["rule"] for r in await cursor.fetchall()]

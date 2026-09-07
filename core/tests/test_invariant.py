@@ -170,3 +170,32 @@ def test_proposer_evolution_passe_par_la_politique():
     assert "evaluate_diff(" in toolbox, "proposer_evolution doit appeler la politique (evaluate)"
     # La proposition est bien conditionnée par le verdict.
     assert "if not verdict.allowed" in toolbox
+
+
+# ── Proactivité contextuelle (Phase 7) : verrou statique ─────────────────────
+#
+# Luna observe et SUGGÈRE — jamais n'exécute. Le veilleur proactif ne peut que
+# créer une PROPOSITION (propose), qu'un humain approuve ensuite ; il n'exécute
+# aucune action de lui-même.
+
+PROACTIVE_DIR = APP_DIR / "proactive"
+
+
+def test_proactif_ne_declenche_jamais_une_action():
+    """Le paquet proactive n'appelle jamais run_direct/run_system/decide : au mieux
+    propose(). Aucune action ne part sans le double accord de Guillaume."""
+    offenders = []
+    for path in sorted(PROACTIVE_DIR.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        for needle in (".run_direct(", ".run_system(", ".decide(", ".call_service("):
+            if needle in src:
+                offenders.append(f"{path.name} contient « {needle} »")
+    assert not offenders, (
+        "La proactivité ne doit jamais exécuter — seulement proposer : " + ", ".join(offenders)
+    )
+
+
+def test_proactif_passe_par_propose():
+    """L'escalade d'une suggestion en action se fait via le moteur de PROPOSITIONS."""
+    engine = (PROACTIVE_DIR / "engine.py").read_text(encoding="utf-8")
+    assert "_engine.propose(" in engine

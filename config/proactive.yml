@@ -1,0 +1,34 @@
+# ── Proactivité contextuelle de Luna (Phase 7) ───────────────────────────
+# Luna observe l'état de la maison + l'heure et te SUGGÈRE (jamais n'exécute).
+# Ce fichier est FACULTATIF : sans lui, les valeurs par défaut ci-dessous
+# s'appliquent. Ajuste-le à ton rythme de vie — Luna peut d'ailleurs te proposer
+# elle-même de le modifier (Paramètres › Évolutions, Phase 6). Voir docs/PROACTIVITE.md.
+
+# Heure (0-23) à partir de laquelle volets/ouvertures encore ouverts sont signalés
+heure_nuit: 22
+# Heure à partir de laquelle des lumières encore allumées sont signalées
+heure_tard: 23
+
+# Heures calmes : entre ces deux heures, un simple constat ne parle PAS (il reste
+# dans le tiroir Suggestions). Une alerte de sécurité (porte/volet ouvert la nuit)
+# parle quand même. La fenêtre peut passer minuit (ex. 22 → 8).
+silence_debut: 22
+silence_fin: 8
+
+# Bande de confort de température (°C) : au-delà/en-deçà = simple constat
+temp_min: 17
+temp_max: 26
+
+# Silence par situation identique (minutes) : on ne répète pas une suggestion
+# déjà faite avant ce délai.
+silence_minutes: 180
+
+# Règles actives. Décommente pour restreindre à une liste ; sinon toutes le sont.
+# (Tu peux aussi taire une règle à la volée : « ne plus me suggérer ça ».)
+# regles:
+#   - ouverture_nuit      # porte/fenêtre ouverte le soir (constat)
+#   - volet_nuit          # volet/garage ouvert le soir (propose de fermer)
+#   - absence_appareils   # personne à la maison + lumières/musique
+#   - fenetre_chauffage   # fenêtre ouverte alors que le chauffage tourne
+#   - lumiere_tard        # lumières encore allumées tard (propose d'éteindre)
+#   - temperature         # pièce trop chaude / trop fraîche (constat)

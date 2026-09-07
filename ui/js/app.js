@@ -135,11 +135,19 @@ const els = {
   evoAccept: document.getElementById('evo-accept'),
   evoReject: document.getElementById('evo-reject'),
   evoClose: document.getElementById('evo-close'),
+  // proactivité (Phase 7)
+  proactiveBtn: document.getElementById('proactive-btn'),
+  proactiveCount: document.getElementById('proactive-count'),
+  proactiveBody: document.getElementById('proactive-body'),
+  navProactivite: document.getElementById('nav-proactivite'),
+  mutesList: document.getElementById('mutes-list'),
+  mutesCount: document.getElementById('mutes-count'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
 const drawers = {
   proposals: document.getElementById('proposals-panel'),
+  proactive: document.getElementById('proactive-panel'),
   sante: document.getElementById('sante-panel'),
   history: document.getElementById('history-panel'),
   mail: document.getElementById('mail-panel'),
@@ -342,6 +350,8 @@ ws.addEventListener('event', (e) => {
       els.liaisonGithub.hidden = !devConfigured;
       els.mailBtn.hidden = !(msg.config && msg.config.mail);
       if (els.navEvolutions) els.navEvolutions.hidden = !(msg.config && msg.config.self_improve);
+      if (els.navProactivite) els.navProactivite.hidden = !(msg.config && msg.config.proactive);
+      renderProactive({ suggestions: msg.proactive || [], muted: msg.proactive_muted || [] });
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -396,6 +406,7 @@ ws.addEventListener('event', (e) => {
     case 'page': showPagePreview(msg); break;
     case 'evolutions': renderEvolutions(msg); break;
     case 'evolution': showEvolution(msg); break;
+    case 'proactive': renderProactive(msg); break;
     default: break;
   }
 });
@@ -514,6 +525,7 @@ function drawersChanged() {
   setSantePolling(!drawers.sante.hidden);
   if (!drawers.history.hidden) ws.sendJSON({ type: 'historique' });
   if (!drawers.mail.hidden) ws.sendJSON({ type: 'mail' });
+  if (!drawers.proactive.hidden) ws.sendJSON({ type: 'proactive' });
 }
 els.proposalsBtn.addEventListener('click', () => openDrawer('proposals'));
 els.santeBtn.addEventListener('click', () => openDrawer('sante'));
@@ -1104,6 +1116,7 @@ function setSettingsSection(name) {
   if (name === 'profils' && ws.alive) ws.sendJSON({ type: 'speakers' });
   if (name === 'pages' && ws.alive) ws.sendJSON({ type: 'pages' });
   if (name === 'evolutions' && ws.alive) ws.sendJSON({ type: 'evolutions' });
+  if (name === 'proactivite' && ws.alive) ws.sendJSON({ type: 'proactive' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 
@@ -1441,6 +1454,94 @@ els.evoReject.addEventListener('click', () => {
   closeEvolution();
 });
 els.evoClose.addEventListener('click', closeEvolution);
+
+// ── Proactivité (tiroir Suggestions + Paramètres › Proactivité) ───────────
+const PROACTIVE_RULES = {
+  ouverture_nuit: 'Porte / fenêtre ouverte la nuit',
+  volet_nuit: 'Volet / garage ouvert le soir',
+  absence_appareils: 'Personne à la maison + appareils',
+  fenetre_chauffage: 'Fenêtre ouverte + chauffage',
+  lumiere_tard: 'Lumières allumées tard',
+  temperature: 'Température inconfortable',
+};
+const PROACTIVE_CAT = { securite: 'sécurité', confort: 'confort', energie: 'énergie' };
+let lastProactive = { suggestions: [], muted: [] };
+
+function renderProactive(msg) {
+  lastProactive = { suggestions: msg.suggestions || [], muted: msg.muted || [] };
+  const items = lastProactive.suggestions;
+  const available = !!(lastHello && lastHello.config && lastHello.config.proactive);
+  els.proactiveCount.textContent = String(items.length);
+  els.proactiveBtn.hidden = !available && drawers.proactive.hidden;
+  els.proactiveBtn.classList.toggle('attention', items.length > 0);
+
+  els.proactiveBody.textContent = '';
+  if (!items.length) {
+    els.proactiveBody.appendChild(emptyLine('Rien à signaler. Luna veille sur la maison.'));
+  } else {
+    for (const s of items) els.proactiveBody.appendChild(proactiveCard(s));
+  }
+  renderMutes(lastProactive.muted);
+}
+
+function proactiveCard(s) {
+  const card = document.createElement('div');
+  card.className = `pro-card ${s.severity || 'info'}`;
+  const head = document.createElement('div');
+  head.className = 'pro-head';
+  const cat = document.createElement('span');
+  cat.className = `pro-cat ${s.category || ''}`;
+  cat.textContent = PROACTIVE_CAT[s.category] || s.category || 'info';
+  const title = document.createElement('div');
+  title.className = 'pro-title';
+  title.textContent = s.title;
+  head.append(cat, title);
+  const detail = document.createElement('div');
+  detail.className = 'pro-detail';
+  detail.textContent = s.detail || '';
+  card.append(head, detail);
+
+  const acts = document.createElement('div');
+  acts.className = 'pro-acts';
+  if (s.action) {
+    const prep = pageBtn('Préparer la proposition', () => {
+      ws.sendJSON({ type: 'proactive_make_proposal', id: s.id });
+      toast('Proposition préparée — à approuver dans les propositions.');
+    });
+    prep.classList.add('primary');
+    acts.appendChild(prep);
+  }
+  acts.appendChild(pageBtn('Plus tard', () => ws.sendJSON({ type: 'proactive_snooze', id: s.id })));
+  acts.appendChild(pageBtn('Ignorer', () => ws.sendJSON({ type: 'proactive_dismiss', id: s.id })));
+  acts.appendChild(pageBtn('Ne plus suggérer ça', () => {
+    ws.sendJSON({ type: 'proactive_mute', rule: s.rule });
+    toast('Compris — je ne te le suggérerai plus.');
+  }, true));
+  card.appendChild(acts);
+  return card;
+}
+
+function renderMutes(muted) {
+  if (!els.mutesList) return;
+  els.mutesCount.textContent = muted.length ? String(muted.length) : '';
+  els.mutesList.textContent = '';
+  if (!muted.length) {
+    els.mutesList.appendChild(emptyLine('Aucune règle tue — Luna te suggère tout ce qu\'elle observe.'));
+    return;
+  }
+  for (const rule of muted) {
+    const row = document.createElement('div');
+    row.className = 'mem-row';
+    const label = document.createElement('span');
+    label.className = 'mem-text';
+    label.textContent = PROACTIVE_RULES[rule] || rule;
+    const btn = pageBtn('Réactiver', () => ws.sendJSON({ type: 'proactive_unmute', rule }));
+    row.append(label, btn);
+    els.mutesList.appendChild(row);
+  }
+}
+
+els.proactiveBtn.addEventListener('click', () => openDrawer('proactive'));
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────
 let wakeRetryTimer = null;

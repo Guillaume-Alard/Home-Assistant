@@ -64,6 +64,7 @@ from .ha.client import HAClient
 from .ha.protocols import ProtocolBook
 from .mail import GmailClient, MailError
 from .monitors import AtriumMonitor, DockerMonitor, HealthService
+from .proactive import ProactiveEngine
 from .selfmod import SelfSource, summarize as summarize_diff
 from .store import Store
 from .voice.session import CaptureSession
@@ -236,6 +237,13 @@ class Sentinel:
             self.alerts = AlertEngine(
                 load_rules(settings.config_dir / "alerts.yml"), self.ha, self.engine, self.announce
             )
+        # Proactivité contextuelle (Phase 7) : observe et SUGGÈRE, jamais n'exécute.
+        self.proactive: ProactiveEngine | None = None
+        if self.ha and self.engine and settings.proactive_enabled:
+            self.proactive = ProactiveEngine(
+                settings, self.ha, self.engine, store,
+                say=self.say_proactive, on_change=self._broadcast_proactive,
+            )
 
         # Auto-amélioration encadrée (Phase 6) : lecteur SEULE lecture de son propre
         # code (app/ + ui/), pour que Luna rédige des diffs justes.
@@ -259,6 +267,7 @@ class Sentinel:
         )
         self._report_task: asyncio.Task | None = None
         self._devwatch_task: asyncio.Task | None = None
+        self._proactive_task: asyncio.Task | None = None
         self._dev_running: dict | None = None  # tâche de dev en cours (cache pour hello)
         self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
 
@@ -272,6 +281,10 @@ class Sentinel:
     async def _on_ha_event(self, event: dict) -> None:
         if self.alerts:
             await self.alerts.on_state_changed(event)
+        # Un changement d'état peut créer une situation à suggérer (porte ouverte…) :
+        # on réévalue, de façon amortie (au plus une fois toutes les 20 s).
+        if self.proactive and event.get("event_type") == "state_changed":
+            self._spawn(self.proactive.nudge())
 
     async def _on_ha_status(self, connected: bool) -> None:
         await self.hub.broadcast({"type": "ha_status", "connected": connected})
@@ -369,6 +382,27 @@ class Sentinel:
         """Rafraîchit Paramètres › Évolutions quand Luna propose une auto-amélioration."""
         await self.hub.broadcast(await self._evolutions_payload())
 
+    # ── Proactivité contextuelle (Phase 7) ───────────────────────────────
+
+    async def say_proactive(self, text: str, speak: bool = True) -> None:
+        """Luna prend la parole d'elle-même pour un constat/suggestion (fil + voix,
+        SANS bannière d'alerte — c'est une suggestion, pas une alarme)."""
+        message = await self.store.add_message("assistant", text, "proactive")
+        await self.hub.broadcast({"type": "message", "message": message})
+        if speak:
+            self._spawn(self._speak_announcement(text, "info"))
+
+    async def _proactive_payload(self) -> dict:
+        return {
+            "type": "proactive",
+            "enabled": self.proactive is not None,
+            "suggestions": await self.store.list_proactive(),
+            "muted": await self.store.list_proactive_mutes(),
+        }
+
+    async def _broadcast_proactive(self) -> None:
+        await self.hub.broadcast(await self._proactive_payload())
+
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
     async def announce(self, text: str, severity: str = "info", speak: bool = True) -> None:
@@ -427,6 +461,12 @@ class Sentinel:
         self._devwatch_task = asyncio.create_task(watcher.run())
         log.info("Veilleur des tâches de développement actif (%s)", self.settings.worker_url)
 
+    def start_proactive(self) -> None:
+        if self.proactive is None:
+            return
+        self._proactive_task = asyncio.create_task(self.proactive.run())
+        log.info("Veilleur proactif actif (intervalle %ss)", self.settings.proactive_interval)
+
     async def _on_dev_running(self, running: dict | None) -> None:
         """Pastille « atelier au travail » de l'UI, mise à jour par le veilleur."""
         self._dev_running = (
@@ -435,13 +475,14 @@ class Sentinel:
         await self.hub.broadcast({"type": "dev_status", "running": self._dev_running})
 
     async def stop_background(self) -> None:
-        for task in (self._report_task, self._devwatch_task):
+        for task in (self._report_task, self._devwatch_task, self._proactive_task):
             if task:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         self._report_task = None
         self._devwatch_task = None
+        self._proactive_task = None
         await self.health.close()
         if self._worker:
             await self._worker.close()
@@ -788,6 +829,7 @@ async def lifespan(app: FastAPI):
         await sentinel.ha.start()
     sentinel.start_daily_report()
     sentinel.start_dev_watcher()
+    sentinel.start_proactive()
     log.info(
         "Sentinel %s démarré — modèle %s, effort %s, UI %s",
         __version__, settings.model, settings.effort, settings.ui_dir,
@@ -939,9 +981,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "mail": sentinel.mail is not None,
                 "web_search": sentinel.settings.web_search_enabled and bool(sentinel.settings.anthropic_api_key),
                 "self_improve": sentinel.settings.self_improve_enabled,
+                "proactive": sentinel.proactive is not None,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
+            # Suggestions proactives en cours (Phase 7) — tiroir Suggestions
+            "proactive": await sentinel.store.list_proactive(),
+            "proactive_muted": await sentinel.store.list_proactive_mutes(),
         },
     )
 
@@ -1144,6 +1190,13 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "evolution_delete":
         await _evolution_action(sentinel, msg, "delete")
+
+    elif mtype == "proactive":
+        await sentinel.hub.send(client, await sentinel._proactive_payload())
+
+    elif mtype in ("proactive_make_proposal", "proactive_snooze", "proactive_dismiss",
+                   "proactive_mute", "proactive_unmute"):
+        await _proactive_action(sentinel, client, msg, mtype)
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
@@ -1375,6 +1428,35 @@ async def _evolution_action(sentinel: Sentinel, msg: dict, action: str) -> None:
     else:  # accepted | rejected — décision humaine, n'applique aucun code
         await sentinel.store.decide_suggestion(sug_id, action)
     await sentinel._broadcast_evolutions()
+
+
+# ── Proactivité : décisions du cockpit sur les suggestions (Phase 7) ──────────
+#
+# « Préparer la proposition » ne fait que créer une PROPOSITION (moteur d'actions),
+# que Guillaume approuve ensuite — deux gestes humains, aucune exécution auto. Les
+# autres actions (plus tard / ignorer / ne plus suggérer) ne font que ranger.
+
+
+async def _proactive_action(sentinel: Sentinel, client: Client, msg: dict, mtype: str) -> None:
+    if sentinel.proactive is None:
+        return
+    if mtype in ("proactive_mute", "proactive_unmute"):
+        rule = str(msg.get("rule") or "").strip()
+        if mtype == "proactive_mute":
+            await sentinel.proactive.mute(rule)
+        else:
+            await sentinel.proactive.unmute(rule)
+        return
+    sug_id = str(msg.get("id") or "").strip()
+    if not sug_id:
+        return
+    if mtype == "proactive_make_proposal":
+        message = await sentinel.proactive.make_proposal(sug_id)
+        await sentinel.hub.send(client, {"type": "notice", "text": message})
+    elif mtype == "proactive_snooze":
+        await sentinel.proactive.snooze(sug_id)
+    elif mtype == "proactive_dismiss":
+        await sentinel.proactive.dismiss(sug_id)
 
 
 # ── Profils vocaux : création, suppression, enrôlement (Paramètres › Profils) ──
