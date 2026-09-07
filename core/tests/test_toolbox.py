@@ -67,9 +67,13 @@ async def box(tmp_path, monkeypatch):
     from app.ha.media import MediaConfig
 
     media = MediaConfig(presets={"jazz": {"source": "Spotify"}}, default_room="Salon")
+    from app.briefing import BriefingService
+
+    briefing = BriefingService(Settings.from_env(), ha, health, store, mail=None)
     toolbox = Toolbox(
         ha, engine, protocols, store, health=health, docker=docker,
         source=source, routines=routines, media=media, reminders=True, tz="Europe/Paris",
+        briefing=briefing,
     )
     yield SimpleNamespace(
         ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
@@ -95,6 +99,7 @@ async def test_specs_stables_et_completes(box):
         "proposer_routine", "lancer_routine", "lister_routines",
         "etat_musique", "musique",
         "minuteur", "rappel", "lister_rappels", "annuler_rappel",
+        "briefing",
     ]
     assert all(s["description"] for s in specs)
 
@@ -645,3 +650,17 @@ async def test_rappels_refuses_a_l_invite(box):
     content, is_error = await _run_as(box, "minuteur", {"minutes": 5}, UNKNOWN)
     assert not is_error and "reconnais pas" in content.lower()
     assert await box.store.list_reminders("active") == []
+
+
+# ── Briefing du matin (Phase 11) ─────────────────────────────────────────────
+
+async def test_briefing_a_la_demande(box):
+    content, is_error = await _run_as(box, "briefing", {}, _HOUSEHOLD)
+    assert not is_error
+    assert "Bonjour" in content or "Bonsoir" in content
+    assert "Maison" in content  # l'état de la maison figure dans le brief
+
+
+async def test_briefing_refuse_a_l_invite(box):
+    content, is_error = await _run_as(box, "briefing", {}, UNKNOWN)
+    assert not is_error and "reconnais pas" in content.lower()

@@ -13,6 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
+from ..briefing import BriefingService
 from ..identity import OWNER, Speaker
 from ..devwork.worker_client import WorkerClient, WorkerError
 from ..mail import GmailClient, MailError
@@ -85,6 +86,7 @@ ACTIVITY_LABELS = {
     "rappel": "note un rappel…",
     "lister_rappels": "relit tes rappels…",
     "annuler_rappel": "annule un rappel…",
+    "briefing": "prépare ton briefing…",
 }
 
 
@@ -109,6 +111,7 @@ class Toolbox:
         media: MediaConfig | None = None,
         reminders: bool = False,
         tz: str = "Europe/Paris",
+        briefing: BriefingService | None = None,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_pages_change: Callable[[], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
@@ -134,6 +137,8 @@ class Toolbox:
         self._reminders = reminders
         self._tz = tz
         self._on_reminders_change = on_reminders_change
+        # Briefing du matin (Phase 11).
+        self._briefing = briefing
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
@@ -661,6 +666,18 @@ class Toolbox:
                     },
                 },
             ]
+        # Briefing du matin (Phase 11) — récapitulatif à la demande.
+        if self._briefing is not None:
+            specs.append({
+                "name": "briefing",
+                "description": (
+                    "Prépare le briefing : météo (via Nova), état de la maison, courriels non "
+                    "lus, rappels du jour, santé des systèmes. Sur demande (« fais-moi le "
+                    "briefing », « quoi de neuf ce matin ? »). Restitue-le tel quel, sans le "
+                    "réinventer."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            })
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -692,6 +709,8 @@ class Toolbox:
         # Minuteurs & rappels (Phase 10) : personne reconnue (usage courant).
         "minuteur": "known", "rappel": "known",
         "lister_rappels": "known", "annuler_rappel": "known",
+        # Briefing du matin (Phase 11) : personne reconnue (contient mail/rappels).
+        "briefing": "known",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -1426,3 +1445,11 @@ class Toolbox:
         await self._store.set_reminder_status(rid, "cancelled")
         await self._notify_reminders_change()
         return "C'est annulé.", False
+
+    # Briefing du matin (Phase 11) ────────────────────────────────────────
+
+    async def _tool_briefing(self, _args, _utt, _src):
+        if self._briefing is None:
+            return "Le briefing n'est pas disponible.", True
+        pending = len(await self._store.list_proposals("pending"))
+        return await self._briefing.compose(pending=pending), False

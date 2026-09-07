@@ -56,6 +56,7 @@ from .brain.llm import Brain, LLMUnavailable
 from .brain.memory import format_profile, normalize_category
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.toolbox import Toolbox
+from .briefing import BriefingService
 from .config import Settings, find_ui_dir
 from .devwork import DevWatcher, WorkerClient, WorkerError
 from .identity import OWNER, Speaker, identify
@@ -260,6 +261,8 @@ class Sentinel:
             if self.ha and settings.music_enabled else None
         )
         self._media_last = 0.0  # anti-rafale des diffusions d'état média
+        # Briefing du matin (Phase 11) : météo + maison + courriel + rappels + santé.
+        self.briefing = BriefingService(settings, self.ha, self.health, store, self.mail)
         # Minuteurs & rappels (Phase 10) : 100% local, indépendant de Nova.
         self.reminders: ReminderScheduler | None = (
             ReminderScheduler(
@@ -277,7 +280,7 @@ class Sentinel:
             health=self.health, docker=self._docker, worker=self._worker,
             mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
             routines=self.routines, media=self.media_cfg,
-            reminders=settings.reminders_enabled, tz=settings.tz,
+            reminders=settings.reminders_enabled, tz=settings.tz, briefing=self.briefing,
             on_memory_change=self._broadcast_memoires,
             on_pages_change=self._broadcast_pages,
             on_suggestions_change=self._broadcast_evolutions,
@@ -522,8 +525,8 @@ class Sentinel:
             try:
                 pending = await self.store.list_proposals("pending")
                 deferred = await self.store.list_proposals("deferred")
-                text = await self.health.rapport_quotidien(len(pending) + len(deferred))
-                await self.announce(text, "info", speak=False)
+                text = await self.briefing.compose(pending=len(pending) + len(deferred))
+                await self.announce(text, "info", speak=True)
             except Exception:
                 log.exception("Rapport quotidien en échec")
 

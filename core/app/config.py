@@ -150,6 +150,9 @@ class Settings:
     # Minuteurs & rappels vocaux (Phase 10) — 100% local. Off = outils retirés.
     reminders_enabled: bool = True
 
+    # Briefing du matin (Phase 11) — entité météo de Nova (auto-détectée si vide).
+    weather_entity: str = ""
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -225,6 +228,7 @@ class Settings:
             not in ("off", "0", "false", "no", "non"),
             reminders_enabled=os.environ.get("SENTINEL_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
+            weather_entity=os.environ.get("SENTINEL_WEATHER_ENTITY", "").strip(),
         )
 
     @property
