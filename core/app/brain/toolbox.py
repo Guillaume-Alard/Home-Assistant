@@ -1232,7 +1232,8 @@ class Toolbox:
         zone = str(args.get("zone") or "").strip()
         entity_ids = args.get("entity_ids") or []
         players = media_lib.resolve_players(
-            self._ha, zone=zone, entity_ids=entity_ids, default_room=self._media.default_room
+            self._ha, zone=zone, entity_ids=entity_ids,
+            default_room=self._media.default_room, default_player=self._media.default_player,
         )
         if not players:
             return ("Je ne sais pas sur quel lecteur agir — précise une pièce "

@@ -1,20 +1,34 @@
-# ── Musique : préréglages & pièce par défaut (Phase 9) ───────────────────
-# FACULTATIF. Luna pilote tes lecteurs media_player de Nova (Spotify, enceintes…)
-# via leurs services standard — sans ce fichier, tout fonctionne déjà (lecture,
-# pause, volume, source, transfert). Ce fichier ne sert qu'à donner des raccourcis
-# nommés (« mets du jazz ») et une pièce par défaut. Voir docs/MUSIQUE.md.
+# ── Musique : préréglages & lecteur par défaut (Phase 9) ─────────────────
+# Luna pilote tes lecteurs media_player de Nova. Ce fichier donne un lecteur par
+# défaut, une pièce par défaut, et des raccourcis nommés (« mets du jazz »).
+# Voir docs/MUSIQUE.md.
 
-# Pièce visée quand tu ne la précises pas (« mets de la musique »).
+# Lecteur visé quand tu ne précises rien (« mets de la musique ») et qu'aucun
+# lecteur ne joue déjà — ton lecteur Spotify.
+lecteur_defaut: media_player.spotify_guillaume_alard
+
+# Pièce visée en priorité si tu dis « … dans le salon » (utilise l'entité de la
+# pièce si elle existe ; sinon on retombe sur lecteur_defaut).
 piece_defaut: Salon
 
-# Préréglages : un nom → soit une SOURCE (de la source_list du lecteur), soit un
-# contenu à jouer (content_id + content_type, ex. un URI Spotify). Le nom est
-# insensible à la casse/aux accents.
+# Préréglages : un nom → un contenu Spotify à jouer.
+#   content_id   : l'URI Spotify (voir « Comment obtenir une URI » plus bas)
+#   content_type : playlist | album | track | artist
+#
+# ⚠️  Remplace les URI d'exemple par CELLES DE TES PROPRES playlists : depuis la
+#     mise à jour de l'API Spotify (fin 2024), les playlists “éditoriales” de
+#     Spotify (celles dont l'ID commence par 37i9…) ne sont plus jouables par
+#     l'API. Tes playlists à toi, en revanche, marchent parfaitement.
+#
+# Comment obtenir une URI : dans Spotify, clic droit sur une playlist/album →
+#   Partager → « Copier le lien Spotify URI » (format spotify:playlist:xxxxxxxx).
 presets:
-  # Exemple par SOURCE (le plus simple — un nom de source déjà connu du lecteur) :
-  radio:
-    source: "TSF Jazz"
-  # Exemple par CONTENU (URI d'intégration, ex. Spotify / Music Assistant) :
   # jazz:
-  #   content_id: "spotify:playlist:37i9dQZF1DXbITWG1ZJKYt"
-  #   content_type: "music"
+  #   content_id: "spotify:playlist:TON_ID_ICI"
+  #   content_type: "playlist"
+  # detente:
+  #   content_id: "spotify:playlist:TON_ID_ICI"
+  #   content_type: "playlist"
+  # boulot:
+  #   content_id: "spotify:playlist:TON_ID_ICI"
+  #   content_type: "playlist"

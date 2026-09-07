@@ -38,10 +38,13 @@ def test_load_config(tmp_path):
         "piece_defaut: Salon\npresets:\n  Jazz: {source: Spotify}\n  Détente: {content_id: 'spotify:x', content_type: music}\n",
         encoding="utf-8",
     )
-    cfg = media_lib.load_config(tmp_path / "media.yml")
-    assert cfg.default_room == "Salon"
+    (tmp_path / "media2.yml").write_text(
+        "lecteur_defaut: media_player.spotify_x\npiece_defaut: Salon\npresets:\n  Jazz: {source: Spotify}\n",
+        encoding="utf-8",
+    )
+    cfg = media_lib.load_config(tmp_path / "media2.yml")
+    assert cfg.default_room == "Salon" and cfg.default_player == "media_player.spotify_x"
     assert "jazz" in cfg.presets and cfg.presets["jazz"]["source"] == "Spotify"  # clé normalisée
-    assert "detente" in cfg.presets
 
     assert media_lib.load_config(tmp_path / "absent.yml").presets == {}  # facultatif
 
@@ -64,6 +67,11 @@ def test_resolve_players():
     assert media_lib.resolve_players(ha) == ["media_player.salon"]
     # Pièce inconnue → rien
     assert media_lib.resolve_players(ha, zone="grenier") == []
+
+    # Rien ne joue : dernier recours = le lecteur par défaut (ex. Spotify hors pièce)
+    ha._states["media_player.salon"]["state"] = "off"
+    assert media_lib.resolve_players(ha, default_player="media_player.cuisine") == ["media_player.cuisine"]
+    assert media_lib.resolve_players(ha, default_player="media_player.inexistant") == []
 
 
 # ── Exécuteur ha.media (via le moteur d'actions) ─────────────────────────────

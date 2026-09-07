@@ -27,7 +27,8 @@ _LIVE = {"playing", "paused", "idle", "on", "buffering"}
 class MediaConfig:
     # Préréglages nommés : « jazz » → {source: …} ou {content_id, content_type}
     presets: dict[str, dict] = field(default_factory=dict)
-    default_room: str = ""   # pièce par défaut si non précisée
+    default_room: str = ""     # pièce par défaut si non précisée
+    default_player: str = ""   # lecteur par défaut (ex. le lecteur Spotify, hors pièce)
 
 
 def load_config(path: Path) -> MediaConfig:
@@ -44,7 +45,11 @@ def load_config(path: Path) -> MediaConfig:
     for name, spec in (raw.get("presets") or {}).items():
         if isinstance(spec, dict):
             presets[normalize(str(name))] = spec
-    return MediaConfig(presets=presets, default_room=str(raw.get("piece_defaut") or "").strip())
+    return MediaConfig(
+        presets=presets,
+        default_room=str(raw.get("piece_defaut") or "").strip(),
+        default_player=str(raw.get("lecteur_defaut") or "").strip(),
+    )
 
 
 def _volume_pct(attrs: dict) -> int | None:
@@ -91,9 +96,10 @@ def snapshot(ha, *, live_only: bool = True) -> list[dict]:
     return out
 
 
-def resolve_players(ha, *, zone: str = "", entity_ids=None, default_room: str = "") -> list[str]:
+def resolve_players(ha, *, zone: str = "", entity_ids=None,
+                    default_room: str = "", default_player: str = "") -> list[str]:
     """Cible → liste d'entity_id media_player. Priorité : entity_ids > zone >
-    lecteur(s) en cours de lecture > pièce par défaut."""
+    lecteur(s) en cours de lecture > pièce par défaut > lecteur par défaut."""
     if entity_ids:
         return [e for e in entity_ids if isinstance(e, str) and e.startswith("media_player.")]
     if zone:
@@ -108,6 +114,9 @@ def resolve_players(ha, *, zone: str = "", entity_ids=None, default_room: str = 
         return playing
     if default_room:
         found = ha.find_area_in_text(default_room)
-        if found:
+        if found and ha.entities_in_area(found[0], "media_player"):
             return ha.entities_in_area(found[0], "media_player")
+    # Dernier recours : le lecteur par défaut (ex. le lecteur Spotify, hors pièce)
+    if default_player and ha.get_state(default_player) is not None:
+        return [default_player]
     return []
