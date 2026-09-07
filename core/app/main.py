@@ -61,6 +61,7 @@ from .devwork import DevWatcher, WorkerClient, WorkerError
 from .identity import OWNER, Speaker, identify
 from .ha.alerts import AlertEngine, load_rules
 from .ha.client import HAClient
+from .ha.media import load_config as load_media_config, snapshot as media_snapshot
 from .ha.protocols import ProtocolBook
 from .mail import GmailClient, MailError
 from .monitors import AtriumMonitor, DockerMonitor, HealthService
@@ -252,6 +253,12 @@ class Sentinel:
                 settings, self.ha, self.engine, store,
                 announce=self.say_proactive, on_change=self._broadcast_routines,
             )
+        # Musique multi-pièces (Phase 9) : pilotage des media_player de Nova.
+        self.media_cfg = (
+            load_media_config(settings.config_dir / "media.yml")
+            if self.ha and settings.music_enabled else None
+        )
+        self._media_last = 0.0  # anti-rafale des diffusions d'état média
 
         # Auto-amélioration encadrée (Phase 6) : lecteur SEULE lecture de son propre
         # code (app/ + ui/), pour que Luna rédige des diffs justes.
@@ -260,7 +267,7 @@ class Sentinel:
             self.ha, self.engine, self.protocols, store,
             health=self.health, docker=self._docker, worker=self._worker,
             mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
-            routines=self.routines,
+            routines=self.routines, media=self.media_cfg,
             on_memory_change=self._broadcast_memoires,
             on_pages_change=self._broadcast_pages,
             on_suggestions_change=self._broadcast_evolutions,
@@ -294,6 +301,15 @@ class Sentinel:
         # on réévalue, de façon amortie (au plus une fois toutes les 20 s).
         if self.proactive and event.get("event_type") == "state_changed":
             self._spawn(self.proactive.nudge())
+        # Musique : rafraîchit la tuile lecteur quand un media_player change
+        # (amorti : au plus une diffusion toutes les 1,5 s — la position défile vite).
+        if self.media_cfg and event.get("event_type") == "state_changed":
+            entity_id = (event.get("data") or {}).get("entity_id") or ""
+            if entity_id.startswith("media_player."):
+                now = time.monotonic()
+                if now - self._media_last >= 1.5:
+                    self._media_last = now
+                    self._spawn(self._broadcast_media())
 
     async def _on_ha_status(self, connected: bool) -> None:
         await self.hub.broadcast({"type": "ha_status", "connected": connected})
@@ -423,6 +439,15 @@ class Sentinel:
 
     async def _broadcast_routines(self) -> None:
         await self.hub.broadcast(await self._routines_payload())
+
+    # ── Musique multi-pièces (Phase 9) ───────────────────────────────────
+
+    def _media_payload(self) -> dict:
+        players = media_snapshot(self.ha, live_only=True) if self.ha else []
+        return {"type": "media", "enabled": self.media_cfg is not None, "players": players}
+
+    async def _broadcast_media(self) -> None:
+        await self.hub.broadcast(self._media_payload())
 
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
@@ -1008,6 +1033,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "self_improve": sentinel.settings.self_improve_enabled,
                 "proactive": sentinel.proactive is not None,
                 "routines": sentinel.routines is not None,
+                "music": sentinel.media_cfg is not None,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
@@ -1016,6 +1042,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "proactive_muted": await sentinel.store.list_proactive_mutes(),
             # Routines (Phase 8) — Paramètres › Routines
             "routines": await sentinel.store.list_routines(),
+            # Musique (Phase 9) — tuile lecteur (lecteurs actifs à l'instant)
+            "media": sentinel._media_payload()["players"],
         },
     )
 
@@ -1232,6 +1260,12 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype in ("routine_approve", "routine_reject", "routine_delete",
                    "routine_run", "routine_rename"):
         await _routine_action(sentinel, client, msg, mtype)
+
+    elif mtype == "media":
+        await sentinel.hub.send(client, sentinel._media_payload())
+
+    elif mtype == "media_control":
+        await _media_control(sentinel, client, msg)
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
@@ -1523,6 +1557,37 @@ async def _routine_action(sentinel: Sentinel, client: Client, msg: dict, mtype: 
             return
         text, _ = await sentinel.routines.run(routine, utterance="depuis l'interface", source="ui")
         await sentinel.hub.send(client, {"type": "notice", "text": text})
+
+
+# ── Musique : contrôle du lecteur depuis le cockpit (Phase 9) ────────────────
+#
+# Chaque commande passe par le MOTEUR (run_direct → ha.media), comme la musique à
+# la voix. Actions courantes, non sensibles ; l'état est rediffusé aussitôt.
+
+
+async def _media_control(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    if sentinel.media_cfg is None or sentinel.engine is None:
+        return
+    op = str(msg.get("op") or "")
+    ids = [e for e in (msg.get("entity_ids") or []) if isinstance(e, str)]
+    if not op or not ids:
+        return
+    params: dict = {"op": op, "entity_ids": ids}
+    if op == "volume":
+        try:
+            params["level"] = max(0.0, min(1.0, float(msg.get("level"))))
+        except (TypeError, ValueError):
+            return
+    elif op == "source":
+        params["source"] = str(msg.get("source") or "")
+    elif op == "join":
+        params["group_members"] = [e for e in (msg.get("group_members") or []) if isinstance(e, str)]
+    outcome = await sentinel.engine.run_direct(
+        "ha.media", params, utterance="depuis l'interface", source="ui"
+    )
+    if not outcome.ok:
+        await sentinel.hub.send(client, {"type": "notice", "text": outcome.text})
+    await sentinel._broadcast_media()
 
 
 # ── Profils vocaux : création, suppression, enrôlement (Paramètres › Profils) ──

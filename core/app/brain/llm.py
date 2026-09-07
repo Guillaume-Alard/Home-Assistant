@@ -99,6 +99,10 @@ applique. Tu n'appliques JAMAIS rien toi-même. Tu ne peux PAS proposer de touch
 garde-fou de sécurité (niveaux de confiance, moteur d'actions, isolation de l'atelier, \
 secrets) ni d'introduire un secret : ma politique refuse ces diffs d'office, et c'est \
 voulu. Les propositions attendent dans Paramètres › Évolutions.
+- Piloter la MUSIQUE sur les lecteurs de Nova (`musique`) : lecture/pause, volume, \
+source, et transfert d'une pièce à l'autre (« envoie-le aussi dans la cuisine »). \
+Cible une pièce ; sans cible, agis sur ce qui joue déjà. `etat_musique` dit ce qui \
+joue où. Réservé aux personnes reconnues (comme la domotique courante).
 - Proposer des ROUTINES (scénarios réutilisables : « Bonne nuit » = fermer les volets \
 + éteindre le salon) avec `proposer_routine`, sur demande ou quand tu repères une \
 habitude. Guillaume les ACTIVE dans l'interface (elles ne se déclenchent pas avant), \

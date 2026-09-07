@@ -237,6 +237,68 @@ def build_registry(
 
     reg.register(ActionSpec("ha.notify", "Envoyer une notification", "low", True, notify))
 
+    # ── Musique (media_player — courant, jamais sensible) ────────────────
+
+    _MEDIA_SIMPLE = {
+        "play": ("media_play", "Lecture"), "pause": ("media_pause", "Pause"),
+        "playpause": ("media_play_pause", "Lecture/pause"), "stop": ("media_stop", "Arrêt"),
+        "next": ("media_next_track", "Piste suivante"), "previous": ("media_previous_track", "Piste précédente"),
+        "volume_up": ("volume_up", "Volume +"), "volume_down": ("volume_down", "Volume −"),
+    }
+
+    async def media(params: dict) -> str:
+        op = params.get("op")
+        ids = _entity_ids(params, {"media_player"})
+        who = _friendly_list(ha, ids)
+        if op in _MEDIA_SIMPLE:
+            service, verbe = _MEDIA_SIMPLE[op]
+            await ha.call_service("media_player", service, target={"entity_id": ids})
+            return f"{verbe} : {who}."
+        if op == "volume":
+            try:
+                level = float(params.get("level"))
+            except (TypeError, ValueError):
+                raise ActionError("Niveau de volume invalide.") from None
+            level = max(0.0, min(1.0, level))
+            await ha.call_service("media_player", "volume_set",
+                                  data={"volume_level": level}, target={"entity_id": ids})
+            return f"Volume à {round(level * 100)} % : {who}."
+        if op in ("mute", "unmute"):
+            await ha.call_service("media_player", "volume_mute",
+                                  data={"is_volume_muted": op == "mute"}, target={"entity_id": ids})
+            return f"{'Son coupé' if op == 'mute' else 'Son rétabli'} : {who}."
+        if op == "source":
+            source = str(params.get("source") or "").strip()
+            if not source:
+                raise ActionError("Aucune source précisée.")
+            await ha.call_service("media_player", "select_source",
+                                  data={"source": source}, target={"entity_id": ids})
+            return f"Source « {source} » : {who}."
+        if op == "play_media":
+            content_id = str(params.get("media_content_id") or "").strip()
+            content_type = str(params.get("media_content_type") or "music").strip()
+            if not content_id:
+                raise ActionError("Contenu à jouer manquant.")
+            await ha.call_service("media_player", "play_media", data={
+                "media_content_id": content_id, "media_content_type": content_type,
+            }, target={"entity_id": ids})
+            return f"Lecture lancée : {who}."
+        if op == "join":
+            members = params.get("group_members") or []
+            members = _entity_ids({"entity_ids": members}, {"media_player"})
+            await ha.call_service("media_player", "join",
+                                  data={"group_members": members}, target={"entity_id": ids})
+            return f"Regroupé avec {_friendly_list(ha, members)}."
+        if op == "unjoin":
+            await ha.call_service("media_player", "unjoin", target={"entity_id": ids})
+            return f"Dégroupé : {who}."
+        raise ActionError(f"Opération musique inconnue : {op}.")
+
+    reg.register(ActionSpec(
+        "ha.media", "Contrôler la musique (lecture, volume, source, multi-pièces)",
+        "low", True, media,
+    ))
+
     # ── Service générique (propositions uniquement) ──────────────────────
 
     async def generic_service(params: dict) -> str:

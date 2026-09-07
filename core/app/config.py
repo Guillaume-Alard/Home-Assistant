@@ -142,6 +142,11 @@ class Settings:
     routine_habit_min_days: int = 3    # nb de jours distincts pour qu'une habitude compte
     routine_habit_lookback: int = 21   # fenêtre d'analyse (jours)
 
+    # Musique multi-pièces (Phase 9) — pilotage des media_player de Nova (Spotify,
+    # enceintes…) via leurs services standard. Aucun compte en plus. Off = outils
+    # et tuile musique retirés. Préréglages : config/media.yml.
+    music_enabled: bool = True
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -213,6 +218,8 @@ class Settings:
             not in ("off", "0", "false", "no", "non"),
             routine_habit_min_days=_int(os.environ.get("SENTINEL_ROUTINE_MIN_DAYS"), 3),
             routine_habit_lookback=_int(os.environ.get("SENTINEL_ROUTINE_LOOKBACK"), 21),
+            music_enabled=os.environ.get("SENTINEL_MUSIC", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
         )
 
     @property

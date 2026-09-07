@@ -37,6 +37,14 @@ async def box(tmp_path, monkeypatch):
     from app.monitors.health import HealthService
 
     ha, calls = make_ha_stub()
+    # Un lecteur média dans le salon, pour les outils musique (Phase 9)
+    ha._states["media_player.salon"] = {
+        "state": "playing",
+        "attributes": {"friendly_name": "Enceinte salon", "volume_level": 0.3,
+                       "media_title": "So What", "media_artist": "Miles Davis",
+                       "source": "Spotify", "source_list": ["Spotify", "Radio"]},
+    }
+    ha._entity_area["media_player.salon"] = "area_salon"
     proto_path = tmp_path / "protocols.yml"
     proto_path.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
     protocols = ProtocolBook.load(proto_path)
@@ -56,9 +64,12 @@ async def box(tmp_path, monkeypatch):
         pass
 
     routines = RoutineService(Settings.from_env(), ha, engine, store, announce=_noop, on_change=_noop)
+    from app.ha.media import MediaConfig
+
+    media = MediaConfig(presets={"jazz": {"source": "Spotify"}}, default_room="Salon")
     toolbox = Toolbox(
         ha, engine, protocols, store, health=health, docker=docker,
-        source=source, routines=routines,
+        source=source, routines=routines, media=media,
     )
     yield SimpleNamespace(
         ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
@@ -82,6 +93,7 @@ async def test_specs_stables_et_completes(box):
         "creer_page", "modifier_page", "lister_pages",
         "lire_mon_code", "proposer_evolution", "lister_evolutions",
         "proposer_routine", "lancer_routine", "lister_routines",
+        "etat_musique", "musique",
     ]
     assert all(s["description"] for s in specs)
 
@@ -538,3 +550,48 @@ async def test_routines_reservees_selon_le_niveau(box):
         "params": {"entity_ids": ["light.salon"]}, "label": "x"}], status="active")
     content, is_error = await _run_as(box, "lancer_routine", {"nom": "Nuit"}, UNKNOWN)
     assert not box.calls and "reconnais pas" in content.lower()
+
+
+# ── Musique multi-pièces (Phase 9) ───────────────────────────────────────────
+
+async def test_etat_musique_public(box):
+    content, is_error = await _run_as(box, "etat_musique", {}, UNKNOWN)  # lecture = public
+    assert not is_error
+    data = json.loads(content)
+    assert data[0]["nom"] == "Enceinte salon" and data[0]["titre"] == "So What"
+
+
+async def test_musique_pilotage_via_moteur(box):
+    content, is_error = await _run_as(box, "musique", {"operation": "pause", "zone": "salon"}, _HOUSEHOLD)
+    assert not is_error
+    assert ("media_player", "media_pause") in {(c[0], c[1]) for c in box.calls}
+
+    box.calls.clear()
+    await _run_as(box, "musique", {"operation": "volume", "zone": "salon", "niveau": 50}, _HOUSEHOLD)
+    vol = next(c for c in box.calls if c[1] == "volume_set")
+    assert vol[2] == {"volume_level": 0.5}
+
+
+async def test_musique_jouer_preset(box):
+    # « jouer » avec le préréglage « jazz » → sélection de source
+    content, is_error = await _run_as(box, "musique", {"operation": "jouer", "zone": "salon", "contenu": "jazz"}, _HOUSEHOLD)
+    assert not is_error
+    src = next(c for c in box.calls if c[1] == "select_source")
+    assert src[2] == {"source": "Spotify"}
+
+
+async def test_musique_transfert(box):
+    # Ajoute une enceinte cuisine dans une autre pièce
+    box.ha._states["media_player.cuisine"] = {"state": "off", "attributes": {"friendly_name": "Cuisine"}}
+    box.ha._entity_area["media_player.cuisine"] = "area_chambre"
+    box.ha._areas["area_chambre"] = "Cuisine"  # renomme pour le test de zone
+    content, is_error = await _run_as(box, "musique", {"operation": "transferer", "zone": "salon", "cible": "cuisine"}, _HOUSEHOLD)
+    assert not is_error
+    join = next(c for c in box.calls if c[1] == "join")
+    assert "media_player.cuisine" in join[2]["group_members"]
+
+
+async def test_musique_refusee_a_l_invite(box):
+    content, is_error = await _run_as(box, "musique", {"operation": "pause", "zone": "salon"}, UNKNOWN)
+    assert not is_error and "reconnais pas" in content.lower()
+    assert box.calls == []

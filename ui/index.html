@@ -48,6 +48,7 @@
       <button id="proactive-btn" class="tool" type="button" hidden title="Suggestions de Luna" aria-label="Suggestions de Luna">
         ✦ <span id="proactive-count" class="tool-badge">0</span>
       </button>
+      <button id="media-btn" class="tool" type="button" hidden title="Musique" aria-label="Musique">♫</button>
       <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel">✉</button>
       <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé">✚</button>
       <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique">↺</button>
@@ -415,6 +416,17 @@
       </div>
     </header>
     <div id="mail-body" class="drawer-list"></div>
+  </aside>
+
+  <aside id="media-panel" class="drawer" hidden aria-label="Musique">
+    <header class="drawer-head">
+      <h2>Musique <span class="drawer-sub">multi-pièces</span></h2>
+      <div class="drawer-actions">
+        <button id="media-refresh" type="button" aria-label="Actualiser">↻</button>
+        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      </div>
+    </header>
+    <div id="media-body" class="drawer-list"></div>
   </aside>
 
   <aside id="proactive-panel" class="drawer" hidden aria-label="Suggestions de Luna">

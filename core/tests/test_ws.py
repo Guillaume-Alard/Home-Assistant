@@ -161,7 +161,7 @@ def test_hello_et_sante(client):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
         for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker",
-                    "mail", "web_search", "self_improve", "proactive", "routines"):
+                    "mail", "web_search", "self_improve", "proactive", "routines", "music"):
             assert key in hello["config"]
 
 
@@ -350,6 +350,33 @@ def test_routines_via_ws(fake_wyoming, fake_ha, tmp_path, monkeypatch):
 
     # L'action a bien été demandée à Nova (faux serveur l'enregistre : (domain, service, …))
     assert any(c[0] == "homeassistant" and c[1] == "turn_off" for c in fake_ha.calls)
+
+
+def test_media_via_ws(fake_wyoming, fake_ha, tmp_path, monkeypatch):
+    """La tuile musique : le cockpit pilote un lecteur, la commande passe par le
+    moteur et part vers Nova ; l'état est rediffusé."""
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", f"http://127.0.0.1:{fake_ha.port}")
+    monkeypatch.setenv("HA_TOKEN", fake_ha.token)
+    monkeypatch.setenv("SENTINEL_CONFIG_DIR", str(_write_config(tmp_path)))
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        _wait_ha(tc)
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            assert hello["config"]["music"] is True
+            assert isinstance(hello["media"], list)
+
+            ws.send_text(json.dumps({
+                "type": "media_control", "op": "play", "entity_ids": ["media_player.salon"],
+            }))
+            events, _ = _drain(ws, {"media"})
+            assert any(e["type"] == "media" and e["enabled"] for e in events)
+
+    # La commande a bien été demandée à Nova (via le moteur)
+    assert any(c[0] == "media_player" and c[1] == "media_play" for c in fake_ha.calls)
 
 
 def test_page_publiee_servie_avec_csp(fake_wyoming, tmp_path, monkeypatch):

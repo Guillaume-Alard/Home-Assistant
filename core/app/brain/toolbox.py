@@ -19,6 +19,8 @@ from ..mail import GmailClient, MailError
 from ..routines import RoutineError, RoutineService
 from ..selfmod import SelfSource, evaluate as evaluate_diff, summarize as summarize_diff
 from ..ha.client import HAClient
+from ..ha import media as media_lib
+from ..ha.media import MediaConfig
 from ..ha.protocols import ProtocolBook
 from ..monitors.docker import DockerError, DockerMonitor
 from ..monitors.health import HealthService
@@ -76,6 +78,8 @@ ACTIVITY_LABELS = {
     "proposer_routine": "imagine une routine…",
     "lancer_routine": "déclenche une routine…",
     "lister_routines": "relit tes routines…",
+    "musique": "règle la musique…",
+    "etat_musique": "écoute ce qui joue…",
 }
 
 
@@ -97,6 +101,7 @@ class Toolbox:
         source: SelfSource | None = None,
         self_improve: bool = True,
         routines: RoutineService | None = None,
+        media: MediaConfig | None = None,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_pages_change: Callable[[], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
@@ -115,6 +120,8 @@ class Toolbox:
         self._self_improve = self_improve
         # Scénarios & routines (Phase 8). Absent = fonction désactivée.
         self._routines = routines
+        # Musique multi-pièces (Phase 9). Absent = fonction désactivée.
+        self._media = media
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
@@ -548,6 +555,48 @@ class Toolbox:
                     "input_schema": {"type": "object", "properties": {}},
                 },
             ]
+        # Musique multi-pièces (Phase 9) — présente si des lecteurs existent.
+        if self._media is not None:
+            preset_names = list(self._media.presets.keys())
+            preset_hint = f" Préréglages : {', '.join(preset_names)}." if preset_names else ""
+            specs += [
+                {
+                    "name": "etat_musique",
+                    "description": (
+                        "Ce qui joue dans la maison : lecteurs allumés, pièce, titre/artiste, "
+                        "volume, source. À consulter avant d'agir (« qu'est-ce qui joue ? »)."
+                    ),
+                    "input_schema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "musique",
+                    "description": (
+                        "Pilote la musique sur les lecteurs de Nova (Spotify, enceintes…), "
+                        "demandé par une personne reconnue. Cible : `zone` (pièce) ou "
+                        "`entity_ids` ; sans cible, agit sur ce qui joue déjà. « jouer » avec "
+                        "`contenu` lance un préréglage ou une source." + preset_hint +
+                        " « transferer » regroupe la pièce en cours avec `cible` (multi-pièces)."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "enum": ["jouer", "pause", "stop", "suivant", "precedent",
+                                         "volume", "monter_volume", "baisser_volume",
+                                         "couper_son", "remettre_son", "source", "transferer"],
+                            },
+                            "zone": {"type": "string", "description": "Pièce ciblée (ex. « salon »)."},
+                            "entity_ids": {"type": "array", "items": {"type": "string"}},
+                            "niveau": {"type": "integer", "description": "Volume 0–100 (pour « volume »)."},
+                            "contenu": {"type": "string", "description": "Préréglage ou contenu à jouer (pour « jouer »)."},
+                            "source": {"type": "string", "description": "Nom de source (pour « source »)."},
+                            "cible": {"type": "string", "description": "Pièce de destination (pour « transferer »)."},
+                        },
+                        "required": ["operation"],
+                    },
+                },
+            ]
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -573,6 +622,9 @@ class Toolbox:
         # Routines (Phase 8) : proposer = owner ; déclencher/lister = personne
         # reconnue (une routine ne contient jamais d'action sensible).
         "proposer_routine": "owner", "lancer_routine": "known", "lister_routines": "known",
+        # Musique (Phase 9) : piloter = personne reconnue (courant, non sensible) ;
+        # lire ce qui joue = public. (etat_musique absent → public.)
+        "musique": "known",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -1149,3 +1201,82 @@ class Toolbox:
              "etapes": [s.get("label") for s in r["steps"]]}
             for r in routines
         ]), False
+
+    # Musique multi-pièces (Phase 9 — pilotage via les media_player de Nova) ──
+
+    async def _tool_etat_musique(self, _args, _utt, _src):
+        if self._ha is None or not self._ha.connected:
+            return self._NOVA_ABSENTE, True
+        players = media_lib.snapshot(self._ha, live_only=True)
+        if not players:
+            return "Rien ne joue pour l'instant.", False
+        return _compact([
+            {"nom": p["nom"], "piece": p["piece"], "etat": p["etat"],
+             "titre": p["titre"], "artiste": p["artiste"],
+             "volume": p["volume"], "source": p["source"]}
+            for p in players
+        ])[:4000], False
+
+    _MEDIA_SIMPLE_OPS = {
+        "pause": "pause", "stop": "stop", "suivant": "next", "precedent": "previous",
+        "monter_volume": "volume_up", "baisser_volume": "volume_down",
+        "couper_son": "mute", "remettre_son": "unmute",
+    }
+
+    async def _tool_musique(self, args, utterance, source):
+        if self._ha is None or self._engine is None or self._media is None:
+            return self._NOVA_ABSENTE, True
+        from ..norm import normalize
+
+        operation = str(args.get("operation") or "")
+        zone = str(args.get("zone") or "").strip()
+        entity_ids = args.get("entity_ids") or []
+        players = media_lib.resolve_players(
+            self._ha, zone=zone, entity_ids=entity_ids, default_room=self._media.default_room
+        )
+        if not players:
+            return ("Je ne sais pas sur quel lecteur agir — précise une pièce "
+                    "(ex. « dans le salon »), ou lance d'abord la musique.", False)
+
+        params: dict = {"entity_ids": players}
+        if operation in self._MEDIA_SIMPLE_OPS:
+            params["op"] = self._MEDIA_SIMPLE_OPS[operation]
+        elif operation == "volume":
+            try:
+                niveau = int(args.get("niveau"))
+            except (TypeError, ValueError):
+                return "À quel volume ? Donne un niveau entre 0 et 100.", False
+            params.update(op="volume", level=max(0, min(100, niveau)) / 100)
+        elif operation == "source":
+            src = str(args.get("source") or "").strip()
+            if not src:
+                return "Quelle source ?", False
+            params.update(op="source", source=src)
+        elif operation == "jouer":
+            contenu = str(args.get("contenu") or "").strip()
+            preset = self._media.presets.get(normalize(contenu)) if contenu else None
+            if preset and preset.get("content_id"):
+                params.update(op="play_media", media_content_id=preset["content_id"],
+                              media_content_type=preset.get("content_type") or "music")
+            elif preset and preset.get("source"):
+                params.update(op="source", source=preset["source"])
+            elif args.get("source"):
+                params.update(op="source", source=str(args["source"]))
+            elif contenu:
+                # Passe-plat (URI Spotify, Music Assistant…) : au pire, Nova refuse proprement.
+                params.update(op="play_media", media_content_id=contenu, media_content_type="music")
+            else:
+                params["op"] = "play"  # reprendre la lecture
+        elif operation == "transferer":
+            cible = str(args.get("cible") or "").strip()
+            targets = media_lib.resolve_players(self._ha, zone=cible) if cible else []
+            if not targets:
+                return "Vers quelle pièce transférer ? Précise-la.", False
+            params.update(op="join", group_members=targets)
+        else:
+            return f"Opération musique inconnue : {operation}.", True
+
+        outcome = await self._engine.run_direct(
+            "ha.media", params, utterance=utterance, source=f"{source} (via LLM)"
+        )
+        return outcome.text, not outcome.ok

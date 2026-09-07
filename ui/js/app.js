@@ -148,12 +148,16 @@ const els = {
   routinesActive: document.getElementById('routines-active'),
   routinesProposedCount: document.getElementById('routines-proposed-count'),
   routinesActiveCount: document.getElementById('routines-active-count'),
+  // musique (Phase 9)
+  mediaBtn: document.getElementById('media-btn'),
+  mediaBody: document.getElementById('media-body'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
 const drawers = {
   proposals: document.getElementById('proposals-panel'),
   proactive: document.getElementById('proactive-panel'),
+  media: document.getElementById('media-panel'),
   sante: document.getElementById('sante-panel'),
   history: document.getElementById('history-panel'),
   mail: document.getElementById('mail-panel'),
@@ -358,8 +362,10 @@ ws.addEventListener('event', (e) => {
       if (els.navEvolutions) els.navEvolutions.hidden = !(msg.config && msg.config.self_improve);
       if (els.navProactivite) els.navProactivite.hidden = !(msg.config && msg.config.proactive);
       if (els.navRoutines) els.navRoutines.hidden = !(msg.config && msg.config.routines);
+      els.mediaBtn.hidden = !(msg.config && msg.config.music);
       renderProactive({ suggestions: msg.proactive || [], muted: msg.proactive_muted || [] });
       renderRoutines({ routines: msg.routines || [] });
+      renderMedia({ players: msg.media || [], enabled: !!(msg.config && msg.config.music) });
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -416,6 +422,7 @@ ws.addEventListener('event', (e) => {
     case 'evolution': showEvolution(msg); break;
     case 'proactive': renderProactive(msg); break;
     case 'routines': renderRoutines(msg); break;
+    case 'media': renderMedia(msg); break;
     default: break;
   }
 });
@@ -535,12 +542,15 @@ function drawersChanged() {
   if (!drawers.history.hidden) ws.sendJSON({ type: 'historique' });
   if (!drawers.mail.hidden) ws.sendJSON({ type: 'mail' });
   if (!drawers.proactive.hidden) ws.sendJSON({ type: 'proactive' });
+  if (!drawers.media.hidden) ws.sendJSON({ type: 'media' });
 }
 els.proposalsBtn.addEventListener('click', () => openDrawer('proposals'));
 els.santeBtn.addEventListener('click', () => openDrawer('sante'));
 els.historyBtn.addEventListener('click', () => openDrawer('history'));
 els.mailBtn.addEventListener('click', () => openDrawer('mail'));
+els.mediaBtn.addEventListener('click', () => openDrawer('media'));
 document.getElementById('mail-refresh').addEventListener('click', () => ws.sendJSON({ type: 'mail' }));
+document.getElementById('media-refresh').addEventListener('click', () => ws.sendJSON({ type: 'media' }));
 document.querySelectorAll('.drawer-x').forEach((btn) => btn.addEventListener('click', closeDrawers));
 
 // ── Chips d'action rapide ─────────────────────────────────────────────────
@@ -1647,6 +1657,124 @@ function routineRow(r, kind) {
   }
   row.append(main, acts);
   return row;
+}
+
+// ── Musique (tiroir ♫ Musique) ────────────────────────────────────────────
+let mediaBusy = false;        // vrai pendant qu'on manipule un curseur
+let pendingMedia = null;      // dernier état reçu à appliquer après manipulation
+let lastMediaPlayers = [];
+
+function mediaCmd(entity, op, extra) {
+  ws.sendJSON({ type: 'media_control', op, entity_ids: [entity], ...(extra || {}) });
+}
+
+function renderMedia(msg) {
+  if (msg && msg.players) lastMediaPlayers = msg.players;
+  if (mediaBusy) { pendingMedia = msg; return; }   // ne pas casser un curseur en cours
+  const players = lastMediaPlayers;
+  els.mediaBody.textContent = '';
+  if (!players.length) {
+    els.mediaBody.appendChild(emptyLine('Rien ne joue. Demande à Luna : « mets de la musique dans le salon ».'));
+    return;
+  }
+  for (const p of players) els.mediaBody.appendChild(mediaCard(p));
+}
+
+function tBtn(label, title, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'media-t';
+  b.textContent = label;
+  b.title = title;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function mediaCard(p) {
+  const card = document.createElement('div');
+  card.className = 'media-card';
+  const head = document.createElement('div');
+  head.className = 'media-head';
+  const nm = document.createElement('span');
+  nm.className = 'media-name';
+  nm.textContent = p.nom;
+  head.appendChild(nm);
+  if (p.piece) {
+    const rm = document.createElement('span');
+    rm.className = 'media-room';
+    rm.textContent = p.piece;
+    head.appendChild(rm);
+  }
+  card.appendChild(head);
+
+  const now = document.createElement('div');
+  now.className = 'media-now';
+  now.textContent = p.titre ? (p.artiste ? `${p.titre} — ${p.artiste}` : p.titre)
+    : (p.source ? p.source : '—');
+  card.appendChild(now);
+
+  // Transport
+  const transport = document.createElement('div');
+  transport.className = 'media-transport';
+  transport.appendChild(tBtn('⏮', 'Précédent', () => mediaCmd(p.entity_id, 'previous')));
+  transport.appendChild(tBtn(p.joue ? '⏸' : '▶', p.joue ? 'Pause' : 'Lecture',
+    () => mediaCmd(p.entity_id, p.joue ? 'pause' : 'play')));
+  transport.appendChild(tBtn('⏭', 'Suivant', () => mediaCmd(p.entity_id, 'next')));
+  transport.appendChild(tBtn(p.coupe ? '🔇' : '🔈', p.coupe ? 'Rétablir le son' : 'Couper le son',
+    () => mediaCmd(p.entity_id, p.coupe ? 'unmute' : 'mute')));
+  card.appendChild(transport);
+
+  // Volume
+  if (p.volume != null) {
+    const vol = document.createElement('div');
+    vol.className = 'media-vol';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0'; slider.max = '100'; slider.value = String(p.volume);
+    slider.setAttribute('aria-label', `Volume ${p.nom}`);
+    slider.addEventListener('input', () => { mediaBusy = true; });
+    slider.addEventListener('change', () => {
+      mediaCmd(p.entity_id, 'volume', { level: Number(slider.value) / 100 });
+      setTimeout(() => { mediaBusy = false; if (pendingMedia) { const m = pendingMedia; pendingMedia = null; renderMedia(m); } }, 600);
+    });
+    vol.append(slider);
+    card.appendChild(vol);
+  }
+
+  // Source
+  if (p.sources && p.sources.length) {
+    const sel = document.createElement('select');
+    sel.className = 'media-source';
+    sel.setAttribute('aria-label', `Source ${p.nom}`);
+    for (const s of p.sources) {
+      const o = document.createElement('option');
+      o.value = s; o.textContent = s;
+      if (s === p.source) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => mediaCmd(p.entity_id, 'source', { source: sel.value }));
+    card.appendChild(sel);
+  }
+
+  // Transfert multi-pièces : rejoindre un autre lecteur
+  const others = lastMediaPlayers.filter((o) => o.entity_id !== p.entity_id);
+  if (others.length) {
+    const sel = document.createElement('select');
+    sel.className = 'media-transfer';
+    const def = document.createElement('option');
+    def.value = ''; def.textContent = '＋ diffuser aussi dans…';
+    sel.appendChild(def);
+    for (const o of others) {
+      const opt = document.createElement('option');
+      opt.value = o.entity_id; opt.textContent = o.piece || o.nom;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', () => {
+      if (sel.value) { mediaCmd(p.entity_id, 'join', { group_members: [sel.value] }); toast('Musique diffusée aussi dans l’autre pièce.'); sel.value = ''; }
+    });
+    card.appendChild(sel);
+  }
+  return card;
 }
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────

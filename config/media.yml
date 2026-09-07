@@ -1,0 +1,20 @@
+# ── Musique : préréglages & pièce par défaut (Phase 9) ───────────────────
+# FACULTATIF. Luna pilote tes lecteurs media_player de Nova (Spotify, enceintes…)
+# via leurs services standard — sans ce fichier, tout fonctionne déjà (lecture,
+# pause, volume, source, transfert). Ce fichier ne sert qu'à donner des raccourcis
+# nommés (« mets du jazz ») et une pièce par défaut. Voir docs/MUSIQUE.md.
+
+# Pièce visée quand tu ne la précises pas (« mets de la musique »).
+piece_defaut: Salon
+
+# Préréglages : un nom → soit une SOURCE (de la source_list du lecteur), soit un
+# contenu à jouer (content_id + content_type, ex. un URI Spotify). Le nom est
+# insensible à la casse/aux accents.
+presets:
+  # Exemple par SOURCE (le plus simple — un nom de source déjà connu du lecteur) :
+  radio:
+    source: "TSF Jazz"
+  # Exemple par CONTENU (URI d'intégration, ex. Spotify / Music Assistant) :
+  # jazz:
+  #   content_id: "spotify:playlist:37i9dQZF1DXbITWG1ZJKYt"
+  #   content_type: "music"
