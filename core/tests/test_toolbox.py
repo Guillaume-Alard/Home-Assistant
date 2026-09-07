@@ -70,10 +70,24 @@ async def box(tmp_path, monkeypatch):
     from app.briefing import BriefingService
 
     briefing = BriefingService(Settings.from_env(), ha, health, store, mail=None)
+    import httpx
+    from zoneinfo import ZoneInfo
+    from app.agenda import CalendarClient
+
+    def _cal(request):
+        if "oauth2" in str(request.url):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+        return httpx.Response(200, json={"items": [
+            {"summary": "Point projet", "start": {"dateTime": "2026-09-07T10:00:00+02:00"},
+             "end": {"dateTime": "2026-09-07T11:00:00+02:00"}},
+        ]})
+
+    calendar = CalendarClient("id", "sec", "ref", tz=ZoneInfo("Europe/Paris"),
+                              transport=httpx.MockTransport(_cal))
     toolbox = Toolbox(
         ha, engine, protocols, store, health=health, docker=docker,
         source=source, routines=routines, media=media, reminders=True, tz="Europe/Paris",
-        briefing=briefing,
+        briefing=briefing, calendar=calendar,
     )
     yield SimpleNamespace(
         ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
@@ -99,7 +113,7 @@ async def test_specs_stables_et_completes(box):
         "proposer_routine", "lancer_routine", "lister_routines",
         "etat_musique", "musique",
         "minuteur", "rappel", "lister_rappels", "annuler_rappel",
-        "briefing",
+        "briefing", "agenda",
     ]
     assert all(s["description"] for s in specs)
 
@@ -664,3 +678,18 @@ async def test_briefing_a_la_demande(box):
 async def test_briefing_refuse_a_l_invite(box):
     content, is_error = await _run_as(box, "briefing", {}, UNKNOWN)
     assert not is_error and "reconnais pas" in content.lower()
+
+
+# ── Agenda Google en lecture seule (Phase 12) ────────────────────────────────
+
+async def test_agenda_proprietaire(box):
+    content, is_error = await _run_as(box, "agenda", {}, OWNER)
+    assert not is_error
+    data = json.loads(content)
+    assert data[0]["titre"] == "Point projet" and data[0]["quand"] == "10h"
+
+
+async def test_agenda_refuse_a_la_maisonnee_et_invite(box):
+    for who in (_HOUSEHOLD, UNKNOWN):
+        content, is_error = await _run_as(box, "agenda", {}, who)
+        assert "réservé à guillaume" in content.lower()

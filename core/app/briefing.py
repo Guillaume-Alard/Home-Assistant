@@ -31,12 +31,13 @@ _WEATHER_FR = {
 
 
 class BriefingService:
-    def __init__(self, settings, ha, health, store, mail=None):
+    def __init__(self, settings, ha, health, store, mail=None, calendar=None):
         self._settings = settings
         self._ha = ha
         self._health = health
         self._store = store
         self._mail = mail
+        self._calendar = calendar
 
     def _tz(self):
         try:
@@ -103,6 +104,19 @@ class BriefingService:
             return "Pas de nouveau courriel."
         return f"{n} message{'s' if n > 1 else ''} non lu{'s' if n > 1 else ''}."
 
+    async def _agenda_line(self) -> str | None:
+        if self._calendar is None:
+            return None
+        try:
+            events = await self._calendar.today()
+        except Exception:
+            log.debug("Agenda indisponible pour le briefing", exc_info=True)
+            return None
+        if not events:
+            return "Agenda : rien de prévu aujourd'hui."
+        bits = [f"{e['summary']} ({e['when']})" if e["when"] else e["summary"] for e in events[:4]]
+        return "Agenda : " + " ; ".join(bits) + "."
+
     async def _reminders_line(self, now: datetime) -> str | None:
         try:
             items = await self._store.list_reminders("active")
@@ -145,7 +159,7 @@ class BriefingService:
         for line in (self._weather_line(), self._house_line()):
             if line:
                 parts.append(line)
-        for coro in (self._mail_line(), self._reminders_line(now)):
+        for coro in (self._agenda_line(), self._mail_line(), self._reminders_line(now)):
             line = await coro
             if line:
                 parts.append(line)

@@ -73,6 +73,17 @@ async def test_brief_assemble_les_sources(store):
     assert "2 proposition" in brief                       # propositions en attente
 
 
+class _Cal:
+    async def today(self):
+        return [{"summary": "Point projet", "when": "10h", "all_day": False, "location": "", "start_ts": ""}]
+
+
+async def test_brief_inclut_l_agenda(store):
+    settings = SimpleNamespace(tz="Europe/Paris", weather_entity="")
+    brief = await BriefingService(settings, None, None, store, mail=None, calendar=_Cal()).compose(pending=0)
+    assert "Agenda : Point projet (10h)" in brief
+
+
 async def test_brief_degrade_sans_nova(store):
     settings = SimpleNamespace(tz="Europe/Paris", weather_entity="")
     brief = await BriefingService(settings, None, None, store, mail=None).compose(pending=0)

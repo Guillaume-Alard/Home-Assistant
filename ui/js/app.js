@@ -155,6 +155,9 @@ const els = {
   remindersBtn: document.getElementById('reminders-btn'),
   remindersCount: document.getElementById('reminders-count'),
   remindersBody: document.getElementById('reminders-body'),
+  // agenda Google (Phase 12)
+  agendaBtn: document.getElementById('agenda-btn'),
+  agendaBody: document.getElementById('agenda-body'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -163,6 +166,7 @@ const drawers = {
   proactive: document.getElementById('proactive-panel'),
   media: document.getElementById('media-panel'),
   reminders: document.getElementById('reminders-panel'),
+  agenda: document.getElementById('agenda-panel'),
   sante: document.getElementById('sante-panel'),
   history: document.getElementById('history-panel'),
   mail: document.getElementById('mail-panel'),
@@ -373,6 +377,7 @@ ws.addEventListener('event', (e) => {
       renderMedia({ players: msg.media || [], enabled: !!(msg.config && msg.config.music) });
       remindersEnabled = !!(msg.config && msg.config.reminders);
       renderReminders({ reminders: msg.reminders || [] });
+      els.agendaBtn.hidden = !(msg.config && msg.config.calendar);
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -432,6 +437,7 @@ ws.addEventListener('event', (e) => {
     case 'media': renderMedia(msg); break;
     case 'reminders': renderReminders(msg); break;
     case 'reminder_fired': onReminderFired(msg); break;
+    case 'agenda': renderAgenda(msg); break;
     default: break;
   }
 });
@@ -553,6 +559,7 @@ function drawersChanged() {
   if (!drawers.proactive.hidden) ws.sendJSON({ type: 'proactive' });
   if (!drawers.media.hidden) ws.sendJSON({ type: 'media' });
   if (!drawers.reminders.hidden) ws.sendJSON({ type: 'reminders' });
+  if (!drawers.agenda.hidden) ws.sendJSON({ type: 'agenda' });
 }
 els.proposalsBtn.addEventListener('click', () => openDrawer('proposals'));
 els.santeBtn.addEventListener('click', () => openDrawer('sante'));
@@ -560,8 +567,10 @@ els.historyBtn.addEventListener('click', () => openDrawer('history'));
 els.mailBtn.addEventListener('click', () => openDrawer('mail'));
 els.mediaBtn.addEventListener('click', () => openDrawer('media'));
 els.remindersBtn.addEventListener('click', () => openDrawer('reminders'));
+els.agendaBtn.addEventListener('click', () => openDrawer('agenda'));
 document.getElementById('mail-refresh').addEventListener('click', () => ws.sendJSON({ type: 'mail' }));
 document.getElementById('media-refresh').addEventListener('click', () => ws.sendJSON({ type: 'media' }));
+document.getElementById('agenda-refresh').addEventListener('click', () => ws.sendJSON({ type: 'agenda' }));
 document.querySelectorAll('.drawer-x').forEach((btn) => btn.addEventListener('click', closeDrawers));
 
 // ── Chips d'action rapide ─────────────────────────────────────────────────
@@ -1125,6 +1134,7 @@ function renderConnexions(h, cfg) {
   if (cfg.docker) real.push({ ic: 'DK', name: 'Surveillance Docker', status: 'Active · lecture', statusCls: 'on', desc: 'État des conteneurs, mémoire, redémarrage sur proposition.' });
   if (cfg.atrium) real.push({ ic: 'AT', name: 'Atrium', status: 'Surveillé', statusCls: 'on', desc: 'Disponibilité et latence du service.' });
   if (cfg.mail) real.push({ ic: 'GM', name: 'Gmail (lecture seule)', status: 'Connecté', statusCls: 'on', desc: 'Résumé de tes non-lus, pour toi seul. Aucun envoi ni suppression.' });
+  if (cfg.calendar) real.push({ ic: 'CA', name: 'Google Agenda (lecture seule)', status: 'Connecté', statusCls: 'on', desc: 'Tes rendez-vous du jour et de la semaine. Aucune création ni modification.' });
   if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées.' });
   for (const s of real) grid.appendChild(svcCard(s));
 
@@ -1852,6 +1862,70 @@ function onReminderFired(msg) {
   const what = msg.label ? ` — ${msg.label}` : '';
   toast(`${msg.kind === 'timer' ? '⏱ Minuteur terminé' : '⏰ Rappel'}${what}`);
   if (ws.alive) ws.sendJSON({ type: 'reminders' });  // rafraîchit la liste (l'échu part)
+}
+
+// ── Agenda Google (tiroir 📅, lecture seule) ──────────────────────────────
+const AGENDA_DOW = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+const AGENDA_MONTH = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+function agendaDayLabel(iso) {   // iso = 'YYYY-MM-DD' (déjà en heure locale)
+  const [y, m, d] = (iso || '').split('-').map(Number);
+  if (!y) return iso || '';
+  const day = new Date(y, m - 1, d, 12);
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const diff = Math.round((day - today) / 86400000);
+  if (diff === 0) return 'Aujourd’hui';
+  if (diff === 1) return 'Demain';
+  return `${AGENDA_DOW[day.getDay()]} ${d} ${AGENDA_MONTH[m - 1]}`;
+}
+
+function agendaRow(ev) {
+  const row = document.createElement('div');
+  row.className = 'agenda-row' + (ev.all_day ? ' all-day' : '');
+  const when = document.createElement('span');
+  when.className = 'agenda-when';
+  when.textContent = ev.all_day ? 'journée' : (ev.when || '·');
+  const main = document.createElement('div');
+  main.className = 'agenda-main';
+  const title = document.createElement('div');
+  title.className = 'agenda-title';
+  title.textContent = ev.summary || '(sans titre)';
+  main.appendChild(title);
+  if (ev.location) {
+    const loc = document.createElement('div');
+    loc.className = 'agenda-loc';
+    loc.textContent = ev.location;
+    main.appendChild(loc);
+  }
+  row.append(when, main);
+  return row;
+}
+
+function renderAgenda(msg) {
+  const body = els.agendaBody;
+  body.textContent = '';
+  if (msg && msg.enabled === false) {
+    body.appendChild(emptyLine('Agenda non connecté. Autorise l’accès en lecture seule — voir docs/AGENDA.md.'));
+    return;
+  }
+  if (msg && msg.error) { body.appendChild(emptyLine(msg.error)); return; }
+  const events = (msg && msg.events) || [];
+  if (!events.length) {
+    body.appendChild(emptyLine('Rien de prévu dans les sept jours à venir. ✨'));
+    return;
+  }
+  let currentDay = null;
+  for (const ev of events) {
+    const dayKey = (ev.start_ts || '').slice(0, 10);
+    if (dayKey && dayKey !== currentDay) {
+      currentDay = dayKey;
+      const h = document.createElement('div');
+      h.className = 'agenda-day';
+      h.textContent = agendaDayLabel(dayKey);
+      body.appendChild(h);
+    }
+    body.appendChild(agendaRow(ev));
+  }
 }
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────

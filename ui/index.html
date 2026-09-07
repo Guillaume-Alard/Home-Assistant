@@ -52,6 +52,7 @@
       <button id="reminders-btn" class="tool" type="button" hidden title="Minuteurs &amp; rappels" aria-label="Minuteurs et rappels">
         ⏰ <span id="reminders-count" class="tool-badge">0</span>
       </button>
+      <button id="agenda-btn" class="tool" type="button" hidden title="Agenda" aria-label="Agenda">📅</button>
       <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel">✉</button>
       <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé">✚</button>
       <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique">↺</button>
@@ -420,6 +421,17 @@
       </div>
     </header>
     <div id="mail-body" class="drawer-list"></div>
+  </aside>
+
+  <aside id="agenda-panel" class="drawer" hidden aria-label="Agenda">
+    <header class="drawer-head">
+      <h2>Agenda <span class="drawer-sub">lecture seule</span></h2>
+      <div class="drawer-actions">
+        <button id="agenda-refresh" type="button" aria-label="Actualiser">↻</button>
+        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      </div>
+    </header>
+    <div id="agenda-body" class="drawer-list"></div>
   </aside>
 
   <aside id="reminders-panel" class="drawer" hidden aria-label="Minuteurs et rappels">

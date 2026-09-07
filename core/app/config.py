@@ -116,6 +116,12 @@ class Settings:
     gmail_refresh_token: str = ""
     mail_max: int = 10  # nombre de non-lus détaillés dans un résumé
 
+    # Agenda Google en LECTURE SEULE (Phase 12) — même client OAuth que Gmail
+    # (GMAIL_CLIENT_ID/SECRET), portée calendar.readonly, jeton dédié. Vide =
+    # désactivé. Aucune création ni modification possible (portée en lecture seule).
+    gcal_refresh_token: str = ""
+    gcal_calendar_id: str = "primary"
+
     # Recherche web (Phase 4) — outil natif Anthropic (web_search), citations
     # intégrées. Contrôlée : plafond d'usages par tour ; réservée aux personnes
     # reconnues (owner + maisonnée). SENTINEL_WEB_SEARCH=off pour la désactiver.
@@ -212,6 +218,8 @@ class Settings:
             gmail_client_secret=os.environ.get("GMAIL_CLIENT_SECRET", "").strip(),
             gmail_refresh_token=os.environ.get("GMAIL_REFRESH_TOKEN", "").strip(),
             mail_max=_int(os.environ.get("MAIL_MAX"), 10),
+            gcal_refresh_token=os.environ.get("GCAL_REFRESH_TOKEN", "").strip(),
+            gcal_calendar_id=os.environ.get("GCAL_CALENDAR_ID", "primary").strip() or "primary",
             web_search_enabled=os.environ.get("SENTINEL_WEB_SEARCH", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             web_search_max_uses=_int(os.environ.get("SENTINEL_WEB_SEARCH_MAX"), 5),
@@ -234,3 +242,7 @@ class Settings:
     @property
     def mail_enabled(self) -> bool:
         return bool(self.gmail_client_id and self.gmail_client_secret and self.gmail_refresh_token)
+
+    @property
+    def calendar_enabled(self) -> bool:
+        return bool(self.gmail_client_id and self.gmail_client_secret and self.gcal_refresh_token)

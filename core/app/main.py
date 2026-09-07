@@ -50,6 +50,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .actions.engine import ActionEngine
+from .agenda import CalendarClient, CalendarError
 from .actions.executors import build_registry
 from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
@@ -261,8 +262,20 @@ class Sentinel:
             if self.ha and settings.music_enabled else None
         )
         self._media_last = 0.0  # anti-rafale des diffusions d'état média
-        # Briefing du matin (Phase 11) : météo + maison + courriel + rappels + santé.
-        self.briefing = BriefingService(settings, self.ha, self.health, store, self.mail)
+        # Agenda Google en lecture seule (Phase 12) — même client OAuth que Gmail.
+        try:
+            _cal_tz = ZoneInfo(settings.tz)
+        except Exception:
+            _cal_tz = None
+        self.calendar: CalendarClient | None = (
+            CalendarClient(
+                settings.gmail_client_id, settings.gmail_client_secret, settings.gcal_refresh_token,
+                tz=_cal_tz, calendar_id=settings.gcal_calendar_id,
+            )
+            if settings.calendar_enabled else None
+        )
+        # Briefing du matin (Phase 11) : météo + maison + courriel + rappels + santé + agenda.
+        self.briefing = BriefingService(settings, self.ha, self.health, store, self.mail, self.calendar)
         # Minuteurs & rappels (Phase 10) : 100% local, indépendant de Nova.
         self.reminders: ReminderScheduler | None = (
             ReminderScheduler(
@@ -281,6 +294,7 @@ class Sentinel:
             mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
             routines=self.routines, media=self.media_cfg,
             reminders=settings.reminders_enabled, tz=settings.tz, briefing=self.briefing,
+            calendar=self.calendar,
             on_memory_change=self._broadcast_memoires,
             on_pages_change=self._broadcast_pages,
             on_suggestions_change=self._broadcast_evolutions,
@@ -481,6 +495,17 @@ class Sentinel:
             "type": "reminder_fired", "kind": reminder.get("kind"),
             "label": reminder.get("label") or "",
         })
+
+    # ── Agenda Google (Phase 12) ─────────────────────────────────────────
+
+    async def _agenda_payload(self) -> dict:
+        if self.calendar is None:
+            return {"type": "agenda", "enabled": False, "events": []}
+        try:
+            events = await self.calendar.upcoming(7)
+        except CalendarError as exc:
+            return {"type": "agenda", "enabled": True, "error": str(exc), "events": []}
+        return {"type": "agenda", "enabled": True, "events": events}
 
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
@@ -1072,6 +1097,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "routines": sentinel.routines is not None,
                 "music": sentinel.media_cfg is not None,
                 "reminders": sentinel.reminders is not None,
+                "calendar": sentinel.calendar is not None,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
@@ -1315,6 +1341,9 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
         if rid and (r := await sentinel.store.get_reminder(rid)) and r["status"] == "active":
             await sentinel.store.set_reminder_status(rid, "cancelled")
             await sentinel._broadcast_reminders()
+
+    elif mtype == "agenda":
+        await sentinel.hub.send(client, await sentinel._agenda_payload())
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})

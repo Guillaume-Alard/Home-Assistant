@@ -161,8 +161,15 @@ def test_hello_et_sante(client):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
         for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker", "mail",
-                    "web_search", "self_improve", "proactive", "routines", "music", "reminders"):
+                    "web_search", "self_improve", "proactive", "routines", "music",
+                    "reminders", "calendar"):
             assert key in hello["config"]
+        assert hello["config"]["calendar"] is False  # agenda non configuré dans ces tests
+
+        # Agenda non configuré → réponse « désactivé », sans réseau
+        ws.send_text(json.dumps({"type": "agenda"}))
+        agenda = json.loads(ws.receive()["text"])
+        assert agenda["type"] == "agenda" and agenda["enabled"] is False
 
 
 def test_memoire_via_ws(client):

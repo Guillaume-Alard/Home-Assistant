@@ -13,6 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
+from ..agenda import CalendarClient, CalendarError
 from ..briefing import BriefingService
 from ..identity import OWNER, Speaker
 from ..devwork.worker_client import WorkerClient, WorkerError
@@ -87,6 +88,7 @@ ACTIVITY_LABELS = {
     "lister_rappels": "relit tes rappels…",
     "annuler_rappel": "annule un rappel…",
     "briefing": "prépare ton briefing…",
+    "agenda": "consulte ton agenda…",
 }
 
 
@@ -112,6 +114,7 @@ class Toolbox:
         reminders: bool = False,
         tz: str = "Europe/Paris",
         briefing: BriefingService | None = None,
+        calendar: CalendarClient | None = None,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_pages_change: Callable[[], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
@@ -139,6 +142,8 @@ class Toolbox:
         self._on_reminders_change = on_reminders_change
         # Briefing du matin (Phase 11).
         self._briefing = briefing
+        # Agenda Google en lecture seule (Phase 12).
+        self._calendar = calendar
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
@@ -678,6 +683,22 @@ class Toolbox:
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             })
+        # Agenda Google en lecture seule (Phase 12) — personnel, Guillaume seul.
+        if self._calendar is not None:
+            specs.append({
+                "name": "agenda",
+                "description": (
+                    "Consulte l'agenda Google de Guillaume (LECTURE SEULE) : rendez-vous du "
+                    "jour, ou des prochains jours avec `jours`. Tu ne peux ni créer ni modifier "
+                    "d'événement. Réservé à Guillaume. Donne l'heure et le titre, reste concis."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "jours": {"type": "integer", "description": "0 = aujourd'hui (défaut) ; N = les N prochains jours."},
+                    },
+                },
+            })
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -711,6 +732,8 @@ class Toolbox:
         "lister_rappels": "known", "annuler_rappel": "known",
         # Briefing du matin (Phase 11) : personne reconnue (contient mail/rappels).
         "briefing": "known",
+        # Agenda (Phase 12) : agenda personnel → Guillaume seul (comme le courriel).
+        "agenda": "owner",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -1453,3 +1476,25 @@ class Toolbox:
             return "Le briefing n'est pas disponible.", True
         pending = len(await self._store.list_proposals("pending"))
         return await self._briefing.compose(pending=pending), False
+
+    # Agenda Google en lecture seule (Phase 12 — Guillaume seul) ───────────
+
+    async def _tool_agenda(self, args, _utt, _src):
+        if self._calendar is None:
+            return "L'agenda n'est pas configuré (voir docs/AGENDA.md).", True
+        try:
+            jours = int(args.get("jours") or 0)
+        except (TypeError, ValueError):
+            jours = 0
+        try:
+            events = await (self._calendar.upcoming(jours) if jours > 0 else self._calendar.today())
+        except CalendarError as exc:
+            return str(exc), True
+        if not events:
+            return _compact({"quand": "aujourd'hui" if jours <= 0 else f"les {jours} prochains jours",
+                             "evenements": []}), False
+        return _compact([
+            {"titre": e["summary"], "quand": e["when"], "date": e["start_ts"][:10],
+             "lieu": e["location"] or None}
+            for e in events
+        ])[:4000], False
