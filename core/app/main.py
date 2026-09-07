@@ -5,7 +5,7 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
   Client → serveur (JSON) : chat, audio_start, audio_end, audio_cancel, cancel,
                             proposal_decision, wake_start, wake_stop, ping —
                             les requêtes de lecture des panneaux (dev_tasks,
-                            dev_log, dev_diff, sante, historique, memoires,
+                            dev_log, dev_diff, sante, historique, mail, memoires,
                             speakers), la gestion de la mémoire (memoire_add,
                             memoire_delete) et des profils vocaux (speaker_add,
                             speaker_delete, speaker_enroll_start/end)
@@ -58,6 +58,7 @@ from .identity import OWNER, Speaker, identify
 from .ha.alerts import AlertEngine, load_rules
 from .ha.client import HAClient
 from .ha.protocols import ProtocolBook
+from .mail import GmailClient, MailError
 from .monitors import AtriumMonitor, DockerMonitor, HealthService
 from .store import Store
 from .voice.session import CaptureSession
@@ -211,6 +212,17 @@ class Sentinel:
         atrium = AtriumMonitor(settings.atrium_url) if settings.atrium_url else None
         self.health = HealthService(settings, self.ha, self._docker, atrium)
         self._worker = WorkerClient(settings.worker_url) if settings.worker_url else None
+        # Courriel en lecture seule (Phase 3) — désactivé si non configuré (OAuth2).
+        self.mail: GmailClient | None = (
+            GmailClient(
+                settings.gmail_client_id,
+                settings.gmail_client_secret,
+                settings.gmail_refresh_token,
+                max_results=settings.mail_max,
+            )
+            if settings.mail_enabled
+            else None
+        )
 
         if self.ha or self._docker or self._worker:
             registry = build_registry(self.ha, self.protocols, self._docker, self._worker)
@@ -223,7 +235,7 @@ class Sentinel:
         toolbox = Toolbox(
             self.ha, self.engine, self.protocols, store,
             health=self.health, docker=self._docker, worker=self._worker,
-            on_memory_change=self._broadcast_memoires,
+            mail=self.mail, on_memory_change=self._broadcast_memoires,
         )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
@@ -886,6 +898,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "daily_report": sentinel.settings.daily_report,
                 "memory": sentinel.settings.memory_enabled,
                 "speaker": sentinel.speaker_embedder is not None,
+                "mail": sentinel.mail is not None,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
@@ -1035,6 +1048,9 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "historique":
         await _reply_historique(sentinel, client)
 
+    elif mtype == "mail":
+        await _reply_mail(sentinel, client)
+
     elif mtype == "memoires":
         await sentinel.hub.send(client, await sentinel._memoires_payload())
 
@@ -1171,6 +1187,22 @@ async def _reply_sante(sentinel: Sentinel, client: Client) -> None:
         )
         return
     await sentinel.hub.send(client, {"type": "sante", "data": snap})
+
+
+async def _reply_mail(sentinel: Sentinel, client: Client) -> None:
+    # Le cockpit est le canal du propriétaire : le relevé n'y est servi qu'au
+    # demandeur (pas de diffusion). Voix : passe par l'outil resume_mails (owner).
+    if sentinel.mail is None:
+        await sentinel.hub.send(
+            client, {"type": "mail", "error": "Le courriel n'est pas configuré (voir docs/EMAIL.md)."}
+        )
+        return
+    try:
+        data = await sentinel.mail.summary()
+    except MailError as exc:
+        await sentinel.hub.send(client, {"type": "mail", "error": str(exc)})
+        return
+    await sentinel.hub.send(client, {"type": "mail", "data": data})
 
 
 async def _reply_historique(sentinel: Sentinel, client: Client) -> None:

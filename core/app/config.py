@@ -107,6 +107,15 @@ class Settings:
     memory_enabled: bool = True
     memory_window: int = 60
 
+    # Courriel Gmail en LECTURE SEULE (Phase 3) — OAuth2, portée gmail.readonly.
+    # Les trois champs vides = fonction désactivée. Le jeton de rafraîchissement
+    # s'obtient une fois via mail/authorize.py (voir docs/EMAIL.md). Aucun envoi ni
+    # suppression n'est jamais possible (la portée l'interdit côté Google).
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_refresh_token: str = ""
+    mail_max: int = 10  # nombre de non-lus détaillés dans un résumé
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -162,4 +171,12 @@ class Settings:
             memory_enabled=os.environ.get("SENTINEL_MEMORY", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             memory_window=_int(os.environ.get("SENTINEL_MEMORY_WINDOW"), 60),
+            gmail_client_id=os.environ.get("GMAIL_CLIENT_ID", "").strip(),
+            gmail_client_secret=os.environ.get("GMAIL_CLIENT_SECRET", "").strip(),
+            gmail_refresh_token=os.environ.get("GMAIL_REFRESH_TOKEN", "").strip(),
+            mail_max=_int(os.environ.get("MAIL_MAX"), 10),
         )
+
+    @property
+    def mail_enabled(self) -> bool:
+        return bool(self.gmail_client_id and self.gmail_client_secret and self.gmail_refresh_token)

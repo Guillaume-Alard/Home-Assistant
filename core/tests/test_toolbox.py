@@ -63,7 +63,7 @@ async def test_specs_stables_et_completes(box):
         "creer_proposition", "lister_propositions", "liste_pieces", "chercher_entites",
         "sante_systemes", "logs_conteneur", "audit_systemes", "redemarrer_conteneur",
         "lancer_tache_dev", "etat_taches_dev", "lire_diff_dev",
-        "memoriser", "lister_souvenirs", "oublier",
+        "memoriser", "lister_souvenirs", "oublier", "resume_mails",
     ]
     assert all(s["description"] for s in specs)
 
@@ -325,3 +325,35 @@ async def test_oublier_ne_traverse_pas_les_profils(box):
     content, is_error = await _run_as(box, "oublier", {"id": mem_id}, _HOUSEHOLD)
     assert is_error and "pas trouvé" in content.lower()
     assert len(await box.store.list_memories(subject="guillaume")) == 1
+
+
+# ── Courriel (Phase 3) : lecture seule, réservée à Guillaume ──────────────────
+
+class _FakeMail:
+    async def summary(self):
+        return {"unread_total": 2, "messages": [
+            {"from_name": "Alice", "from_email": "a@x.fr", "subject": "Bonjour",
+             "date": "", "snippet": "coucou", "important": True},
+        ]}
+
+
+async def test_resume_mails_proprietaire(box):
+    box.toolbox._mail = _FakeMail()
+    content, is_error = await _run_as(box, "resume_mails", {}, OWNER)
+    assert not is_error
+    data = json.loads(content)
+    assert data["non_lus"] == 2 and data["messages"][0]["de"] == "Alice"
+
+
+async def test_resume_mails_refuse_a_la_maisonnee_et_invite(box):
+    box.toolbox._mail = _FakeMail()
+    for who in (_HOUSEHOLD, UNKNOWN):
+        content, is_error = await _run_as(box, "resume_mails", {}, who)
+        assert not is_error
+        # Réservé à Guillaume (owner) ou hors de portée d'un inconnu — jamais le résumé
+        assert "non_lus" not in content
+
+
+async def test_resume_mails_non_configure(box):
+    content, is_error = await _run(box, "resume_mails", {})  # _run = OWNER, mais _mail None
+    assert is_error and "configuré" in content.lower()

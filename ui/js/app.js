@@ -30,6 +30,7 @@ const els = {
   wakeBtn: document.getElementById('wake-btn'),
   proposalsBtn: document.getElementById('proposals-btn'),
   propCount: document.getElementById('prop-count'),
+  mailBtn: document.getElementById('mail-btn'),
   santeBtn: document.getElementById('sante-btn'),
   historyBtn: document.getElementById('history-btn'),
   connNova: document.getElementById('conn-nova'),
@@ -76,6 +77,7 @@ const els = {
   // tiroirs
   santeBody: document.getElementById('sante-body'),
   historyBody: document.getElementById('history-body'),
+  mailBody: document.getElementById('mail-body'),
   proposalsList: document.getElementById('proposals-list'),
   // divers
   toast: document.getElementById('toast'),
@@ -118,6 +120,7 @@ const drawers = {
   proposals: document.getElementById('proposals-panel'),
   sante: document.getElementById('sante-panel'),
   history: document.getElementById('history-panel'),
+  mail: document.getElementById('mail-panel'),
 };
 
 const ws = new WSClient();
@@ -315,6 +318,7 @@ ws.addEventListener('event', (e) => {
       setNova(!!msg.ha_connected);
       devConfigured = !!msg.dev_configured;
       els.liaisonGithub.hidden = !devConfigured;
+      els.mailBtn.hidden = !(msg.config && msg.config.mail);
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -359,6 +363,7 @@ ws.addEventListener('event', (e) => {
     case 'dev_diff': onDevDiff(msg); break;
     case 'sante': renderSante(msg); break;
     case 'historique': renderHistory(msg); break;
+    case 'mail': renderMail(msg); break;
     case 'memoires': renderMemoires(msg); break;
     case 'speakers': renderSpeakers(msg); break;
     case 'speaker': updateWhoSpeaks(msg); break;
@@ -480,10 +485,13 @@ function drawersChanged() {
   renderProposals();
   setSantePolling(!drawers.sante.hidden);
   if (!drawers.history.hidden) ws.sendJSON({ type: 'historique' });
+  if (!drawers.mail.hidden) ws.sendJSON({ type: 'mail' });
 }
 els.proposalsBtn.addEventListener('click', () => openDrawer('proposals'));
 els.santeBtn.addEventListener('click', () => openDrawer('sante'));
 els.historyBtn.addEventListener('click', () => openDrawer('history'));
+els.mailBtn.addEventListener('click', () => openDrawer('mail'));
+document.getElementById('mail-refresh').addEventListener('click', () => ws.sendJSON({ type: 'mail' }));
 document.querySelectorAll('.drawer-x').forEach((btn) => btn.addEventListener('click', closeDrawers));
 
 // ── Chips d'action rapide ─────────────────────────────────────────────────
@@ -885,6 +893,49 @@ function renderHistory(msg) {
   }
 }
 
+// ── Courriel (tiroir, lecture seule) ──────────────────────────────────────
+function renderMail(msg) {
+  const body = els.mailBody;
+  body.textContent = '';
+  if (msg.error) { body.appendChild(emptyLine(msg.error)); return; }
+  const data = msg.data || {};
+  const msgs = data.messages || [];
+  const head = document.createElement('p');
+  head.className = 'mail-head';
+  const total = data.unread_total || 0;
+  head.textContent = total
+    ? `${total} non lu${total > 1 ? 's' : ''}${msgs.length < total ? ` · ${msgs.length} récents` : ''}`
+    : 'Aucun message non lu.';
+  body.appendChild(head);
+  for (const m of msgs) {
+    const item = document.createElement('article');
+    item.className = 'mail-item';
+    const top = document.createElement('div');
+    top.className = 'mail-top';
+    const from = document.createElement('span');
+    from.className = 'mail-from';
+    from.textContent = m.from_name || m.from_email || '?';
+    top.appendChild(from);
+    if (m.important) {
+      const imp = document.createElement('span');
+      imp.className = 'mail-imp';
+      imp.textContent = 'important';
+      top.appendChild(imp);
+    }
+    const subj = document.createElement('p');
+    subj.className = 'mail-subj';
+    subj.textContent = m.subject || '(sans objet)';
+    item.append(top, subj);
+    if (m.snippet) {
+      const snip = document.createElement('p');
+      snip.className = 'mail-snip';
+      snip.textContent = m.snippet;
+      item.appendChild(snip);
+    }
+    body.appendChild(item);
+  }
+}
+
 // ── Page Paramètres (réel + feuille de route) ─────────────────────────────
 function renderSettings() {
   const h = lastHello || {};
@@ -986,11 +1037,12 @@ function renderConnexions(h, cfg) {
   ];
   if (cfg.docker) real.push({ ic: 'DK', name: 'Surveillance Docker', status: 'Active · lecture', statusCls: 'on', desc: 'État des conteneurs, mémoire, redémarrage sur proposition.' });
   if (cfg.atrium) real.push({ ic: 'AT', name: 'Atrium', status: 'Surveillé', statusCls: 'on', desc: 'Disponibilité et latence du service.' });
+  if (cfg.mail) real.push({ ic: 'GM', name: 'Gmail (lecture seule)', status: 'Connecté', statusCls: 'on', desc: 'Résumé de tes non-lus, pour toi seul. Aucun envoi ni suppression.' });
   for (const s of real) grid.appendChild(svcCard(s));
 
   const soon = [
     { ic: 'SP', name: 'Spotify', desc: 'Lecture, volume, transfert entre pièces.' },
-    { ic: 'GM', name: 'Gmail', desc: 'Résumés, brouillons, tri automatique.' },
+    ...(cfg.mail ? [] : [{ ic: 'GM', name: 'Gmail', desc: 'Résumés de tes non-lus (lecture seule).' }]),
     { ic: 'CA', name: 'Google Agenda', desc: 'Créneaux, invitations, rappels vocaux.' },
     { ic: 'DR', name: 'Google Drive', desc: 'Recherche documentaire et pièces jointes.' },
     { ic: 'NO', name: 'Notion', desc: 'Notes de réunion et base de tâches.' },

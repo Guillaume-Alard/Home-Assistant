@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
 from ..identity import OWNER, Speaker
 from ..devwork.worker_client import WorkerClient, WorkerError
+from ..mail import GmailClient, MailError
 from ..ha.client import HAClient
 from ..ha.protocols import ProtocolBook
 from ..monitors.docker import DockerError, DockerMonitor
@@ -51,6 +52,7 @@ ACTIVITY_LABELS = {
     "memoriser": "note quelque chose…",
     "lister_souvenirs": "relit ce qu'elle sait…",
     "oublier": "met à jour sa mémoire…",
+    "resume_mails": "relève tes courriels…",
 }
 
 
@@ -68,6 +70,7 @@ class Toolbox:
         health: HealthService | None = None,
         docker: DockerMonitor | None = None,
         worker: WorkerClient | None = None,
+        mail: GmailClient | None = None,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
     ):
         self._ha = ha
@@ -77,6 +80,7 @@ class Toolbox:
         self._health = health
         self._docker = docker
         self._worker = worker
+        self._mail = mail
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
@@ -342,6 +346,16 @@ class Toolbox:
                     "required": ["id"],
                 },
             },
+            {
+                "name": "resume_mails",
+                "description": (
+                    "Résume les courriels NON LUS de la boîte de Guillaume (Gmail, LECTURE "
+                    "SEULE) : expéditeur, objet, importance, court aperçu. Tu ne peux ni "
+                    "envoyer, ni supprimer, ni marquer comme lu — seulement lire. Réservé à "
+                    "Guillaume. Reste concise : cite les plus importants, donne le nombre total."
+                ),
+                "input_schema": {"type": "object", "properties": {}},
+            },
         ]
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -359,6 +373,7 @@ class Toolbox:
         "sante_systemes": "owner", "logs_conteneur": "owner", "audit_systemes": "owner",
         "redemarrer_conteneur": "owner", "lancer_tache_dev": "owner",
         "etat_taches_dev": "owner", "lire_diff_dev": "owner",
+        "resume_mails": "owner",  # courriel personnel : Guillaume seul
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -745,3 +760,26 @@ class Toolbox:
         await self._store.delete_memory(mem_id)
         await self._notify_memory_change(subject)
         return "C'est oublié.", False
+
+    # Courriel (lecture seule — Phase 3) ──────────────────────────────────
+
+    async def _tool_resume_mails(self, _args, _utt, _src):
+        if self._mail is None:
+            return "Le courriel n'est pas configuré (voir docs/EMAIL.md).", True
+        try:
+            data = await self._mail.summary()
+        except MailError as exc:
+            return str(exc), True
+        msgs = data.get("messages") or []
+        return _compact({
+            "non_lus": data.get("unread_total", 0),
+            "messages": [
+                {
+                    "de": m["from_name"],
+                    "objet": m["subject"],
+                    "important": m["important"],
+                    "apercu": (m["snippet"] or "")[:200],
+                }
+                for m in msgs
+            ],
+        }), False

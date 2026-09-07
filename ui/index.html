@@ -45,6 +45,7 @@
       <button id="proposals-btn" class="tool" type="button" hidden aria-label="Propositions en attente">
         ▤ <span id="prop-count" class="tool-badge">0</span>
       </button>
+      <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel">✉</button>
       <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé">✚</button>
       <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique">↺</button>
       <div class="topbar-sep" aria-hidden="true"></div>
@@ -336,6 +337,17 @@
       <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
     </header>
     <div id="history-body" class="drawer-list"></div>
+  </aside>
+
+  <aside id="mail-panel" class="drawer" hidden aria-label="Courriel (lecture seule)">
+    <header class="drawer-head">
+      <h2>Courriel <span class="drawer-sub">lecture seule</span></h2>
+      <div class="drawer-actions">
+        <button id="mail-refresh" type="button" aria-label="Actualiser">↻</button>
+        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      </div>
+    </header>
+    <div id="mail-body" class="drawer-list"></div>
   </aside>
 
   <div id="alert-banner" class="alert-banner" role="alert" hidden>
