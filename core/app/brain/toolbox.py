@@ -16,6 +16,7 @@ from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
 from ..identity import OWNER, Speaker
 from ..devwork.worker_client import WorkerClient, WorkerError
 from ..mail import GmailClient, MailError
+from ..routines import RoutineError, RoutineService
 from ..selfmod import SelfSource, evaluate as evaluate_diff, summarize as summarize_diff
 from ..ha.client import HAClient
 from ..ha.protocols import ProtocolBook
@@ -26,6 +27,18 @@ from ..store import Store
 log = logging.getLogger("sentinel.toolbox")
 
 _RISK_FROM_FR = {"faible": "low", "moyen": "medium", "sensible": "sensitive"}
+
+# Vocabulaire d'action des routines (Phase 8) → (action_id, paramètres implicites).
+# Volontairement limité aux actions COURANTES — même liste blanche que la sécurité.
+_ROUTINE_OP = {
+    "allumer": ("ha.turn_on", {}),
+    "eteindre": ("ha.turn_off", {}),
+    "ouvrir_volets": ("ha.cover", {"op": "open"}),
+    "fermer_volets": ("ha.cover", {"op": "close"}),
+    "stopper_volets": ("ha.cover", {"op": "stop"}),
+    "scene": ("ha.scene", {}),
+    "chauffage": ("ha.climate_set_temperature", {}),
+}
 
 # Domaines montrés dans les résumés d'état (le reste = bruit pour la conversation)
 _SUMMARY_DOMAINS = (
@@ -60,6 +73,9 @@ ACTIVITY_LABELS = {
     "lire_mon_code": "relit son propre code…",
     "proposer_evolution": "prépare une évolution d'elle-même…",
     "lister_evolutions": "relit ses évolutions proposées…",
+    "proposer_routine": "imagine une routine…",
+    "lancer_routine": "déclenche une routine…",
+    "lister_routines": "relit tes routines…",
 }
 
 
@@ -80,6 +96,7 @@ class Toolbox:
         mail: GmailClient | None = None,
         source: SelfSource | None = None,
         self_improve: bool = True,
+        routines: RoutineService | None = None,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_pages_change: Callable[[], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
@@ -96,6 +113,8 @@ class Toolbox:
         # justes (Phase 6). `self_improve` retire les outils d'auto-amélioration.
         self._source = source
         self._self_improve = self_improve
+        # Scénarios & routines (Phase 8). Absent = fonction désactivée.
+        self._routines = routines
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
@@ -472,6 +491,63 @@ class Toolbox:
                     },
                 },
             ]
+        # Scénarios & routines (Phase 8) — présents si le service est actif.
+        if self._routines is not None:
+            specs += [
+                {
+                    "name": "proposer_routine",
+                    "description": (
+                        "PROPOSE une routine : une séquence d'actions courantes nommée et "
+                        "réutilisable (ex. « Bonne nuit » = fermer les volets + éteindre le "
+                        "salon). Guillaume l'ACTIVE ensuite dans l'interface (elle ne se "
+                        "déclenche pas avant). Une routine ne peut contenir QUE des actions "
+                        "courantes — jamais de déverrouillage ni de désarmement. Vérifie les "
+                        "entity_ids avec etat_maison d'abord."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "nom": {"type": "string", "description": "Nom court (ex. « Bonne nuit »)."},
+                            "description": {"type": "string"},
+                            "etapes": {
+                                "type": "array",
+                                "description": "Les actions, dans l'ordre.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "action": {
+                                            "type": "string",
+                                            "enum": ["allumer", "eteindre", "ouvrir_volets",
+                                                     "fermer_volets", "stopper_volets", "scene", "chauffage"],
+                                        },
+                                        "entity_ids": {"type": "array", "items": {"type": "string"}},
+                                        "temperature": {"type": "number", "description": "Pour « chauffage » (5–30)."},
+                                    },
+                                    "required": ["action", "entity_ids"],
+                                },
+                            },
+                        },
+                        "required": ["nom", "etapes"],
+                    },
+                },
+                {
+                    "name": "lancer_routine",
+                    "description": (
+                        "Déclenche une routine ACTIVE, sur demande explicite (ex. « lance "
+                        "Bonne nuit »). N'exécute que des actions courantes."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"nom": {"type": "string"}},
+                        "required": ["nom"],
+                    },
+                },
+                {
+                    "name": "lister_routines",
+                    "description": "Liste les routines (actives et proposées à activer), avec leurs étapes.",
+                    "input_schema": {"type": "object", "properties": {}},
+                },
+            ]
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -494,6 +570,9 @@ class Toolbox:
         # Auto-amélioration (Phase 6) : proposer des changements sur soi-même =
         # administration, réservée à Guillaume. La reconnaissance n'élève rien.
         "lire_mon_code": "owner", "proposer_evolution": "owner", "lister_evolutions": "owner",
+        # Routines (Phase 8) : proposer = owner ; déclencher/lister = personne
+        # reconnue (une routine ne contient jamais d'action sensible).
+        "proposer_routine": "owner", "lancer_routine": "known", "lister_routines": "known",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -1014,4 +1093,59 @@ class Toolbox:
             {"id": s["id"], "kind": s["kind"], "titre": s["title"],
              "cible": s["target"], "statut": s["status"]}
             for s in items
+        ]), False
+
+    # Scénarios & routines (Phase 8 — Luna PROPOSE ; Guillaume ACTIVE puis déclenche) ─
+
+    async def _tool_proposer_routine(self, args, _utt, _src):
+        if self._routines is None:
+            return "Les routines ne sont pas activées.", True
+        nom = str(args.get("nom") or "").strip()
+        etapes = args.get("etapes") or []
+        if not nom or not isinstance(etapes, list) or not etapes:
+            return "Donne un nom et au moins une étape.", True
+        steps = []
+        for e in etapes:
+            if not isinstance(e, dict):
+                continue
+            action = str(e.get("action") or "")
+            if action not in _ROUTINE_OP:
+                return f"Action de routine inconnue : « {action} ».", False
+            action_id, extra = _ROUTINE_OP[action]
+            params = {"entity_ids": e.get("entity_ids") or [], **extra}
+            if action == "chauffage" and e.get("temperature") is not None:
+                params["temperature"] = e.get("temperature")
+            steps.append({"action_id": action_id, "params": params})
+        try:
+            routine = await self._routines.propose(
+                name=nom, steps=steps, description=str(args.get("description") or ""), source="llm",
+            )
+        except RoutineError as exc:
+            # Refus de validation (ex. action sensible) : Luna le relaie calmement.
+            return f"Je ne peux pas créer cette routine. {exc}", False
+        return _compact({
+            "id": routine["id"], "nom": routine["name"],
+            "etapes": [s["label"] for s in routine["steps"]],
+            "etat": "proposée — à activer par Guillaume (Paramètres › Routines)",
+        }), False
+
+    async def _tool_lancer_routine(self, args, utterance, source):
+        if self._routines is None:
+            return "Les routines ne sont pas activées.", True
+        nom = str(args.get("nom") or "").strip()
+        if not nom:
+            return "Quelle routine veux-tu lancer ?", True
+        text, ok = await self._routines.run_by_name(nom, utterance=utterance, source=source)
+        return text, not ok
+
+    async def _tool_lister_routines(self, _args, _utt, _src):
+        if self._routines is None:
+            return "Les routines ne sont pas activées.", True
+        routines = await self._store.list_routines()
+        if not routines:
+            return "Aucune routine pour l'instant.", False
+        return _compact([
+            {"nom": r["name"], "etat": r["status"],
+             "etapes": [s.get("label") for s in r["steps"]]}
+            for r in routines
         ]), False

@@ -161,7 +161,7 @@ def test_hello_et_sante(client):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
         for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker",
-                    "mail", "web_search", "self_improve", "proactive"):
+                    "mail", "web_search", "self_improve", "proactive", "routines"):
             assert key in hello["config"]
 
 
@@ -297,6 +297,59 @@ def test_proactive_via_ws(fake_wyoming, fake_ha, tmp_path, monkeypatch):
             payload = next(e for e in events if e["type"] == "proactive")
             assert "volet_nuit" in payload["muted"]
             assert not any(s["id"] == sug_id for s in payload["suggestions"])
+
+
+def test_routines_via_ws(fake_wyoming, fake_ha, tmp_path, monkeypatch):
+    """Cycle cockpit : une routine proposée est activée puis déclenchée (via le
+    moteur), une action courante partant bien vers Nova."""
+    import asyncio
+
+    from app.store import Store
+
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", f"http://127.0.0.1:{fake_ha.port}")
+    monkeypatch.setenv("HA_TOKEN", fake_ha.token)
+    monkeypatch.setenv("SENTINEL_CONFIG_DIR", str(_write_config(tmp_path)))
+    data = tmp_path / "data"
+    data.mkdir(parents=True, exist_ok=True)
+
+    async def seed():
+        store = Store(data / "sentinel.db")
+        await store.open()
+        r = await store.add_routine(
+            name="Bonne nuit", description="Éteindre le salon",
+            steps=[{"action_id": "ha.turn_off", "params": {"entity_ids": ["light.salon"]},
+                    "label": "Éteindre le salon"}],
+            status="proposed", source="llm",
+        )
+        await store.close()
+        return r["id"]
+
+    routine_id = asyncio.run(seed())
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        _wait_ha(tc)
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            assert hello["config"]["routines"] is True
+            assert any(r["id"] == routine_id and r["status"] == "proposed" for r in hello["routines"])
+
+            # Activer (revue humaine) → rediffusion avec statut « active »
+            ws.send_text(json.dumps({"type": "routine_approve", "id": routine_id}))
+            events, _ = _drain(ws, {"routines"})
+            payload = next(e for e in events if e["type"] == "routines")
+            assert any(r["id"] == routine_id and r["status"] == "active" for r in payload["routines"])
+
+            # Déclencher → une notice de résultat ; run_count incrémenté
+            ws.send_text(json.dumps({"type": "routine_run", "id": routine_id}))
+            events, _ = _drain(ws, {"notice"})
+            notice = next(e for e in events if e["type"] == "notice")
+            assert "Bonne nuit" in notice["text"]
+
+    # L'action a bien été demandée à Nova (faux serveur l'enregistre : (domain, service, …))
+    assert any(c[0] == "homeassistant" and c[1] == "turn_off" for c in fake_ha.calls)
 
 
 def test_page_publiee_servie_avec_csp(fake_wyoming, tmp_path, monkeypatch):

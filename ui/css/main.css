@@ -584,6 +584,24 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
 .pro-acts button:hover { color: var(--accent); border-color: var(--accent-line); }
 .pro-acts button.danger:hover { color: var(--danger); border-color: rgba(255, 95, 82, 0.45); }
 
+/* ── Routines : liste des scénarios (proposés + actifs) ───────────────────── */
+.routine-list { display: flex; flex-direction: column; gap: 8px; }
+.routine-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--edge); background: var(--panel); border-radius: 10px; padding: 10px 12px; }
+.routine-main { flex: 1; min-width: 0; }
+.routine-head { display: flex; align-items: center; gap: 8px; }
+.routine-name { font-size: 13px; font-weight: 600; }
+.routine-src { font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; border-radius: 999px; padding: 1px 7px; border: 1px solid var(--accent-line); color: var(--accent); }
+.routine-runs { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.routine-steps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.routine-step { font-size: 11px; color: var(--muted-2); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--edge); border-radius: 6px; padding: 1px 7px; }
+.routine-step.more { color: var(--muted); }
+.routine-desc { font-size: 11.5px; color: var(--muted); margin-top: 5px; font-style: italic; }
+.routine-acts { display: flex; flex-wrap: wrap; gap: 5px; flex: 0 0 auto; }
+.routine-acts button { border: 1px solid var(--edge-2); background: transparent; color: var(--muted-2); cursor: pointer; font-size: 11px; border-radius: 7px; padding: 3px 9px; transition: color 0.15s, border-color 0.15s; }
+.routine-acts button.primary { color: var(--accent); border-color: var(--accent-line); }
+.routine-acts button:hover { color: var(--accent); border-color: var(--accent-line); }
+.routine-acts button.danger:hover { color: var(--danger); border-color: rgba(255, 95, 82, 0.45); }
+
 .switch { width: 40px; height: 23px; border-radius: 999px; border: 1px solid var(--edge-2); background: rgba(255, 255, 255, 0.12); cursor: pointer; position: relative; flex: 0 0 auto; transition: background 0.2s; padding: 0; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #8A8F98; transition: transform 0.2s, background 0.2s; }
 .switch[aria-checked="true"] { background: var(--accent); border-color: transparent; }

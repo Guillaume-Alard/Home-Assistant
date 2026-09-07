@@ -142,6 +142,12 @@ const els = {
   navProactivite: document.getElementById('nav-proactivite'),
   mutesList: document.getElementById('mutes-list'),
   mutesCount: document.getElementById('mutes-count'),
+  // routines (Phase 8)
+  navRoutines: document.getElementById('nav-routines'),
+  routinesProposed: document.getElementById('routines-proposed'),
+  routinesActive: document.getElementById('routines-active'),
+  routinesProposedCount: document.getElementById('routines-proposed-count'),
+  routinesActiveCount: document.getElementById('routines-active-count'),
 };
 
 // Tiroirs latéraux exclusifs (un seul ouvert)
@@ -351,7 +357,9 @@ ws.addEventListener('event', (e) => {
       els.mailBtn.hidden = !(msg.config && msg.config.mail);
       if (els.navEvolutions) els.navEvolutions.hidden = !(msg.config && msg.config.self_improve);
       if (els.navProactivite) els.navProactivite.hidden = !(msg.config && msg.config.proactive);
+      if (els.navRoutines) els.navRoutines.hidden = !(msg.config && msg.config.routines);
       renderProactive({ suggestions: msg.proactive || [], muted: msg.proactive_muted || [] });
+      renderRoutines({ routines: msg.routines || [] });
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -407,6 +415,7 @@ ws.addEventListener('event', (e) => {
     case 'evolutions': renderEvolutions(msg); break;
     case 'evolution': showEvolution(msg); break;
     case 'proactive': renderProactive(msg); break;
+    case 'routines': renderRoutines(msg); break;
     default: break;
   }
 });
@@ -1117,6 +1126,7 @@ function setSettingsSection(name) {
   if (name === 'pages' && ws.alive) ws.sendJSON({ type: 'pages' });
   if (name === 'evolutions' && ws.alive) ws.sendJSON({ type: 'evolutions' });
   if (name === 'proactivite' && ws.alive) ws.sendJSON({ type: 'proactive' });
+  if (name === 'routines' && ws.alive) ws.sendJSON({ type: 'routines' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 
@@ -1542,6 +1552,102 @@ function renderMutes(muted) {
 }
 
 els.proactiveBtn.addEventListener('click', () => openDrawer('proactive'));
+
+// ── Routines (Paramètres › Routines) ──────────────────────────────────────
+const ROUTINE_SOURCE = { appris: 'appris', llm: 'suggéré', manuel: 'manuel' };
+
+function renderRoutines(msg) {
+  const list = msg.routines || [];
+  const proposed = list.filter((r) => r.status === 'proposed');
+  const active = list.filter((r) => r.status === 'active');
+  els.routinesProposedCount.textContent = proposed.length ? String(proposed.length) : '';
+  els.routinesActiveCount.textContent = active.length ? String(active.length) : '';
+
+  els.routinesProposed.textContent = '';
+  if (!proposed.length) {
+    els.routinesProposed.appendChild(emptyLine('Aucune proposition. Dis à Luna « fais-en une routine », ou laisse-la repérer tes habitudes.'));
+  } else {
+    for (const r of proposed) els.routinesProposed.appendChild(routineRow(r, 'proposed'));
+  }
+  els.routinesActive.textContent = '';
+  if (!active.length) {
+    els.routinesActive.appendChild(emptyLine('Aucune routine active. Active une proposition ci-dessus.'));
+  } else {
+    for (const r of active) els.routinesActive.appendChild(routineRow(r, 'active'));
+  }
+}
+
+function stepsChips(steps) {
+  const wrap = document.createElement('div');
+  wrap.className = 'routine-steps';
+  const labels = (steps || []).map((s) => s.label || s.action_id);
+  labels.slice(0, 5).forEach((l) => {
+    const c = document.createElement('span');
+    c.className = 'routine-step';
+    c.textContent = l;
+    wrap.appendChild(c);
+  });
+  if (labels.length > 5) {
+    const more = document.createElement('span');
+    more.className = 'routine-step more';
+    more.textContent = `+${labels.length - 5}`;
+    wrap.appendChild(more);
+  }
+  return wrap;
+}
+
+function routineRow(r, kind) {
+  const row = document.createElement('div');
+  row.className = 'routine-row';
+  const main = document.createElement('div');
+  main.className = 'routine-main';
+  const head = document.createElement('div');
+  head.className = 'routine-head';
+  const name = document.createElement('span');
+  name.className = 'routine-name';
+  name.textContent = r.name;
+  head.appendChild(name);
+  if (kind === 'proposed') {
+    const src = document.createElement('span');
+    src.className = 'routine-src';
+    src.textContent = ROUTINE_SOURCE[r.source] || r.source;
+    head.appendChild(src);
+  } else if (r.run_count) {
+    const rc = document.createElement('span');
+    rc.className = 'routine-runs';
+    rc.textContent = `lancée ${r.run_count}×`;
+    head.appendChild(rc);
+  }
+  main.append(head, stepsChips(r.steps));
+  if (r.description && kind === 'proposed') {
+    const d = document.createElement('div');
+    d.className = 'routine-desc';
+    d.textContent = r.description;
+    main.appendChild(d);
+  }
+
+  const acts = document.createElement('div');
+  acts.className = 'routine-acts';
+  if (kind === 'proposed') {
+    const ok = pageBtn('Activer', () => { ws.sendJSON({ type: 'routine_approve', id: r.id }); toast('Routine activée.'); });
+    ok.classList.add('primary');
+    acts.appendChild(ok);
+    acts.appendChild(pageBtn('Rejeter', () => ws.sendJSON({ type: 'routine_reject', id: r.id }), true));
+  } else {
+    const run = pageBtn('Lancer', () => ws.sendJSON({ type: 'routine_run', id: r.id }));
+    run.classList.add('primary');
+    acts.appendChild(run);
+    acts.appendChild(pageBtn('Renommer', () => {
+      const name = prompt('Nouveau nom de la routine :', r.name);
+      if (name && name.trim()) ws.sendJSON({ type: 'routine_rename', id: r.id, name: name.trim() });
+    }));
+    acts.appendChild(pageBtn('Supprimer', () => {
+      if (confirm(`Supprimer la routine « ${r.name} » ?`)) ws.sendJSON({ type: 'routine_delete', id: r.id });
+    }, true));
+  }
+  row.append(main, acts);
+  return row;
+}
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────
 let wakeRetryTimer = null;

@@ -159,6 +159,28 @@ CREATE TABLE IF NOT EXISTS proactive_mutes (
     rule       TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+
+-- Scénarios & routines (Phase 8) : des séquences d'actions NOMMÉES et
+-- RÉUTILISABLES (ex. « Bonne nuit »). Luna les PROPOSE (depuis tes habitudes ou
+-- la conversation) ; Guillaume les ACTIVE (revue humaine), puis les déclenche
+-- quand il veut. Une routine ne contient JAMAIS d'action sensible (verrouillé à
+-- la création). `steps` : JSON [{action_id, params, label}]. `signature` sert à
+-- l'anti-doublon des routines apprises. status : proposed | active | rejected.
+CREATE TABLE IF NOT EXISTS routines (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    slug        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    steps       TEXT NOT NULL DEFAULT '[]',
+    signature   TEXT NOT NULL DEFAULT '',
+    source      TEXT NOT NULL DEFAULT 'manuel',   -- appris | manuel | llm
+    status      TEXT NOT NULL DEFAULT 'proposed',
+    run_count   INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    last_run_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_routines_status ON routines (status, created_at);
 """
 
 
@@ -727,3 +749,104 @@ class Store:
         assert self._db is not None, "Store non ouvert"
         cursor = await self._db.execute("SELECT rule FROM proactive_mutes ORDER BY created_at")
         return [r["rule"] for r in await cursor.fetchall()]
+
+    # ── Scénarios & routines (Phase 8) ───────────────────────────────────────
+
+    @staticmethod
+    def _routine_row(row) -> dict:
+        d = dict(row)
+        d["steps"] = json.loads(d.get("steps") or "[]")
+        return d
+
+    async def add_routine(
+        self, *, name: str, description: str = "", steps: list[dict] | None = None,
+        signature: str = "", source: str = "manuel", status: str = "proposed",
+    ) -> dict:
+        assert self._db is not None, "Store non ouvert"
+        now = _now_iso()
+        record = {
+            "id": uuid.uuid4().hex[:12], "name": name, "slug": slugify(name),
+            "description": description, "steps": json.dumps(steps or [], ensure_ascii=False),
+            "signature": signature, "source": source, "status": status,
+            "run_count": 0, "created_at": now, "updated_at": now, "last_run_at": None,
+        }
+        await self._db.execute(
+            "INSERT INTO routines (id, name, slug, description, steps, signature, source,"
+            " status, run_count, created_at, updated_at, last_run_at)"
+            " VALUES (:id, :name, :slug, :description, :steps, :signature, :source,"
+            " :status, :run_count, :created_at, :updated_at, :last_run_at)",
+            record,
+        )
+        await self._db.commit()
+        return self._routine_row(record)
+
+    async def get_routine(self, routine_id: str) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT * FROM routines WHERE id = ?", (routine_id,))
+        row = await cursor.fetchone()
+        return self._routine_row(row) if row else None
+
+    async def list_routines(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        assert self._db is not None, "Store non ouvert"
+        if status:
+            cursor = await self._db.execute(
+                "SELECT * FROM routines WHERE status = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (status, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM routines ORDER BY status, created_at DESC, rowid DESC LIMIT ?",
+                (limit,),
+            )
+        return [self._routine_row(r) for r in await cursor.fetchall()]
+
+    async def find_active_routine(self, name: str) -> dict | None:
+        """Routine ACTIVE dont le nom (insensible casse/accents) correspond — pour le déclenchement."""
+        target = slugify(name)
+        for r in await self.list_routines("active"):
+            if r["slug"] == target or slugify(r["name"]) == target:
+                return r
+        return None
+
+    async def signature_exists(self, signature: str, statuses: tuple[str, ...] = ("proposed", "active")) -> bool:
+        assert self._db is not None, "Store non ouvert"
+        if not signature:
+            return False
+        placeholders = ",".join("?" for _ in statuses)
+        cursor = await self._db.execute(
+            f"SELECT 1 FROM routines WHERE signature = ? AND status IN ({placeholders}) LIMIT 1",
+            (signature, *statuses),
+        )
+        return await cursor.fetchone() is not None
+
+    async def update_routine(self, routine_id: str, **fields) -> dict | None:
+        assert self._db is not None, "Store non ouvert"
+        allowed = {"name", "description", "status", "steps"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if "steps" in sets:
+            sets["steps"] = json.dumps(sets["steps"], ensure_ascii=False)
+        if "name" in sets:
+            sets["slug"] = slugify(sets["name"])
+        if not sets:
+            return await self.get_routine(routine_id)
+        sets["updated_at"] = _now_iso()
+        assignments = ", ".join(f"{k} = ?" for k in sets)
+        await self._db.execute(
+            f"UPDATE routines SET {assignments} WHERE id = ?", (*sets.values(), routine_id)
+        )
+        await self._db.commit()
+        return await self.get_routine(routine_id)
+
+    async def routine_ran(self, routine_id: str) -> None:
+        assert self._db is not None, "Store non ouvert"
+        await self._db.execute(
+            "UPDATE routines SET run_count = run_count + 1, last_run_at = ? WHERE id = ?",
+            (_now_iso(), routine_id),
+        )
+        await self._db.commit()
+
+    async def delete_routine(self, routine_id: str) -> bool:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("DELETE FROM routines WHERE id = ?", (routine_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0

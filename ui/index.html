@@ -194,6 +194,7 @@
       <button class="set-navitem" type="button" data-sec="pages" aria-selected="false">Pages web</button>
       <button class="set-navitem" type="button" data-sec="evolutions" aria-selected="false" id="nav-evolutions">Évolutions</button>
       <button class="set-navitem" type="button" data-sec="proactivite" aria-selected="false" id="nav-proactivite">Proactivité</button>
+      <button class="set-navitem" type="button" data-sec="routines" aria-selected="false" id="nav-routines">Routines</button>
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false">Moteur</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false">Confidentialité</button>
       <div class="set-nav-note">Sentinel tourne en local.<br>Aucune donnée n'est envoyée sans ton accord.</div>
@@ -315,6 +316,21 @@
             <div class="set-card-h">Suggestions tues <span id="mutes-count" class="set-count"></span></div>
             <div class="set-sub" style="margin:0 0 8px">Les règles que tu as demandé de taire (« ne plus me suggérer ça »). Réactive-les quand tu veux.</div>
             <div id="mutes-list" class="memoire-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="routines" hidden>
+        <div class="set-title">Routines</div>
+        <div class="set-sub">Des <b>scénarios</b> réutilisables — une séquence d'actions déclenchable d'un mot (« Bonne nuit » = fermer les volets + éteindre le salon). Luna te les <b>propose</b> (depuis tes habitudes ou la conversation) ; tu les <b>actives</b>, puis tu les déclenches quand tu veux. Une routine ne contient <b>jamais</b> d'action sensible (ni serrure, ni alarme).</div>
+        <div class="set-cards">
+          <div class="set-card" style="grid-column: 1 / -1;">
+            <div class="set-card-h">Proposées par Luna <span id="routines-proposed-count" class="set-count"></span></div>
+            <div id="routines-proposed" class="routine-list"></div>
+          </div>
+          <div class="set-card" style="grid-column: 1 / -1;">
+            <div class="set-card-h">Actives <span id="routines-active-count" class="set-count"></span></div>
+            <div id="routines-active" class="routine-list"></div>
           </div>
         </div>
       </section>

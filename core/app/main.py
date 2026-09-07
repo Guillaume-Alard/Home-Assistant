@@ -65,6 +65,7 @@ from .ha.protocols import ProtocolBook
 from .mail import GmailClient, MailError
 from .monitors import AtriumMonitor, DockerMonitor, HealthService
 from .proactive import ProactiveEngine
+from .routines import RoutineService
 from .selfmod import SelfSource, summarize as summarize_diff
 from .store import Store
 from .voice.session import CaptureSession
@@ -244,6 +245,13 @@ class Sentinel:
                 settings, self.ha, self.engine, store,
                 say=self.say_proactive, on_change=self._broadcast_proactive,
             )
+        # Scénarios & routines (Phase 8) : Luna propose, Guillaume active puis déclenche.
+        self.routines: RoutineService | None = None
+        if self.ha and self.engine and settings.routines_enabled:
+            self.routines = RoutineService(
+                settings, self.ha, self.engine, store,
+                announce=self.say_proactive, on_change=self._broadcast_routines,
+            )
 
         # Auto-amélioration encadrée (Phase 6) : lecteur SEULE lecture de son propre
         # code (app/ + ui/), pour que Luna rédige des diffs justes.
@@ -252,6 +260,7 @@ class Sentinel:
             self.ha, self.engine, self.protocols, store,
             health=self.health, docker=self._docker, worker=self._worker,
             mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
+            routines=self.routines,
             on_memory_change=self._broadcast_memoires,
             on_pages_change=self._broadcast_pages,
             on_suggestions_change=self._broadcast_evolutions,
@@ -403,6 +412,18 @@ class Sentinel:
     async def _broadcast_proactive(self) -> None:
         await self.hub.broadcast(await self._proactive_payload())
 
+    # ── Scénarios & routines (Phase 8) ───────────────────────────────────
+
+    async def _routines_payload(self) -> dict:
+        return {
+            "type": "routines",
+            "enabled": self.routines is not None,
+            "routines": await self.store.list_routines(),
+        }
+
+    async def _broadcast_routines(self) -> None:
+        await self.hub.broadcast(await self._routines_payload())
+
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
     async def announce(self, text: str, severity: str = "info", speak: bool = True) -> None:
@@ -483,6 +504,8 @@ class Sentinel:
         self._report_task = None
         self._devwatch_task = None
         self._proactive_task = None
+        if self.routines:
+            await self.routines.stop()
         await self.health.close()
         if self._worker:
             await self._worker.close()
@@ -830,6 +853,8 @@ async def lifespan(app: FastAPI):
     sentinel.start_daily_report()
     sentinel.start_dev_watcher()
     sentinel.start_proactive()
+    if sentinel.routines:
+        sentinel.routines.start_scanner()
     log.info(
         "Sentinel %s démarré — modèle %s, effort %s, UI %s",
         __version__, settings.model, settings.effort, settings.ui_dir,
@@ -982,12 +1007,15 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "web_search": sentinel.settings.web_search_enabled and bool(sentinel.settings.anthropic_api_key),
                 "self_improve": sentinel.settings.self_improve_enabled,
                 "proactive": sentinel.proactive is not None,
+                "routines": sentinel.routines is not None,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
             # Suggestions proactives en cours (Phase 7) — tiroir Suggestions
             "proactive": await sentinel.store.list_proactive(),
             "proactive_muted": await sentinel.store.list_proactive_mutes(),
+            # Routines (Phase 8) — Paramètres › Routines
+            "routines": await sentinel.store.list_routines(),
         },
     )
 
@@ -1197,6 +1225,13 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype in ("proactive_make_proposal", "proactive_snooze", "proactive_dismiss",
                    "proactive_mute", "proactive_unmute"):
         await _proactive_action(sentinel, client, msg, mtype)
+
+    elif mtype == "routines":
+        await sentinel.hub.send(client, await sentinel._routines_payload())
+
+    elif mtype in ("routine_approve", "routine_reject", "routine_delete",
+                   "routine_run", "routine_rename"):
+        await _routine_action(sentinel, client, msg, mtype)
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
@@ -1457,6 +1492,37 @@ async def _proactive_action(sentinel: Sentinel, client: Client, msg: dict, mtype
         await sentinel.proactive.snooze(sug_id)
     elif mtype == "proactive_dismiss":
         await sentinel.proactive.dismiss(sug_id)
+
+
+# ── Scénarios & routines : revue et déclenchement (cockpit) ──────────────────
+#
+# Luna PROPOSE (outil proposer_routine, ou détection d'habitude) ; activer /
+# rejeter / renommer / supprimer sont des actions du COCKPIT (revue humaine avant
+# qu'une routine puisse se déclencher). Lancer exécute des actions COURANTES
+# uniquement (aucune sensible ne peut être dans une routine, cf. routines/safety.py).
+
+
+async def _routine_action(sentinel: Sentinel, client: Client, msg: dict, mtype: str) -> None:
+    if sentinel.routines is None:
+        return
+    routine_id = str(msg.get("id") or "").strip()
+    if not routine_id:
+        return
+    if mtype == "routine_approve":
+        await sentinel.routines.approve(routine_id)
+    elif mtype == "routine_reject":
+        await sentinel.routines.reject(routine_id)
+    elif mtype == "routine_delete":
+        await sentinel.routines.delete(routine_id)
+    elif mtype == "routine_rename":
+        await sentinel.routines.rename(routine_id, str(msg.get("name") or ""))
+    elif mtype == "routine_run":
+        routine = await sentinel.store.get_routine(routine_id)
+        if routine is None or routine["status"] != "active":
+            await sentinel.hub.send(client, {"type": "notice", "text": "Cette routine n'est pas active."})
+            return
+        text, _ = await sentinel.routines.run(routine, utterance="depuis l'interface", source="ui")
+        await sentinel.hub.send(client, {"type": "notice", "text": text})
 
 
 # ── Profils vocaux : création, suppression, enrôlement (Paramètres › Profils) ──

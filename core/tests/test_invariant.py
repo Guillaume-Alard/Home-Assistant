@@ -199,3 +199,30 @@ def test_proactif_passe_par_propose():
     """L'escalade d'une suggestion en action se fait via le moteur de PROPOSITIONS."""
     engine = (PROACTIVE_DIR / "engine.py").read_text(encoding="utf-8")
     assert "_engine.propose(" in engine
+
+
+# ── Scénarios & routines (Phase 8) : verrous statiques ───────────────────────
+#
+# Une routine se déclenche d'un mot, y compris par une personne reconnue
+# non-propriétaire : elle ne doit JAMAIS pouvoir contenir une action sensible, ni
+# écrire vers Nova autrement que par le moteur d'actions.
+
+ROUTINES_DIR = APP_DIR / "routines"
+
+
+def test_routines_liste_blanche_exclut_le_sensible():
+    from app.routines.safety import ROUTINE_SAFE_ACTIONS
+
+    interdits = {"ha.unlock", "ha.lock", "ha.alarm_disarm", "ha.alarm_arm",
+                 "ha.call_service", "protocol.run", "docker.restart", "dev.push"}
+    fuite = ROUTINE_SAFE_ACTIONS & interdits
+    assert not fuite, f"Actions sensibles/hors-cadre dans la liste blanche des routines : {fuite}"
+
+
+def test_routines_passent_par_le_moteur():
+    """Le runner exécute via run_direct ; aucun fichier du paquet routines n'écrit
+    vers Nova (call_service) — garanti aussi par le test global, rappelé ici."""
+    runner = (ROUTINES_DIR / "runner.py").read_text(encoding="utf-8")
+    assert "run_direct(" in runner
+    for path in sorted(ROUTINES_DIR.glob("*.py")):
+        assert ".call_service(" not in path.read_text(encoding="utf-8"), f"{path.name} écrit vers Nova !"

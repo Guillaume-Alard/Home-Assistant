@@ -50,7 +50,16 @@ async def box(tmp_path, monkeypatch):
 
     app_dir = Path(app.__file__).resolve().parent
     source = SelfSource(app_dir, app_dir.parent / "ui")
-    toolbox = Toolbox(ha, engine, protocols, store, health=health, docker=docker, source=source)
+    from app.routines import RoutineService
+
+    async def _noop(*a):
+        pass
+
+    routines = RoutineService(Settings.from_env(), ha, engine, store, announce=_noop, on_change=_noop)
+    toolbox = Toolbox(
+        ha, engine, protocols, store, health=health, docker=docker,
+        source=source, routines=routines,
+    )
     yield SimpleNamespace(
         ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
     )
@@ -72,6 +81,7 @@ async def test_specs_stables_et_completes(box):
         "memoriser", "lister_souvenirs", "oublier", "resume_mails",
         "creer_page", "modifier_page", "lister_pages",
         "lire_mon_code", "proposer_evolution", "lister_evolutions",
+        "proposer_routine", "lancer_routine", "lister_routines",
     ]
     assert all(s["description"] for s in specs)
 
@@ -472,3 +482,59 @@ async def test_lire_mon_code_lecture_seule(box):
     # Jamais un secret / hors racine
     content, is_error = await _run_as(box, "lire_mon_code", {"chemin": ".env"}, OWNER)
     assert is_error
+
+
+# ── Scénarios & routines (Phase 8) : proposer / activer / déclencher ──────────
+
+async def test_proposer_routine_puis_lister(box):
+    content, is_error = await _run_as(box, "proposer_routine", {
+        "nom": "Bonne nuit", "description": "Fermer + éteindre",
+        "etapes": [
+            {"action": "fermer_volets", "entity_ids": ["cover.salon"]},
+            {"action": "eteindre", "entity_ids": ["light.salon"]},
+        ],
+    }, OWNER)
+    assert not is_error
+    data = json.loads(content)
+    assert data["nom"] == "Bonne nuit" and len(data["etapes"]) == 2
+    # Elle est PROPOSÉE, pas active
+    routines = await box.store.list_routines()
+    assert routines[0]["status"] == "proposed"
+    listing, _ = await _run_as(box, "lister_routines", {}, OWNER)
+    assert "Bonne nuit" in listing
+
+
+async def test_proposer_routine_refuse_action_sensible(box):
+    # Le vocabulaire n'expose même pas le déverrouillage — action inconnue refusée
+    content, is_error = await _run_as(box, "proposer_routine", {
+        "nom": "Ouvre tout", "etapes": [{"action": "deverrouiller", "entity_ids": ["lock.porte"]}],
+    }, OWNER)
+    assert not is_error and "inconnue" in content.lower()
+    assert await box.store.list_routines() == []
+
+
+async def test_lancer_routine_seulement_si_active(box):
+    await _run_as(box, "proposer_routine", {
+        "nom": "Soirée", "etapes": [{"action": "allumer", "entity_ids": ["light.salon"]}],
+    }, OWNER)
+    # Proposée → pas déclenchable
+    content, is_error = await _run_as(box, "lancer_routine", {"nom": "Soirée"}, OWNER)
+    assert is_error and box.calls == []
+    # Activée (hors LLM) → déclenchable, via le moteur
+    routine = (await box.store.list_routines())[0]
+    await box.store.update_routine(routine["id"], status="active")
+    content, is_error = await _run_as(box, "lancer_routine", {"nom": "soirée"}, OWNER)
+    assert not is_error and box.calls
+
+
+async def test_routines_reservees_selon_le_niveau(box):
+    # Proposer = propriétaire uniquement
+    content, is_error = await _run_as(box, "proposer_routine", {
+        "nom": "X", "etapes": [{"action": "allumer", "entity_ids": ["light.salon"]}],
+    }, UNKNOWN)
+    assert "réservé à guillaume" in content.lower()
+    # Déclencher une routine active = personne reconnue (maisonnée) ; invité non
+    await box.store.add_routine(name="Nuit", steps=[{"action_id": "ha.turn_off",
+        "params": {"entity_ids": ["light.salon"]}, "label": "x"}], status="active")
+    content, is_error = await _run_as(box, "lancer_routine", {"nom": "Nuit"}, UNKNOWN)
+    assert not box.calls and "reconnais pas" in content.lower()

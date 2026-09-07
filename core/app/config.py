@@ -134,6 +134,14 @@ class Settings:
     proactive_enabled: bool = True
     proactive_interval: int = 150  # secondes entre deux évaluations de fond
 
+    # Scénarios & routines (Phase 8) — Luna PROPOSE des routines (séquences
+    # d'actions nommées) depuis tes habitudes ou la conversation ; tu les ACTIVES
+    # puis les déclenches. Jamais d'action sensible dans une routine. Off = plus
+    # de détection d'habitudes ni d'outils de routine (les routines actives restent).
+    routines_enabled: bool = True
+    routine_habit_min_days: int = 3    # nb de jours distincts pour qu'une habitude compte
+    routine_habit_lookback: int = 21   # fenêtre d'analyse (jours)
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -201,6 +209,10 @@ class Settings:
             proactive_enabled=os.environ.get("SENTINEL_PROACTIVE", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             proactive_interval=_int(os.environ.get("SENTINEL_PROACTIVE_INTERVAL"), 150),
+            routines_enabled=os.environ.get("SENTINEL_ROUTINES", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            routine_habit_min_days=_int(os.environ.get("SENTINEL_ROUTINE_MIN_DAYS"), 3),
+            routine_habit_lookback=_int(os.environ.get("SENTINEL_ROUTINE_LOOKBACK"), 21),
         )
 
     @property
