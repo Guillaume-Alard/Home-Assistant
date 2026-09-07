@@ -121,6 +121,10 @@ class Settings:
     # désactivé. Aucune création ni modification possible (portée en lecture seule).
     gcal_refresh_token: str = ""
     gcal_calendar_id: str = "primary"
+    # Écriture agenda (Phase 13) — Luna PROPOSE des rendez-vous, jamais créés sans
+    # ton accord (moteur « propose puis approuve »). Nécessite un jeton de portée
+    # calendar.events (réautorisation `--write`). GCAL_WRITE=1 pour l'activer.
+    gcal_write: bool = False
 
     # Recherche web (Phase 4) — outil natif Anthropic (web_search), citations
     # intégrées. Contrôlée : plafond d'usages par tour ; réservée aux personnes
@@ -220,6 +224,8 @@ class Settings:
             mail_max=_int(os.environ.get("MAIL_MAX"), 10),
             gcal_refresh_token=os.environ.get("GCAL_REFRESH_TOKEN", "").strip(),
             gcal_calendar_id=os.environ.get("GCAL_CALENDAR_ID", "primary").strip() or "primary",
+            gcal_write=os.environ.get("GCAL_WRITE", "").strip().lower()
+            in ("1", "on", "true", "yes", "oui"),
             web_search_enabled=os.environ.get("SENTINEL_WEB_SEARCH", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             web_search_max_uses=_int(os.environ.get("SENTINEL_WEB_SEARCH_MAX"), 5),
@@ -246,3 +252,9 @@ class Settings:
     @property
     def calendar_enabled(self) -> bool:
         return bool(self.gmail_client_id and self.gmail_client_secret and self.gcal_refresh_token)
+
+    @property
+    def calendar_write_enabled(self) -> bool:
+        # L'écriture (proposition de rendez-vous) suppose l'agenda actif ET le flag
+        # explicite GCAL_WRITE — un opt-in délibéré, jeton en écriture requis.
+        return self.calendar_enabled and self.gcal_write

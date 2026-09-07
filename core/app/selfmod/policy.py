@@ -44,6 +44,7 @@ _PROTECTED_SUFFIXES = (
 _PROTECTED_MARKERS = (
     "app/actions/",
     "app/mail/",
+    "app/agenda/",        # jetons OAuth + écriture agenda (create_event)
     "app/selfmod/",
     "worker/",            # le conteneur Claude Code isolé
     "data/certs/",        # certificats TLS

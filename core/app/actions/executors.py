@@ -12,6 +12,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from ..agenda import CalendarClient, CalendarError
 from ..devwork.worker_client import WorkerClient, WorkerError
 from ..ha.client import HAClient
 from ..monitors.docker import DockerError, DockerMonitor
@@ -51,8 +52,40 @@ def build_registry(
     protocols: "ProtocolBook | None" = None,
     docker: DockerMonitor | None = None,
     worker: WorkerClient | None = None,
+    calendar: CalendarClient | None = None,
 ) -> ActionRegistry:
     reg = ActionRegistry()
+
+    # ── Agenda Google : ÉCRITURE (Phase 13) — jamais en ordre direct ─────────
+    # `direct=False` : cette action n'existe QUE par proposition approuvée. Luna
+    # prépare le rendez-vous, Guillaume valide, alors seulement il est créé.
+    # Le client n'est fourni ici que si l'écriture est activée (GCAL_WRITE + jeton
+    # de portée écriture) ; sinon l'action n'est pas au registre du tout.
+
+    if calendar is not None:
+
+        async def agenda_create(params: dict) -> str:
+            try:
+                event = await calendar.create_event(
+                    summary=str(params.get("titre") or ""),
+                    start=str(params.get("debut") or ""),
+                    end=(str(params.get("fin") or "").strip() or None),
+                    all_day=bool(params.get("toute_la_journee")),
+                    location=str(params.get("lieu") or ""),
+                    description=str(params.get("details") or ""),
+                )
+            except CalendarError as exc:
+                raise ActionError(str(exc)) from None
+            titre = event.get("summary") or "événement"
+            quand = event.get("when") or ""
+            lieu = f" — {event['location']}" if event.get("location") else ""
+            return f"« {titre} » ajouté à ton agenda ({quand}){lieu}."
+
+        reg.register(ActionSpec(
+            "agenda.creer",
+            "Créer un événement dans Google Agenda (réservé aux propositions approuvées)",
+            "medium", False, agenda_create,
+        ))
 
     # ── Développement (Phase 3B) ─────────────────────────────────────────
     # dev.task n'écrit QUE dans l'espace de travail jetable du worker : ordre

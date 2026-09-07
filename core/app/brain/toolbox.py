@@ -89,11 +89,32 @@ ACTIVITY_LABELS = {
     "annuler_rappel": "annule un rappel…",
     "briefing": "prépare ton briefing…",
     "agenda": "consulte ton agenda…",
+    "agenda_creer": "prépare un rendez-vous…",
 }
 
 
 def _compact(data) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+_JOURS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+            "août", "septembre", "octobre", "novembre", "décembre")
+
+
+def _fmt_rdv_quand(debut: str, all_day: bool) -> str:
+    """Rend une date/heure ISO lisible en français pour la carte de proposition."""
+    from datetime import datetime
+
+    try:
+        d = datetime.strptime(debut[:10], "%Y-%m-%d") if all_day else datetime.fromisoformat(debut)
+    except (ValueError, TypeError):
+        return debut
+    jour = f"{_JOURS_FR[d.weekday()]} {d.day} {_MOIS_FR[d.month - 1]}"
+    if all_day:
+        return f"{jour} (toute la journée)"
+    heure = f"{d.hour}h{d.minute:02d}" if d.minute else f"{d.hour}h"
+    return f"{jour} à {heure}"
 
 
 class Toolbox:
@@ -115,6 +136,7 @@ class Toolbox:
         tz: str = "Europe/Paris",
         briefing: BriefingService | None = None,
         calendar: CalendarClient | None = None,
+        calendar_write: bool = False,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_pages_change: Callable[[], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
@@ -142,8 +164,9 @@ class Toolbox:
         self._on_reminders_change = on_reminders_change
         # Briefing du matin (Phase 11).
         self._briefing = briefing
-        # Agenda Google en lecture seule (Phase 12).
+        # Agenda Google en lecture seule (Phase 12) ; écriture par proposition (Phase 13).
         self._calendar = calendar
+        self._calendar_write = calendar_write
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
@@ -699,6 +722,31 @@ class Toolbox:
                     },
                 },
             })
+        # Agenda — ÉCRITURE par proposition (Phase 13). Luna PRÉPARE, Guillaume valide.
+        if self._calendar is not None and self._calendar_write and self._engine is not None:
+            specs.append({
+                "name": "agenda_creer",
+                "description": (
+                    "PRÉPARE un rendez-vous pour l'agenda Google de Guillaume. Ne crée RIEN "
+                    "directement : dépose une proposition que Guillaume approuve dans le cockpit "
+                    "— alors seulement l'événement est ajouté. Réservé à Guillaume. "
+                    "Calcule `debut` (et `fin`) en ISO 8601 local à partir de la date/heure "
+                    "courante (« demain 14h », « lundi prochain »). Pour un événement sans heure "
+                    "précise, mets `toute_la_journee` à vrai et donne `debut` en AAAA-MM-JJ."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "titre": {"type": "string", "description": "Intitulé de l'événement."},
+                        "debut": {"type": "string", "description": "Début ISO 8601 (ex. 2026-09-08T14:00:00) ; ou AAAA-MM-JJ si toute la journée."},
+                        "fin": {"type": "string", "description": "Fin ISO 8601 (optionnel ; défaut : +1 h, ou le lendemain si toute la journée)."},
+                        "toute_la_journee": {"type": "boolean", "description": "Vrai pour un événement sans heure précise."},
+                        "lieu": {"type": "string", "description": "Lieu (optionnel)."},
+                        "details": {"type": "string", "description": "Note / description (optionnel)."},
+                    },
+                    "required": ["titre", "debut"],
+                },
+            })
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -734,6 +782,9 @@ class Toolbox:
         "briefing": "known",
         # Agenda (Phase 12) : agenda personnel → Guillaume seul (comme le courriel).
         "agenda": "owner",
+        # Agenda écriture (Phase 13) : préparer un rdv → Guillaume seul ; et de toute
+        # façon rien n'est créé sans son approbation de la proposition.
+        "agenda_creer": "owner",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -1498,3 +1549,36 @@ class Toolbox:
              "lieu": e["location"] or None}
             for e in events
         ])[:4000], False
+
+    async def _tool_agenda_creer(self, args, _utt, _src):
+        # Luna ne crée JAMAIS l'événement elle-même : elle dépose une proposition
+        # que Guillaume approuve dans le cockpit. C'est là toute la garantie.
+        if self._calendar is None or not self._calendar_write:
+            return "L'écriture dans l'agenda n'est pas activée (voir docs/AGENDA.md).", True
+        if self._engine is None:
+            return self._MOTEUR_ABSENT, True
+        titre = str(args.get("titre") or "").strip()
+        debut = str(args.get("debut") or "").strip()
+        if not titre or not debut:
+            return "Il me faut au moins un titre et une date/heure de début.", True
+        all_day = bool(args.get("toute_la_journee"))
+        fin = str(args.get("fin") or "").strip()
+        lieu = str(args.get("lieu") or "").strip()
+        details = str(args.get("details") or "").strip()
+        quand = _fmt_rdv_quand(debut, all_day)
+        description = quand + (f" · {lieu}" if lieu else "")
+        proposal, message = await self._engine.propose(
+            title=f"Agenda : {titre}",
+            description=description,
+            justification=details,
+            risk="medium",
+            rollback="Rien n'est créé sans ton accord ; une fois ajouté, tu peux le "
+                     "supprimer directement dans Google Agenda.",
+            action_id="agenda.creer",
+            params={
+                "titre": titre, "debut": debut, "fin": fin or None,
+                "toute_la_journee": all_day, "lieu": lieu, "details": details,
+            },
+            created_by="sentinel (LLM)",
+        )
+        return message, proposal is None

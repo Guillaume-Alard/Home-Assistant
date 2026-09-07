@@ -74,3 +74,51 @@ async def test_erreur_api():
         return httpx.Response(403, json={})
     with pytest.raises(CalendarError):
         await _client(handler).today()
+
+
+# ── Écriture (Phase 13) — création d'événement, jamais sans proposition ───────
+
+def _writer(captured=None, status=200):
+    import json as _json
+
+    def handler(request):
+        if "oauth2" in str(request.url):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 3600})
+        if captured is not None:
+            captured.append(_json.loads(request.content))
+        if status != 200:
+            return httpx.Response(status, json={})
+        body = _json.loads(request.content)
+        return httpx.Response(200, json=body)  # Google renvoie l'événement créé
+    return handler
+
+
+async def test_create_event_date_heure():
+    cap: list = []
+    ev = await _client(_writer(cap)).create_event(
+        summary="Dentiste", start="2026-09-08T14:00:00", location="12 rue des Lilas")
+    body = cap[0]
+    assert body["summary"] == "Dentiste" and body["location"] == "12 rue des Lilas"
+    assert body["start"] == {"dateTime": "2026-09-08T14:00:00", "timeZone": "Europe/Paris"}
+    assert body["end"]["dateTime"] == "2026-09-08T15:00:00"  # fin par défaut = +1 h
+    assert ev["summary"] == "Dentiste" and ev["when"] == "14h" and not ev["all_day"]
+
+
+async def test_create_event_toute_la_journee():
+    cap: list = []
+    await _client(_writer(cap)).create_event(summary="Congés", start="2026-09-08", all_day=True)
+    body = cap[0]
+    assert body["start"] == {"date": "2026-09-08"}
+    assert body["end"] == {"date": "2026-09-09"}  # fin exclusive = lendemain
+
+
+async def test_create_event_refuse_en_lecture_seule():
+    # Jeton de portée lecture seule → Google répond 403 → CalendarError explicite.
+    with pytest.raises(CalendarError):
+        await _client(_writer(status=403)).create_event(
+            summary="X", start="2026-09-08T14:00:00")
+
+
+async def test_create_event_titre_obligatoire():
+    with pytest.raises(CalendarError):
+        await _client(_writer()).create_event(summary="  ", start="2026-09-08T14:00:00")

@@ -235,8 +235,27 @@ class Sentinel:
             else None
         )
 
-        if self.ha or self._docker or self._worker:
-            registry = build_registry(self.ha, self.protocols, self._docker, self._worker)
+        # Agenda Google (Phase 12 lecture / Phase 13 écriture) — même client OAuth
+        # que Gmail. Le client d'écriture n'est passé au registre que si l'écriture
+        # est explicitement activée (GCAL_WRITE + jeton de portée calendar.events) :
+        # sinon l'action « agenda.creer » n'existe pas du tout.
+        try:
+            _cal_tz = ZoneInfo(settings.tz)
+        except Exception:
+            _cal_tz = None
+        self.calendar: CalendarClient | None = (
+            CalendarClient(
+                settings.gmail_client_id, settings.gmail_client_secret, settings.gcal_refresh_token,
+                tz=_cal_tz, calendar_id=settings.gcal_calendar_id,
+            )
+            if settings.calendar_enabled else None
+        )
+        _cal_writer = self.calendar if settings.calendar_write_enabled else None
+
+        if self.ha or self._docker or self._worker or _cal_writer:
+            registry = build_registry(
+                self.ha, self.protocols, self._docker, self._worker, calendar=_cal_writer
+            )
             self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
         if self.ha and self.engine:
             self.alerts = AlertEngine(
@@ -262,18 +281,6 @@ class Sentinel:
             if self.ha and settings.music_enabled else None
         )
         self._media_last = 0.0  # anti-rafale des diffusions d'état média
-        # Agenda Google en lecture seule (Phase 12) — même client OAuth que Gmail.
-        try:
-            _cal_tz = ZoneInfo(settings.tz)
-        except Exception:
-            _cal_tz = None
-        self.calendar: CalendarClient | None = (
-            CalendarClient(
-                settings.gmail_client_id, settings.gmail_client_secret, settings.gcal_refresh_token,
-                tz=_cal_tz, calendar_id=settings.gcal_calendar_id,
-            )
-            if settings.calendar_enabled else None
-        )
         # Briefing du matin (Phase 11) : météo + maison + courriel + rappels + santé + agenda.
         self.briefing = BriefingService(settings, self.ha, self.health, store, self.mail, self.calendar)
         # Minuteurs & rappels (Phase 10) : 100% local, indépendant de Nova.
@@ -294,7 +301,7 @@ class Sentinel:
             mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
             routines=self.routines, media=self.media_cfg,
             reminders=settings.reminders_enabled, tz=settings.tz, briefing=self.briefing,
-            calendar=self.calendar,
+            calendar=self.calendar, calendar_write=settings.calendar_write_enabled,
             on_memory_change=self._broadcast_memoires,
             on_pages_change=self._broadcast_pages,
             on_suggestions_change=self._broadcast_evolutions,
@@ -1098,6 +1105,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "music": sentinel.media_cfg is not None,
                 "reminders": sentinel.reminders is not None,
                 "calendar": sentinel.calendar is not None,
+                "calendar_write": sentinel.settings.calendar_write_enabled,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),

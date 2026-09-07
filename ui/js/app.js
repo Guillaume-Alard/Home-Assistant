@@ -378,6 +378,7 @@ ws.addEventListener('event', (e) => {
       remindersEnabled = !!(msg.config && msg.config.reminders);
       renderReminders({ reminders: msg.reminders || [] });
       els.agendaBtn.hidden = !(msg.config && msg.config.calendar);
+      calendarWrite = !!(msg.config && msg.config.calendar_write);
       setDevRunning(msg.dev_running || null);
       setAtelierPolling(devConfigured);
       wakeWord = msg.wake_word || wakeWord;
@@ -1134,7 +1135,14 @@ function renderConnexions(h, cfg) {
   if (cfg.docker) real.push({ ic: 'DK', name: 'Surveillance Docker', status: 'Active · lecture', statusCls: 'on', desc: 'État des conteneurs, mémoire, redémarrage sur proposition.' });
   if (cfg.atrium) real.push({ ic: 'AT', name: 'Atrium', status: 'Surveillé', statusCls: 'on', desc: 'Disponibilité et latence du service.' });
   if (cfg.mail) real.push({ ic: 'GM', name: 'Gmail (lecture seule)', status: 'Connecté', statusCls: 'on', desc: 'Résumé de tes non-lus, pour toi seul. Aucun envoi ni suppression.' });
-  if (cfg.calendar) real.push({ ic: 'CA', name: 'Google Agenda (lecture seule)', status: 'Connecté', statusCls: 'on', desc: 'Tes rendez-vous du jour et de la semaine. Aucune création ni modification.' });
+  if (cfg.calendar) real.push({
+    ic: 'CA',
+    name: cfg.calendar_write ? 'Google Agenda (lecture + écriture)' : 'Google Agenda (lecture seule)',
+    status: 'Connecté', statusCls: 'on',
+    desc: cfg.calendar_write
+      ? 'Tes rendez-vous du jour et de la semaine. Luna peut préparer un rendez-vous — créé seulement après ton approbation.'
+      : 'Tes rendez-vous du jour et de la semaine. Aucune création ni modification.',
+  });
   if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées.' });
   for (const s of real) grid.appendChild(svcCard(s));
 
@@ -1864,7 +1872,8 @@ function onReminderFired(msg) {
   if (ws.alive) ws.sendJSON({ type: 'reminders' });  // rafraîchit la liste (l'échu part)
 }
 
-// ── Agenda Google (tiroir 📅, lecture seule) ──────────────────────────────
+// ── Agenda Google (tiroir 📅 ; écriture par proposition en Phase 13) ───────
+let calendarWrite = false;   // Luna peut-elle PRÉPARER un rendez-vous ? (config)
 const AGENDA_DOW = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const AGENDA_MONTH = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 
@@ -1912,6 +1921,7 @@ function renderAgenda(msg) {
   const events = (msg && msg.events) || [];
   if (!events.length) {
     body.appendChild(emptyLine('Rien de prévu dans les sept jours à venir. ✨'));
+    agendaWriteHint(body);
     return;
   }
   let currentDay = null;
@@ -1926,6 +1936,16 @@ function renderAgenda(msg) {
     }
     body.appendChild(agendaRow(ev));
   }
+  agendaWriteHint(body);
+}
+
+// Rappelle, quand l'écriture est active, que Luna PRÉPARE un rdv à valider.
+function agendaWriteHint(body) {
+  if (!calendarWrite) return;
+  const hint = document.createElement('p');
+  hint.className = 'agenda-hint';
+  hint.textContent = 'Dis à Luna « ajoute un rendez-vous… » — elle le prépare, tu valides dans les propositions.';
+  body.appendChild(hint);
 }
 
 // ── Veille au mot d'éveil ─────────────────────────────────────────────────

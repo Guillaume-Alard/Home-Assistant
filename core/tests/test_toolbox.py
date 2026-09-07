@@ -693,3 +693,77 @@ async def test_agenda_refuse_a_la_maisonnee_et_invite(box):
     for who in (_HOUSEHOLD, UNKNOWN):
         content, is_error = await _run_as(box, "agenda", {}, who)
         assert "réservé à guillaume" in content.lower()
+
+
+# ── Agenda Google : ÉCRITURE par proposition (Phase 13) ──────────────────────
+
+@pytest.fixture()
+async def wbox(tmp_path, monkeypatch):
+    """Boîte à outils avec l'écriture agenda ACTIVÉE (client + registre + tool)."""
+    monkeypatch.setenv("SENTINEL_DATA_DIR", str(tmp_path / "data"))
+    import httpx
+    from zoneinfo import ZoneInfo
+    from app.agenda import CalendarClient
+
+    ha, _calls = make_ha_stub()
+    proto_path = tmp_path / "protocols.yml"
+    proto_path.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
+    protocols = ProtocolBook.load(proto_path)
+    store = Store(tmp_path / "wb.db")
+    await store.open()
+    posts: list = []
+
+    def _cal(request):
+        if "oauth2" in str(request.url):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+        posts.append(json.loads(request.content))         # capture le POST de création
+        return httpx.Response(200, json=posts[-1])          # Google renvoie l'événement
+
+    calendar = CalendarClient("id", "sec", "ref", tz=ZoneInfo("Europe/Paris"),
+                              transport=httpx.MockTransport(_cal))
+    engine = ActionEngine(build_registry(ha, protocols, None, calendar=calendar), store)
+    toolbox = Toolbox(ha, engine, protocols, store, calendar=calendar,
+                      calendar_write=True, tz="Europe/Paris")
+    yield SimpleNamespace(toolbox=toolbox, store=store, engine=engine, posts=posts)
+    await store.close()
+
+
+async def _run_w(wbox, args, speaker=OWNER):
+    return await wbox.toolbox.run("agenda_creer", args, utterance="ajoute un rdv",
+                                  source="voice", speaker=speaker)
+
+
+async def test_agenda_creer_depose_une_proposition_sans_rien_creer(wbox):
+    content, is_error = await _run_w(
+        wbox, {"titre": "Dentiste", "debut": "2026-09-08T14:00:00", "lieu": "12 rue des Lilas"})
+    assert not is_error
+    # Le cœur de la Phase 13 : RIEN n'est envoyé à Google — juste une proposition.
+    assert wbox.posts == []
+    pending = await wbox.store.list_proposals("pending")
+    assert len(pending) == 1
+    p = pending[0]
+    assert p["action_id"] == "agenda.creer" and p["risk"] == "medium"
+    assert p["params"]["titre"] == "Dentiste" and p["params"]["debut"] == "2026-09-08T14:00:00"
+
+
+async def test_agenda_creer_ne_cree_qu_apres_approbation(wbox):
+    await _run_w(wbox, {"titre": "Dentiste", "debut": "2026-09-08T14:00:00"})
+    num = (await wbox.store.list_proposals("pending"))[0]["num"]
+    proposal, _msg = await wbox.engine.decide(num, "approve", via="ui")
+    assert proposal["status"] == "done"
+    # Maintenant SEULEMENT l'événement part vers Google (un unique POST).
+    assert len(wbox.posts) == 1
+    assert wbox.posts[0]["summary"] == "Dentiste"
+    assert wbox.posts[0]["start"]["dateTime"] == "2026-09-08T14:00:00"
+
+
+async def test_agenda_creer_reserve_au_proprietaire(wbox):
+    for who in (_HOUSEHOLD, UNKNOWN):
+        content, _ = await _run_w(wbox, {"titre": "X", "debut": "2026-09-08T14:00:00"}, who)
+        assert "réservé à guillaume" in content.lower()
+    assert await wbox.store.list_proposals("pending") == []  # aucune proposition créée
+
+
+async def test_agenda_creer_present_seulement_si_ecriture(wbox, box):
+    assert "agenda_creer" in [s["name"] for s in wbox.toolbox.specs()]      # écriture ON
+    assert "agenda_creer" not in [s["name"] for s in box.toolbox.specs()]   # écriture OFF

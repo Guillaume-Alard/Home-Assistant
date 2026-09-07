@@ -107,6 +107,50 @@ class CalendarClient:
         now = datetime.now(self._tz)
         return await self.events(now, now + timedelta(days=max(1, days)))
 
+    # ── Écriture (Phase 13) — UNIQUEMENT via une proposition approuvée ────────
+    # Le jeton doit porter la portée `calendar.events` (réautorisation avec
+    # `--write`, voir docs/AGENDA.md) ; un jeton lecture seule est refusé par
+    # Google (403), ce qui remonte ici en CalendarError explicite.
+
+    async def create_event(
+        self,
+        *,
+        summary: str,
+        start: str,
+        end: str | None = None,
+        all_day: bool = False,
+        location: str = "",
+        description: str = "",
+    ) -> dict:
+        summary = (summary or "").strip()
+        if not summary:
+            raise CalendarError("Titre de l'événement manquant.")
+        body: dict = {"summary": summary}
+        if location.strip():
+            body["location"] = location.strip()
+        if description.strip():
+            body["description"] = description.strip()
+        body.update(_event_times(start, end, all_day, _tz_name(self._tz)))
+
+        token = await self._token()
+        headers = {"authorization": f"Bearer {token}", "content-type": "application/json"}
+        try:
+            async with self._http() as http:
+                resp = await http.post(
+                    f"{_API}/calendars/{self._calendar_id}/events", json=body, headers=headers
+                )
+        except (httpx.HTTPError, OSError) as exc:
+            raise CalendarError(f"Agenda injoignable ({exc}).") from exc
+        if resp.status_code in (401, 403):
+            raise CalendarError(
+                "Création refusée : le jeton Agenda est en lecture seule. Réautorise avec "
+                "l'accès en écriture (`python agenda/authorize.py --write`) puis mets GCAL_WRITE=1 "
+                "— voir docs/AGENDA.md."
+            )
+        if resp.status_code not in (200, 201):
+            raise CalendarError(f"L'agenda a refusé la création ({resp.status_code}).")
+        return _parse_event(resp.json(), self._tz)
+
 
 def _parse_event(item: dict, tz) -> dict:
     start = item.get("start") or {}
@@ -122,6 +166,38 @@ def _parse_event(item: dict, tz) -> dict:
         # Heure locale lisible pour l'UI / le briefing
         "when": _fmt_when(start_dt, all_day) if start_dt else "",
         "start_ts": start_dt.isoformat() if start_dt else "",
+    }
+
+
+def _tz_name(tz) -> str:
+    return getattr(tz, "key", None) or "UTC"
+
+
+def _event_times(start: str, end: str | None, all_day: bool, tz_name: str) -> dict:
+    """Construit les blocs start/end du corps d'événement Google.
+
+    Événement daté : { {dateTime, timeZone}, … } ; fin par défaut = début + 1 h.
+    Journée entière : { {date}, … } ; fin exclusive par défaut = lendemain.
+    """
+    start = (start or "").strip()
+    if not start:
+        raise CalendarError("Date/heure de début manquante.")
+    if all_day:
+        sd = start[:10]
+        try:
+            base = datetime.strptime(sd, "%Y-%m-%d")
+        except ValueError as exc:
+            raise CalendarError("Date de début illisible (attendu AAAA-MM-JJ).") from exc
+        ed = (end or "")[:10] or (base + timedelta(days=1)).strftime("%Y-%m-%d")
+        return {"start": {"date": sd}, "end": {"date": ed}}
+    if not end:
+        try:
+            end = (datetime.fromisoformat(start) + timedelta(hours=1)).isoformat()
+        except ValueError as exc:
+            raise CalendarError("Heure de début illisible (format ISO attendu).") from exc
+    return {
+        "start": {"dateTime": start, "timeZone": tz_name},
+        "end": {"dateTime": end, "timeZone": tz_name},
     }
 
 

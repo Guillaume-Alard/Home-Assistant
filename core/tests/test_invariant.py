@@ -95,6 +95,20 @@ def test_restart_docker_uniquement_dans_les_executeurs():
             raise AssertionError(f"restart_container redéfini hors monitors/docker.py : {rel}")
 
 
+def test_ecriture_agenda_uniquement_dans_les_executeurs():
+    """La création d'événement (écriture Google Agenda, Phase 13) suit la même règle :
+    appelable uniquement par les exécuteurs, définie uniquement dans le client agenda.
+    Aucun autre module ne peut écrire dans l'agenda — l'écriture passe donc forcément
+    par le moteur « propose puis approuve »."""
+    for path in _python_files():
+        rel = path.relative_to(APP_DIR).as_posix()
+        src = path.read_text(encoding="utf-8")
+        if ".create_event(" in src and rel not in ("actions/executors.py", "agenda/client.py"):
+            raise AssertionError(f"écriture agenda hors du moteur d'actions : {rel}")
+        if "def create_event(" in src and rel != "agenda/client.py":
+            raise AssertionError(f"create_event redéfini hors agenda/client.py : {rel}")
+
+
 # ── Auto-amélioration encadrée (Phase 6) : verrous statiques ─────────────────
 #
 # Luna PROPOSE des diffs ; elle n'en applique JAMAIS aucun. On le prouve
@@ -152,6 +166,7 @@ def test_la_politique_protege_tous_les_garde_fous():
         "core/app/monitors/docker.py",
         "core/app/mail/client.py",
         "core/app/mail/authorize.py",
+        "core/app/agenda/client.py",
         "core/app/selfmod/policy.py",
         "core/app/selfmod/source.py",
         "worker/app.py",

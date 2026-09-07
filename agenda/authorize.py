@@ -17,6 +17,12 @@ Aucune dépendance : uniquement la bibliothèque standard de Python 3.
     python agenda/authorize.py --client-id XXX --client-secret YYY
     # (ou définis GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET dans l'environnement)
 
+Par défaut la portée est calendar.readonly (LECTURE seule, Phase 12). Pour aussi
+autoriser Luna à PROPOSER des rendez-vous (Phase 13), ajoute --write : la portée
+devient calendar.events (lecture + écriture d'événements), et il faudra mettre
+GCAL_WRITE=1 dans .env. Même dans ce mode, Luna ne crée jamais rien seule : elle
+dépose une proposition que tu approuves dans le cockpit.
+
 Prérequis (voir docs/AGENDA.md) : le projet Google Cloud de Gmail, avec en plus
 l'API « Google Calendar » activée.
 """
@@ -33,7 +39,8 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+SCOPE_READ = "https://www.googleapis.com/auth/calendar.readonly"
+SCOPE_WRITE = "https://www.googleapis.com/auth/calendar.events"  # lecture + écriture d'événements
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -45,10 +52,13 @@ def _free_port() -> int:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Autorisation Google Agenda lecture seule pour Sentinel")
+    ap = argparse.ArgumentParser(description="Autorisation Google Agenda pour Sentinel")
     ap.add_argument("--client-id", default=os.environ.get("GMAIL_CLIENT_ID", ""))
     ap.add_argument("--client-secret", default=os.environ.get("GMAIL_CLIENT_SECRET", ""))
+    ap.add_argument("--write", action="store_true",
+                    help="Autoriser l'écriture d'événements (portée calendar.events, Phase 13)")
     args = ap.parse_args()
+    scope = SCOPE_WRITE if args.write else SCOPE_READ
     client_id = args.client_id.strip() or input("GMAIL_CLIENT_ID : ").strip()
     client_secret = args.client_secret.strip() or input("GMAIL_CLIENT_SECRET : ").strip()
     if not client_id or not client_secret:
@@ -61,7 +71,7 @@ def main() -> None:
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": SCOPE,
+        "scope": scope,
         "access_type": "offline",   # indispensable pour obtenir un refresh_token
         "prompt": "consent",        # force la délivrance d'un refresh_token
         "state": state,
@@ -113,7 +123,13 @@ def main() -> None:
             "l'app (myaccount.google.com/permissions), le prompt de consentement est requis."
         )
     print("\n✅ Autorisation réussie. Colle ceci dans ton fichier .env sur Nebula :\n")
-    print(f"GCAL_REFRESH_TOKEN={refresh}\n")
+    print(f"GCAL_REFRESH_TOKEN={refresh}")
+    if args.write:
+        print("GCAL_WRITE=1")
+        print("\n(Écriture activée : Luna pourra PRÉPARER des rendez-vous — tu les "
+              "approuves dans le cockpit, rien n'est créé sans ton accord.)\n")
+    else:
+        print()
 
 
 if __name__ == "__main__":

@@ -14,6 +14,12 @@ dans le tiroir **📅** du cockpit. Deux garanties, par construction :
 
 Rien n'est stocké : Luna interroge l'agenda à la demande et n'en garde aucune copie.
 
+> **Écriture (Phase 13), en option.** Par défaut l'agenda est en **lecture seule**.
+> Tu peux autoriser Luna à **préparer des rendez-vous** : même dans ce mode, elle
+> ne crée **jamais** rien elle-même — elle dépose une **proposition** que tu
+> approuves dans le cockpit, exactement comme les autres écritures. Voir la
+> section « Écriture par proposition » plus bas.
+
 ## Mise en place (une fois)
 
 Le plus simple : **réutilise le projet Google et l'identifiant OAuth déjà créés
@@ -81,16 +87,56 @@ docker compose up -d sentinel-core
 - **Briefing du matin** : l'agenda du jour s'ajoute automatiquement au briefing
   (voir [BRIEFING.md](BRIEFING.md)).
 
+## Écriture par proposition (Phase 13, en option)
+
+En lecture seule, Luna ne fait que consulter. Tu peux l'autoriser à **préparer
+des rendez-vous** — sans jamais rien créer d'elle-même : chaque ajout devient une
+**proposition** que tu approuves dans le cockpit (le même moteur « propose puis
+approuve » que le reste des écritures). Rien ne part vers Google tant que tu n'as
+pas cliqué **Approuver**.
+
+**Activer (une fois) :**
+
+1. Réautorise avec la portée **écriture** (lecture + écriture d'événements) — sur
+   ton PC, comme pour la lecture, mais avec `--write` :
+   ```
+   python agenda/authorize.py --write
+   ```
+   La fenêtre Google demandera cette fois de **gérer** tes événements. Le script
+   affiche un nouveau `GCAL_REFRESH_TOKEN` **et** la ligne `GCAL_WRITE=1`.
+2. Dans `.env` sur Nebula, **remplace** l'ancien jeton par le nouveau et ajoute le
+   drapeau :
+   ```
+   GCAL_REFRESH_TOKEN=1//0g....   ← le nouveau (portée écriture)
+   GCAL_WRITE=1
+   ```
+3. `docker compose up -d sentinel-core`.
+
+**Utiliser :** « Luna, **ajoute** un rendez-vous dentiste demain à 14h », « **note**
+la réunion projet lundi 10h salle Nebula ». Luna prépare l'événement (titre, date,
+heure, lieu) et dépose une **proposition** — tu la vois dans le tiroir
+**Propositions** (⚑) du cockpit, avec **Approuver / Refuser**. Elle n'est ajoutée à
+Google Agenda qu'**après** ton approbation. Un refus n'écrit rien.
+
+> **Garanties.** L'écriture n'existe **que** par proposition : l'action
+> `agenda.creer` est marquée « jamais en ordre direct » — même à la voix, même
+> reconnu, rien n'est créé sans l'étape d'approbation. Réservé au **propriétaire**.
+> Un test statique verrouille le fait que seul le moteur d'actions peut écrire
+> dans l'agenda. Pour tout couper : `GCAL_WRITE=` (vide) → retour en lecture seule,
+> sans toucher au reste.
+
 ## Réglages (`.env`)
 
 | Variable | Rôle |
 |---|---|
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | Identifiant OAuth « Application de bureau » — **partagé avec Gmail**. |
-| `GCAL_REFRESH_TOKEN` | Jeton obtenu via `agenda/authorize.py`. Vide = agenda désactivé. |
-| `GCAL_CALENDAR_ID` | Agenda lu : `primary` (ton agenda principal) ou un id `…@group.calendar.google.com` pour un agenda partagé précis. Défaut `primary`. |
+| `GCAL_REFRESH_TOKEN` | Jeton obtenu via `agenda/authorize.py` (ajoute `--write` pour l'écriture). Vide = agenda désactivé. |
+| `GCAL_CALENDAR_ID` | Agenda lu/écrit : `primary` (ton agenda principal) ou un id `…@group.calendar.google.com` pour un agenda partagé précis. Défaut `primary`. |
+| `GCAL_WRITE` | `1` pour autoriser Luna à **proposer** des rendez-vous (jeton `--write` requis). Vide = lecture seule. |
 
-L'agenda est **actif** dès que `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` et
-`GCAL_REFRESH_TOKEN` sont renseignés (propriété `calendar_enabled`).
+L'agenda est **actif** (lecture) dès que `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`
+et `GCAL_REFRESH_TOKEN` sont renseignés (`calendar_enabled`). L'**écriture** exige
+en plus `GCAL_WRITE=1` (`calendar_write_enabled`).
 
 ## Révoquer / dépanner
 
