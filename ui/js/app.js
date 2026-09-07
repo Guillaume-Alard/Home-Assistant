@@ -439,6 +439,11 @@ ws.addEventListener('event', (e) => {
     case 'reminders': renderReminders(msg); break;
     case 'reminder_fired': onReminderFired(msg); break;
     case 'agenda': renderAgenda(msg); break;
+    case 'notify_test':
+      toast(msg.ok
+        ? 'Notification envoyée ✓ — regarde ton téléphone.'
+        : 'Échec : vérifie SENTINEL_NOTIFY_SERVICE et l’app Home Assistant.');
+      break;
     default: break;
   }
 });
@@ -1107,6 +1112,14 @@ function svcCard(o) {
     d.textContent = o.desc;
     card.appendChild(d);
   }
+  if (o.action) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'svc-action';
+    b.textContent = o.action.label;
+    b.addEventListener('click', o.action.onClick);
+    card.appendChild(b);
+  }
   return card;
 }
 
@@ -1142,6 +1155,11 @@ function renderConnexions(h, cfg) {
     desc: cfg.calendar_write
       ? 'Tes rendez-vous du jour et de la semaine. Luna peut préparer un rendez-vous — créé seulement après ton approbation.'
       : 'Tes rendez-vous du jour et de la semaine. Aucune création ni modification.',
+  });
+  if (cfg.notify) real.push({
+    ic: 'NT', name: 'Notifications mobiles', status: 'Connecté', statusCls: 'on',
+    desc: 'Rappels, alertes de sécurité et briefing te suivent sur ton téléphone (app Home Assistant). Communication seule — jamais de pilotage.',
+    action: { label: 'Envoyer un test', onClick: () => { ws.sendJSON({ type: 'notify_test' }); toast('Notification de test envoyée…'); } },
   });
   if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées.' });
   for (const s of real) grid.appendChild(svcCard(s));

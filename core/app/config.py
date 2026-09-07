@@ -163,6 +163,15 @@ class Settings:
     # Briefing du matin (Phase 11) — entité météo de Nova (auto-détectée si vide).
     weather_entity: str = ""
 
+    # Notifications mobiles (Phase 14) — Luna te joint sur ton téléphone via l'app
+    # Home Assistant. `notify_service` = le service Nova (« mobile_app_xxx »), vide
+    # = désactivé. Les bascules disent QUOI pousser : rappels qui sonnent, alertes
+    # de sécurité, briefing du matin. Communication seule — jamais de pilotage.
+    notify_service: str = ""
+    notify_reminders: bool = True
+    notify_alerts: bool = True
+    notify_briefing: bool = False
+
     # Garde-fous
     max_utterance_seconds: int = 60
     wyoming_timeout_seconds: int = 120
@@ -243,6 +252,13 @@ class Settings:
             reminders_enabled=os.environ.get("SENTINEL_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             weather_entity=os.environ.get("SENTINEL_WEATHER_ENTITY", "").strip(),
+            notify_service=os.environ.get("SENTINEL_NOTIFY_SERVICE", "").strip(),
+            notify_reminders=os.environ.get("SENTINEL_NOTIFY_REMINDERS", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            notify_alerts=os.environ.get("SENTINEL_NOTIFY_ALERTS", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            notify_briefing=os.environ.get("SENTINEL_NOTIFY_BRIEFING", "").strip().lower()
+            in ("1", "on", "true", "yes", "oui"),
         )
 
     @property
@@ -258,3 +274,8 @@ class Settings:
         # L'écriture (proposition de rendez-vous) suppose l'agenda actif ET le flag
         # explicite GCAL_WRITE — un opt-in délibéré, jeton en écriture requis.
         return self.calendar_enabled and self.gcal_write
+
+    @property
+    def notify_enabled(self) -> bool:
+        # Notifications mobiles actives dès qu'un service Nova est déclaré.
+        return bool(self.notify_service)

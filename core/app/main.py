@@ -52,6 +52,7 @@ from . import __version__
 from .actions.engine import ActionEngine
 from .agenda import CalendarClient, CalendarError
 from .actions.executors import build_registry
+from .notify import Notifier
 from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
 from .brain.memory import format_profile, normalize_category
@@ -257,6 +258,14 @@ class Sentinel:
                 self.ha, self.protocols, self._docker, self._worker, calendar=_cal_writer
             )
             self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
+        # Notifications mobiles (Phase 14) : Luna te joint sur ton téléphone via le
+        # service notify de Nova. Communication seule, jamais de pilotage. Inactif
+        # sans moteur/service ; la poussée passe alors en silence (renvoie False).
+        self.notifier = Notifier(
+            self.engine, settings.notify_service,
+            reminders=settings.notify_reminders, alerts=settings.notify_alerts,
+            briefing=settings.notify_briefing,
+        )
         if self.ha and self.engine:
             self.alerts = AlertEngine(
                 load_rules(settings.config_dir / "alerts.yml"), self.ha, self.engine, self.announce
@@ -267,6 +276,7 @@ class Sentinel:
             self.proactive = ProactiveEngine(
                 settings, self.ha, self.engine, store,
                 say=self.say_proactive, on_change=self._broadcast_proactive,
+                notify=self._notify_alert,
             )
         # Scénarios & routines (Phase 8) : Luna propose, Guillaume active puis déclenche.
         self.routines: RoutineService | None = None
@@ -498,10 +508,14 @@ class Sentinel:
 
     async def _on_reminder_fired(self, reminder: dict) -> None:
         """Carillon + petit signal pour l'UI quand un minuteur/rappel sonne."""
-        await self.hub.broadcast({
-            "type": "reminder_fired", "kind": reminder.get("kind"),
-            "label": reminder.get("label") or "",
-        })
+        kind = reminder.get("kind")
+        label = reminder.get("label") or ""
+        await self.hub.broadcast({"type": "reminder_fired", "kind": kind, "label": label})
+        # Notification mobile (Phase 14) : le rappel te suit hors du cockpit.
+        if self.notifier.reminders:
+            icon = "⏱" if kind == "timer" else "⏰"
+            titre = "Minuteur terminé" if kind == "timer" else "Rappel"
+            self._spawn(self.notifier.push(label or "C'est l'heure.", title=f"{icon} {titre}"))
 
     # ── Agenda Google (Phase 12) ─────────────────────────────────────────
 
@@ -523,6 +537,15 @@ class Sentinel:
         await self.hub.broadcast({"type": "message", "message": message})
         if speak:
             self._spawn(self._speak_announcement(text, severity))
+        # Notification mobile (Phase 14) : les vraies alertes (avertissement/critique)
+        # te suivent sur le téléphone ; une simple info reste au cockpit.
+        if self.notifier.alerts and severity in ("warning", "critical"):
+            self._spawn(self.notifier.push(text, title="Sentinel"))
+
+    async def _notify_alert(self, title: str, message: str) -> None:
+        """Poussée téléphone d'une alerte proactive (Phase 14) — jamais bloquante."""
+        if self.notifier.alerts:
+            self._spawn(self.notifier.push(message, title=f"⚠️ {title}"))
 
     # ── Rapport quotidien ────────────────────────────────────────────────
 
@@ -559,6 +582,9 @@ class Sentinel:
                 deferred = await self.store.list_proposals("deferred")
                 text = await self.briefing.compose(pending=len(pending) + len(deferred))
                 await self.announce(text, "info", speak=True)
+                # Notification mobile (Phase 14) : le briefing du matin poussé (opt-in).
+                if self.notifier.briefing:
+                    self._spawn(self.notifier.push(text, title="Briefing du matin"))
             except Exception:
                 log.exception("Rapport quotidien en échec")
 
@@ -1106,6 +1132,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "reminders": sentinel.reminders is not None,
                 "calendar": sentinel.calendar is not None,
                 "calendar_write": sentinel.settings.calendar_write_enabled,
+                "notify": sentinel.notifier.enabled,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
             "speakers": await sentinel.store.list_speakers(),
@@ -1352,6 +1379,13 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "agenda":
         await sentinel.hub.send(client, await sentinel._agenda_payload())
+
+    elif mtype == "notify_test":
+        # Notification mobile de test (Phase 14) : vérifier le réglage depuis le cockpit.
+        ok = await sentinel.notifier.push(
+            "Notification de test — si tu la reçois, c'est bon. 🌙", title="Sentinel"
+        )
+        await sentinel.hub.send(client, {"type": "notify_test", "ok": ok})
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})

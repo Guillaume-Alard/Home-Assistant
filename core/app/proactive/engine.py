@@ -66,6 +66,7 @@ class ProactiveEngine:
         say: Callable[[str, bool], Awaitable[None]],   # (texte, parler) → fil + voix
         on_change: Callable[[], Awaitable[None]],       # rafraîchit le tiroir Suggestions
         config: ProactiveConfig | None = None,
+        notify: Callable[[str, str], Awaitable[None]] | None = None,  # (titre, détail) → tel.
     ):
         self._settings = settings
         self._ha = ha
@@ -73,6 +74,10 @@ class ProactiveEngine:
         self._store = store
         self._say = say
         self._on_change = on_change
+        # Notification mobile (Phase 14) : pour les alertes de sécurité seulement.
+        # C'est de la COMMUNICATION vers Guillaume — jamais une action sur la maison
+        # (le veilleur ne fait toujours qu'observer, dire, et proposer).
+        self._notify = notify
         self.config = config or load_config(settings.config_dir / "proactive.yml")
         try:
             self._tz = ZoneInfo(settings.tz)
@@ -142,6 +147,13 @@ class ProactiveEngine:
             await self._say(s.detail, speak)
         except Exception:
             log.exception("Annonce d'une suggestion impossible")
+        # Une alerte de sécurité te suit sur le téléphone (hors du cockpit) ; un
+        # simple constat de confort/énergie reste au cockpit.
+        if self._notify is not None and s.severity == "warning":
+            try:
+                await self._notify(s.title, s.detail)
+            except Exception:
+                log.exception("Notification mobile d'une suggestion impossible")
         try:
             await self._on_change()
         except Exception:
