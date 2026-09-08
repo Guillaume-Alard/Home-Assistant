@@ -1,7 +1,8 @@
 # Luna — P3 : identité. Hypothèses et contrats
 
-**Statut : en attente de validation.** Aucun code n'est écrit tant que ce
-document n'est pas tranché (§11 du cahier des charges).
+**Statut : validé le 8 septembre 2026, puis implémenté.** C1 à C7 acceptés.
+Les écarts constatés pendant l'écriture sont en **partie F** ; le reste du
+document décrit ce qui tourne.
 
 Sortie testable attendue (§11) : **Luna distingue Guillaume de Clara.**
 
@@ -339,6 +340,50 @@ qu'il vit dans L0, sans dépendance.
 > personnalisation, et C5 le rend structurel — c'est la réponse honnête à leur
 > donner.
 
-Ces quatre réponses ne bloquent pas l'écriture du code, sauf **Q2**, qui
-déciderait de l'ampleur de la phase. Dis-moi si tu valides C1 à C7, et je code
-P3.
+**Q2 reste sans réponse**, et le code n'attend pas après elle : il a été écrit
+pour l'hypothèse large (compte partagé). Si chacun se connecte avec son compte
+sur l'iPad, rien ne casse — `voice_needed` passe simplement à faux et aucune
+empreinte n'est jamais calculée. C'est exactement ce que C1 prévoit.
+
+---
+
+# Partie F — Écarts entre ce contrat et ce qui tourne
+
+| # | Ce que disait le contrat | Ce qui a été fait | Pourquoi |
+|---|---|---|---|
+| 1 | `score(p) = presence(p) × voix(p)` | `score(p) = voix(p) × (1 − 0,5 + 0,5 × presence(p))` | **Trouvé par un test.** La forme multiplicative donnait à la présence un **droit de veto** : avec `presence = 0,15`, aucun score ne pouvait atteindre le seuil de décision, si franche que soit la voix. Un téléphone oublié dans la voiture rendait son propriétaire méconnaissable. C'est l'inverse de §6, qui dit que le téléphone est une *présomption* et que la voix *confirme*. La nouvelle forme laisse la présence départager deux voix proches sans jamais pouvoir annuler la voix. |
+| 2 | `quality: ok \| trop_court \| trop_bruyant \| trop_faible` | `ok \| trop_court \| trop_faible` | Je ne sais pas détecter du bruit de fond de façon fiable sans détecteur d'activité vocale. Annoncer une catégorie qu'on ne sait pas produire aurait été pire que de l'enlever. |
+| 3 | Rien de précisé sur l'emplacement du panneau d'identité | Il partage le tiroir avec « Veille », ouvert par le **badge d'identité** | §8 ne prévoyait qu'un tiroir. Mettre l'identité derrière le badge qui l'affiche est l'endroit où on la cherche. |
+| 4 | Toutes les commandes d'identité sous la barrière du réseau local | `luna/identity/forget` marche **aussi à distance** | Effacer une empreinte n'est pas de la biométrie : c'est le contraire. Devoir rentrer chez soi pour retirer sa voix serait absurde. |
+| 5 | Rien sur le moment de l'identification | Elle a lieu **avant** l'échange, pas après | Le profil fixe le scope des actions (§3, F3). Identifier après reviendrait à évaluer la demande au nom de quelqu'un d'autre. Le coût est un aller-retour avant que Luna ne commence à réfléchir. |
+| 6 | Rien sur l'emplacement du modèle | `map: share:ro` dans `config.yaml` | Le `.onnx` se dépose dans `/share`, comme un modèle de voix Piper. Lecture seule : l'add-on n'a aucune raison d'y écrire. |
+| 7 | Rien sur la façon dont la carte applique C1 | `luna/info` rend `identity.voice_needed` | Sans ce drapeau, la carte enverrait de l'audio même là où la session Home Assistant a déjà répondu. C1 se décide côté add-on, mais s'applique côté carte. |
+
+---
+
+# Partie G — Recette de P3, état
+
+| # | Vérification | État |
+|---|---|---|
+| 1 | Inscrire Guillaume, cohérence au-dessus de 0,8 | ✅ testé |
+| 2 | Inscrire Clara | ✅ testé |
+| 3 | Guillaume parle depuis l'iPad → badge « Guillaume » | ⏳ **sur Nova**, avec de vraies voix |
+| 4 | Clara parle depuis le même iPad → le badge change | ⏳ **sur Nova** |
+| 5 | Voix inconnue → `unknown`, et Luna demande | ✅ testé, jusqu'au bouton de confirmation dans la carte |
+| 6 | Téléphone absent → la marge en tient compte, **sans veto** | ✅ testé — c'est l'écart n° 1 |
+| 7 | En distant, `luna/identity/voice` refusée **avant** le relais | ✅ testé : le faux relais ne reçoit aucun octet |
+| 8 | Un profil reconnu à la voix ne peut pas valider un niveau 4 | ✅ testé — l'invariant de C5 |
+| 9 | L'identité expire après cinq minutes | ✅ testé |
+| 10 | Temps d'inférence sur 3 s d'audio | ⏳ **à mesurer sur Nova**, avec le vrai modèle |
+| 11 | `ruff`, `lint-imports`, `pytest` verts | ✅ 290 tests |
+
+Les points 3, 4 et 10 demandent de vraies voix et la vraie machine. Tout le
+reste est couvert, y compris la fusion — c'est pour ça qu'elle vit dans L0,
+sans dépendance : elle se teste au vecteur près.
+
+**Ce qui reste à faire sur Nova, et que le code ne peut pas faire :** choisir et
+déposer un modèle ONNX d'empreinte de locuteur dans `/share`, renseigner
+l'option `modele_voix`, déclarer les entités `device_tracker` de chacun, puis
+inscrire les voix depuis le badge de la carte. Sans modèle, Luna démarre,
+converse et pilote la maison comme avant — seule la reconnaissance reste
+éteinte, et elle le dit.

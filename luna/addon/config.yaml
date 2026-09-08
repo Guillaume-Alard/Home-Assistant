@@ -22,11 +22,15 @@ homeassistant_api: true
 hassio_api: false
 ingress: false
 host_network: false
+# Le modèle d'empreinte de locuteur se dépose ici (option `modele_voix`).
+map:
+  - share:ro
 
 options:
   anthropic_api_key: ""
   modele: "claude-sonnet-5"
   effort: "low"
+  modele_voix: ""
   relay_secret: ""
   relay_port: 8099
   fuseau: "Europe/Paris"
@@ -34,12 +38,14 @@ options:
   profils:
     - utilisateur_ha: "Guillaume"
       profil: "guillaume"
+      presence: ""
   profil_par_defaut: "guest"
 
 schema:
   anthropic_api_key: password
   modele: str
   effort: list(low|medium|high|xhigh|max)
+  modele_voix: str?
   relay_secret: password
   relay_port: port
   fuseau: str
@@ -47,4 +53,5 @@ schema:
   profils:
     - utilisateur_ha: str
       profil: list(guillaume|clara|liam|guest)
+      presence: str?
   profil_par_defaut: list(guillaume|clara|liam|guest|unknown)

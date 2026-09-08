@@ -271,7 +271,7 @@ class Orchestrateur:
             # P3 à P6. La carte grise ce qui est à false plutôt que de le cacher.
             "phases": {
                 "voice": True,
-                "identity": False,
+                "identity": True,
                 "veille": False,
                 "guardian": False,
             },

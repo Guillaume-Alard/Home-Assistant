@@ -12,14 +12,17 @@ ensuite le profil Luna à partir de ce nom (décision A6).
 from __future__ import annotations
 
 import logging
+from ipaddress import ip_address
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.components import assist_pipeline, tts, websocket_api
+from homeassistant.components import assist_pipeline, http, tts, websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import network as reseau
+from homeassistant.util import network as util_reseau
 
 from .client import ClientRelais, ErreurLuna
-from .const import DOMAINE
+from .const import DOMAINE, TAILLE_AUDIO_MAX
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +45,12 @@ def enregistrer_commandes(hass: HomeAssistant) -> None:
         ws_feed,
         ws_proposal_decide,
         ws_speak,
+        ws_identity_voice,
+        ws_identity_confirm,
+        ws_enroll_start,
+        ws_enroll_sample,
+        ws_enroll_finish,
+        ws_identity_forget,
         ws_identity,
         ws_alerts_feedback,
         ws_patterns,
@@ -52,23 +61,81 @@ def enregistrer_commandes(hass: HomeAssistant) -> None:
 
 
 @callback
+def est_local(hass: HomeAssistant) -> bool:
+    """La requête vient-elle du réseau de la maison ?
+
+    §6 : « La biométrie n'est active que sur le réseau local. Aucune frame
+    caméra ne transite par le relais Nabu Casa. » Deux cas à écarter : le relais
+    Nabu Casa, et un accès direct depuis internet.
+
+    Sans requête courante — l'agent de conversation appelle hors contexte HTTP —
+    on répond « local » : ce chemin ne fait de toute façon aucune biométrie.
+    """
+    if reseau.is_cloud_connection(hass):
+        return False
+    requete = http.current_request.get()
+    if requete is None or not requete.remote:
+        return True
+    try:
+        return util_reseau.is_local(ip_address(requete.remote))
+    except ValueError:
+        return False
+
+
+@callback
 def _contexte(
-    connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
 ) -> dict[str, Any]:
     utilisateur = connection.user
     return {
         "ha_user_id": utilisateur.id,
         "ha_user_name": utilisateur.name,
         "is_admin": utilisateur.is_admin,
-        # Le profil est résolu par l'add-on à partir du nom (A6) ; ce qu'on
-        # envoie ici n'est qu'une valeur de repli, jamais une affirmation.
+        # Le profil est résolu par l'add-on (A6, puis C6) ; ce qu'on envoie ici
+        # n'est qu'une valeur de repli, jamais une affirmation.
         "profile": "unknown",
         "client_id": msg.get("client_id") or "loggia",
-        # En P1 la biométrie n'existe pas, donc `local` ne sert à rien encore.
-        # Il deviendra réel en P3 (§6 : « La biométrie n'est active que sur le
-        # réseau local »).
-        "local": True,
+        "local": est_local(hass),
+        # C6 : l'identité vit par appareil, pas globalement.
+        "device": msg.get("device"),
     }
+
+
+@callback
+def _refus_distant(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> bool:
+    """Refuse la biométrie à distance, **avant** de relayer quoi que ce soit.
+
+    C'est tout l'intérêt de faire le contrôle ici plutôt que dans l'add-on : à
+    l'intérieur, l'audio aurait déjà traversé le relais Nabu Casa que §6
+    interdit. Ici, il ne part pas.
+    """
+    if est_local(hass):
+        return False
+    connection.send_error(
+        msg["id"],
+        "remote_biometrics",
+        "Je ne reconnais les voix que sur le réseau de la maison. "
+        "À distance, passe par le PIN de Loggia.",
+    )
+    return True
+
+
+@callback
+def _audio_valide(
+    connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> bool:
+    if len(msg.get("audio") or "") > TAILLE_AUDIO_MAX:
+        connection.send_error(
+            msg["id"], "audio_too_short", "Cet extrait est trop long pour moi."
+        )
+        return False
+    return True
 
 
 def _client(hass: HomeAssistant) -> ClientRelais:
@@ -86,7 +153,9 @@ async def _ponctuelle(
 ) -> None:
     """Relaie une opération ponctuelle, en traduisant les pannes en messages."""
     try:
-        resultat = await _client(hass).demander(op, charge, _contexte(connection, msg))
+        resultat = await _client(hass).demander(
+            op, charge, _contexte(hass, connection, msg)
+        )
     except ErreurLuna as err:
         connection.send_error(msg["id"], err.code, err.message)
         return
@@ -134,7 +203,7 @@ def _flux(op: str):
 
         try:
             arreter = await _client(hass).souscrire(
-                op, charge, _contexte(connection, msg), sur_evenement
+                op, charge, _contexte(hass, connection, msg), sur_evenement
             )
         except ErreurLuna as err:
             connection.send_error(identifiant, err.code, err.message)
@@ -295,11 +364,118 @@ def _voix_du_pipeline(hass: HomeAssistant) -> tuple[str | None, str | None, str 
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): "luna/identity", vol.Optional("client_id"): str}
+    {
+        vol.Required("type"): "luna/identity",
+        vol.Optional("device"): str,
+        vol.Optional("client_id"): str,
+    }
 )
 @websocket_api.async_response
 async def ws_identity(hass, connection, msg) -> None:
     await _ponctuelle(hass, connection, msg, "identity", {})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/identity/voice",
+        vol.Required("audio"): str,
+        vol.Optional("device"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_identity_voice(hass, connection, msg) -> None:
+    if _refus_distant(hass, connection, msg) or not _audio_valide(connection, msg):
+        return
+    await _ponctuelle(hass, connection, msg, "identity_voice", {"audio": msg["audio"]})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/identity/confirm",
+        vol.Required("profile"): str,
+        vol.Required("accept"): bool,
+        vol.Optional("device"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_identity_confirm(hass, connection, msg) -> None:
+    await _ponctuelle(
+        hass,
+        connection,
+        msg,
+        "identity_confirm",
+        {"profile": msg["profile"], "accept": msg["accept"]},
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/identity/enroll/start",
+        vol.Required("profile"): str,
+        vol.Optional("device"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_enroll_start(hass, connection, msg) -> None:
+    if _refus_distant(hass, connection, msg):
+        return
+    await _ponctuelle(hass, connection, msg, "enroll_start", {"profile": msg["profile"]})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/identity/enroll/sample",
+        vol.Required("session"): str,
+        vol.Required("index"): int,
+        vol.Required("audio"): str,
+        vol.Optional("device"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_enroll_sample(hass, connection, msg) -> None:
+    if _refus_distant(hass, connection, msg) or not _audio_valide(connection, msg):
+        return
+    await _ponctuelle(
+        hass,
+        connection,
+        msg,
+        "enroll_sample",
+        {"session": msg["session"], "index": msg["index"], "audio": msg["audio"]},
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/identity/enroll/finish",
+        vol.Required("session"): str,
+        vol.Optional("device"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_enroll_finish(hass, connection, msg) -> None:
+    if _refus_distant(hass, connection, msg):
+        return
+    await _ponctuelle(hass, connection, msg, "enroll_finish", {"session": msg["session"]})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/identity/forget",
+        vol.Required("profile"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_identity_forget(hass, connection, msg) -> None:
+    """Effacer une empreinte n'est pas de la biométrie : ça marche à distance."""
+    await _ponctuelle(
+        hass, connection, msg, "identity_forget", {"profile": msg["profile"]}
+    )
 
 
 @websocket_api.websocket_command(

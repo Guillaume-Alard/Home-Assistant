@@ -11,6 +11,8 @@ empêche un client de se déclarer administrateur.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import hmac
 import logging
@@ -20,6 +22,7 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
+from ..engine.identity import MoteurIdentite
 from ..engine.orchestrator import Orchestrateur
 from ..kernel.bus import Bus
 from ..kernel.errors import LunaError, PasEncoreImplemente
@@ -39,7 +42,6 @@ FERMETURE_NON_AUTORISE = 4401
 
 #: Documentées en P1, vivantes plus tard (§12). Jamais un silence (§8).
 OPS_FUTURES = {
-    "identity": "Cette capacité arrive en phase 3.",
     "alerts_feedback": "Cette capacité arrive en phase 4.",
     "patterns": "Cette capacité arrive en phase 4.",
     "suggestions": "Cette capacité arrive en phase 4.",
@@ -47,8 +49,10 @@ OPS_FUTURES = {
 }
 
 
-#: Résout un utilisateur Home Assistant en profil Luna (décision A6).
-ResolveurProfil = Callable[[str | None, str | None], str]
+#: Construit le contexte complet d'une requête : profil résolu (A6) et, depuis
+#: P3, identité de l'appareil (C6). Vit dans l'amorçage, qui connaît les
+#: réglages et le moteur d'identité.
+ResolveurContexte = Callable[[dict[str, Any]], ContexteRequete]
 
 
 class Relais:
@@ -57,12 +61,14 @@ class Relais:
         orchestrateur: Orchestrateur,
         bus: Bus,
         secret: str,
-        resoudre_profil: ResolveurProfil,
+        resoudre_contexte: ResolveurContexte,
+        identite: MoteurIdentite,
     ) -> None:
         self._orchestrateur = orchestrateur
         self._bus = bus
         self._secret = secret
-        self._resoudre_profil = resoudre_profil
+        self._resoudre_contexte = resoudre_contexte
+        self._identite = identite
         self._connexions: set[Connexion] = set()
         bus.abonner(MaisonConnectee, self._sur_maison)
 
@@ -89,7 +95,11 @@ class Relais:
             return ws
 
         connexion = Connexion(
-            ws, self._orchestrateur, self._resoudre_profil, self.diffuser
+            ws,
+            self._orchestrateur,
+            self._resoudre_contexte,
+            self.diffuser,
+            self._identite,
         )
         self._connexions.add(connexion)
         log.info("Relais : intégration connectée (%s)", requete.remote)
@@ -107,13 +117,15 @@ class Connexion:
         self,
         ws: web.WebSocketResponse,
         orchestrateur: Orchestrateur,
-        resoudre_profil: ResolveurProfil,
+        resoudre_contexte: ResolveurContexte,
         diffuser_a_tous: Callable[[Any], Awaitable[None]],
+        identite: MoteurIdentite,
     ) -> None:
         self._ws = ws
         self._orchestrateur = orchestrateur
-        self._resoudre_profil = resoudre_profil
+        self._resoudre_contexte = resoudre_contexte
         self._diffuser_a_tous = diffuser_a_tous
+        self._identite = identite
         self._verrou = asyncio.Lock()
         self._flux: dict[int, asyncio.Task[None]] = {}
         self._abonnes_feed: set[int] = set()
@@ -147,7 +159,7 @@ class Connexion:
         identifiant = int(trame.get("id", 0))
         op = str(trame.get("op") or "")
         charge = trame.get("payload") or {}
-        contexte = self._contexte(trame.get("context") or {})
+        contexte = self._resoudre_contexte(trame.get("context") or {})
         try:
             await self._router(identifiant, op, charge, contexte)
         except LunaError as exc:
@@ -163,22 +175,6 @@ class Connexion:
                     },
                 }
             )
-
-    def _contexte(self, brut: dict[str, Any]) -> ContexteRequete:
-        """Le profil est résolu **ici**, pas côté intégration.
-
-        La correspondance utilisateur HA → profil Luna vit dans les options de
-        l'add-on (décision A6). Une seule source de vérité, et un client qui
-        se déclarerait « guillaume » n'y gagne rien.
-        """
-        contexte = ContexteRequete(**brut)
-        return contexte.model_copy(
-            update={
-                "profile": self._resoudre_profil(
-                    contexte.ha_user_name, contexte.ha_user_id
-                )
-            }
-        )
 
     async def _router(
         self, identifiant: int, op: str, charge: dict[str, Any], contexte: ContexteRequete
@@ -224,6 +220,63 @@ class Connexion:
         elif op == "stop":
             await self._arreter(int(charge.get("stream_id") or identifiant))
             await self._resultat(identifiant, {"stopped": True})
+        elif op == "identity":
+            await self._resultat(identifiant, await self._identite.info(contexte))
+        elif op == "identity_voice":
+            decision, etat = await self._identite.identifier(
+                _audio(charge), contexte=contexte
+            )
+            await self._resultat(
+                identifiant,
+                {
+                    "profile": etat.profil,
+                    "confidence": round(decision.confiance, 3),
+                    "margin": round(decision.marge, 3),
+                    "asked": decision.demander,
+                },
+            )
+        elif op == "identity_confirm":
+            etat = await self._identite.confirmer(
+                contexte=contexte,
+                profil=str(charge.get("profile") or ""),
+                accepte=bool(charge.get("accept")),
+            )
+            await self._resultat(
+                identifiant,
+                {
+                    "profile": etat.profil,
+                    "confidence": etat.confiance,
+                    "expires_at": etat.expires_at.isoformat()
+                    if etat.expires_at
+                    else None,
+                },
+            )
+        elif op == "enroll_start":
+            session, phrases = self._identite.demarrer_inscription(
+                contexte=contexte, profil=str(charge.get("profile") or "")
+            )
+            await self._resultat(identifiant, {"session": session, "phrases": phrases})
+        elif op == "enroll_sample":
+            qualite, restant = self._identite.ajouter_echantillon(
+                contexte=contexte,
+                session=str(charge.get("session") or ""),
+                index=int(charge.get("index") or 0),
+                pcm=_audio(charge),
+            )
+            await self._resultat(
+                identifiant,
+                {"accepted": qualite == "ok", "quality": qualite, "remaining": restant},
+            )
+        elif op == "enroll_finish":
+            await self._resultat(
+                identifiant,
+                await self._identite.terminer_inscription(
+                    contexte=contexte, session=str(charge.get("session") or "")
+                ),
+            )
+        elif op == "identity_forget":
+            efface = await self._identite.oublier(profil=str(charge.get("profile") or ""))
+            await self._resultat(identifiant, {"removed": efface})
         elif op in OPS_FUTURES:
             raise PasEncoreImplemente(OPS_FUTURES[op])
         else:
@@ -302,3 +355,18 @@ class Connexion:
         for identifiant in list(self._flux):
             await self._arreter(identifiant)
         self._abonnes_feed.clear()
+
+
+def _audio(charge: dict[str, Any]) -> bytes:
+    """Décode l'audio d'une requête d'identité.
+
+    Base64 plutôt qu'un flux : une phrase, une requête (décision C3). L'audio
+    brut ne quitte jamais cette fonction — seul le vecteur est conservé (H50).
+    """
+    brut = charge.get("audio")
+    if not isinstance(brut, str) or not brut:
+        raise LunaError("Aucun audio dans la requête.")
+    try:
+        return base64.b64decode(brut, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise LunaError("L'audio envoyé n'est pas lisible.") from exc

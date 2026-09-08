@@ -20,14 +20,17 @@ from ..kernel.autonomy import Niveau
 from ..kernel.ids import nouvel_id
 from ..kernel.schemas import (
     ActionHA,
+    EmpreinteVocale,
+    EntreeIdentite,
     EntreeJournal,
     MessageEnregistre,
     OutilResume,
 )
+from .voiceprint import depaqueter, empaqueter
 
 log = logging.getLogger("luna.store")
 
-VERSION_SCHEMA = 1
+VERSION_SCHEMA = 2
 
 #: Au-delà, on ouvre une nouvelle conversation plutôt que de reprendre le fil.
 FENETRE_CONVERSATION = timedelta(hours=12)
@@ -71,6 +74,35 @@ CREATE TABLE IF NOT EXISTS action_log (
     message_id    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_action_log_ts ON action_log(ts);
+
+-- ── Identité (P3) ───────────────────────────────────────────────────────
+-- L'empreinte, jamais l'audio (H50). `model` accompagne le vecteur : changer
+-- de modèle rend les anciennes incomparables, mieux vaut les invalider que
+-- produire des ressemblances silencieusement fausses.
+CREATE TABLE IF NOT EXISTS voice_prints (
+    id         TEXT PRIMARY KEY,
+    profile    TEXT NOT NULL,
+    vector     BLOB NOT NULL,
+    dim        INTEGER NOT NULL,
+    model      TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prints_profile ON voice_prints(profile, model);
+
+-- Chaque décision et son score : c'est là-dedans qu'on règle les seuils de
+-- H48, sur de vraies voix plutôt qu'au jugé.
+CREATE TABLE IF NOT EXISTS identity_log (
+    id           TEXT PRIMARY KEY,
+    ts           TEXT NOT NULL,
+    device       TEXT NOT NULL,
+    decided      TEXT NOT NULL,
+    confidence   REAL NOT NULL,
+    margin       REAL NOT NULL,
+    signals_json TEXT NOT NULL,
+    asked        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_identity_log_ts ON identity_log(ts);
 """
 
 
@@ -104,7 +136,15 @@ class MagasinSQLite:
             await self._co.execute(
                 "INSERT INTO schema_version (version) VALUES (?)", (VERSION_SCHEMA,)
             )
-        # P4 branchera ici les migrations numérotées ; en P1 il n'y en a aucune.
+            return
+        # Les tables sont créées en `IF NOT EXISTS` à chaque démarrage : passer
+        # de la v1 à la v2 n'a donc rien détruit ni rien perdu. Une migration
+        # qui transformerait des données existantes viendrait ici, numérotée.
+        if int(ligne["version"]) < VERSION_SCHEMA:
+            log.info("Schéma migré de v%s à v%s", ligne["version"], VERSION_SCHEMA)
+            await self._co.execute(
+                "UPDATE schema_version SET version = ?", (VERSION_SCHEMA,)
+            )
 
     @property
     def _co(self) -> aiosqlite.Connection:
@@ -255,6 +295,89 @@ class MagasinSQLite:
                 executed=bool(ligne["executed"]),
                 error=ligne["error"],
                 message_id=ligne["message_id"],
+            )
+            for ligne in await curseur.fetchall()
+        ]
+
+    # ── Identité (P3) ────────────────────────────────────────────────────
+
+    async def ajouter_empreinte(self, empreinte: EmpreinteVocale) -> None:
+        await self._co.execute(
+            "INSERT INTO voice_prints (id, profile, vector, dim, model, source, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                empreinte.id,
+                empreinte.profile,
+                empaqueter(empreinte.vector),
+                empreinte.dim,
+                empreinte.model,
+                empreinte.source,
+                empreinte.created_at.isoformat(),
+            ),
+        )
+        await self._co.commit()
+
+    async def empreintes(self, modele: str) -> list[EmpreinteVocale]:
+        """Toutes les empreintes du modèle courant.
+
+        Filtrer sur le modèle est essentiel : comparer un vecteur d'un modèle
+        à celui d'un autre donne un nombre, mais pas une ressemblance.
+        """
+        curseur = await self._co.execute(
+            "SELECT * FROM voice_prints WHERE model = ? ORDER BY created_at",
+            (modele,),
+        )
+        return [
+            EmpreinteVocale(
+                id=ligne["id"],
+                profile=ligne["profile"],
+                vector=depaqueter(ligne["vector"]),
+                model=ligne["model"],
+                source=ligne["source"],
+                created_at=datetime.fromisoformat(ligne["created_at"]),
+            )
+            for ligne in await curseur.fetchall()
+        ]
+
+    async def oublier_empreintes(self, profil: str) -> int:
+        curseur = await self._co.execute(
+            "DELETE FROM voice_prints WHERE profile = ?", (profil,)
+        )
+        await self._co.commit()
+        log.info("Empreintes de %s effacées : %s", profil, curseur.rowcount)
+        return int(curseur.rowcount or 0)
+
+    async def journaliser_identite(self, entree: EntreeIdentite) -> None:
+        await self._co.execute(
+            "INSERT INTO identity_log (id, ts, device, decided, confidence, "
+            "margin, signals_json, asked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entree.id,
+                entree.ts.isoformat(),
+                entree.device,
+                entree.decided,
+                entree.confidence,
+                entree.margin,
+                json.dumps(entree.signals, ensure_ascii=False),
+                int(entree.asked),
+            ),
+        )
+        await self._co.commit()
+
+    async def decisions_identite(self, limite: int = 50) -> list[EntreeIdentite]:
+        curseur = await self._co.execute(
+            "SELECT * FROM identity_log ORDER BY ts DESC LIMIT ?", (limite,)
+        )
+        return [
+            EntreeIdentite(
+                id=ligne["id"],
+                ts=datetime.fromisoformat(ligne["ts"]),
+                device=ligne["device"],
+                decided=ligne["decided"],
+                confidence=ligne["confidence"],
+                margin=ligne["margin"],
+                signals=json.loads(ligne["signals_json"]),
+                asked=bool(ligne["asked"]),
             )
             for ligne in await curseur.fetchall()
         ]

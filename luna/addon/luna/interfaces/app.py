@@ -15,12 +15,16 @@ import signal
 from aiohttp import web
 
 from ..engine.arbiter import Arbitre
-from ..engine.orchestrator import Orchestrateur
+from ..engine.identity import MoteurIdentite
+from ..engine.orchestrator import NOMS_PROFILS, Orchestrateur
 from ..kernel.bus import Bus
+from ..kernel.identity import INCONNU
+from ..kernel.schemas import ContexteRequete
 from ..kernel.settings import Reglages, charger
 from ..providers.claude import CerveauClaude
 from ..providers.home import ClientMaison
 from ..providers.store import MagasinSQLite
+from ..providers.voiceprint import EmpreinteOnnx
 from .http import construire_app
 from .relay import Relais
 
@@ -41,6 +45,17 @@ class Luna:
             reglages.anthropic_api_key, reglages.modele, reglages.effort
         )
 
+        self.empreinte = EmpreinteOnnx(reglages.modele_voix)
+        self.identite = MoteurIdentite(
+            empreinte=self.empreinte,
+            maison=self.maison,
+            memoire=self.memoire,
+            bus=self.bus,
+            profils=reglages.profils_declares,
+            capteur_presence=reglages.capteur_presence,
+            profil_de_session=self._profil_de_session,
+            noms=NOMS_PROFILS,
+        )
         self.arbitre = Arbitre(self.maison, self.memoire)
         self.orchestrateur = Orchestrateur(
             cerveau=self.cerveau,
@@ -53,9 +68,8 @@ class Luna:
             self.orchestrateur,
             self.bus,
             reglages.relay_secret,
-            lambda nom, identifiant: reglages.profil_pour(
-                nom=nom, identifiant=identifiant
-            ),
+            self._contexte,
+            self.identite,
         )
         self.app = construire_app(
             orchestrateur=self.orchestrateur,
@@ -66,9 +80,44 @@ class Luna:
         )
         self._purge: asyncio.Task[None] | None = None
 
+    def _profil_de_session(self, contexte: ContexteRequete) -> str | None:
+        """Le profil que désigne la session Home Assistant, s'il en désigne un.
+
+        C'est la règle de C1 : quand la réponse est là, on ne calcule rien. Un
+        appareil partagé — l'iPad du couloir — tombe dans le `None`, et c'est
+        seulement là que la voix sert.
+        """
+        if self.reglages.utilisateur_connu(
+            nom=contexte.ha_user_name, identifiant=contexte.ha_user_id
+        ):
+            return self.reglages.profil_pour(
+                nom=contexte.ha_user_name, identifiant=contexte.ha_user_id
+            )
+        return None
+
+    def _contexte(self, brut: dict[str, object]) -> ContexteRequete:
+        """Le profil actif est décidé **ici**, jamais annoncé par le client.
+
+        Deux sources, dans cet ordre : la session Home Assistant (A6), puis
+        l'identité de l'appareil (C6). Ce qu'un client prétend n'entre pas dans
+        le calcul.
+        """
+        contexte = ContexteRequete(**brut)  # type: ignore[arg-type]
+        etat = self.identite.etat(contexte)
+        profil = (
+            etat.profil if etat.profil != INCONNU else self.reglages.profil_par_defaut
+        )
+        return contexte.model_copy(update={"profile": profil})
+
     async def demarrer(self) -> None:
         await self.memoire.demarrer()
         await self.maison.demarrer()
+        if self.empreinte.disponible:
+            log.info("Reconnaissance de voix : %s", self.empreinte.nom)
+        else:
+            log.info(
+                "Reconnaissance de voix inactive — %s", self.empreinte.motif_indisponible
+            )
         self._purge = asyncio.create_task(self._boucle_purge(), name="luna-purge")
 
     async def arreter(self) -> None:

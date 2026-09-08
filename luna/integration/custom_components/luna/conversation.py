@@ -155,4 +155,7 @@ class AgentLuna(conversation.ConversationEntity):
             "client_id": user_input.device_id or "assist",
             "local": True,
             "source": "voix",
+            # Un satellite n'a pas d'appareil au sens de C6 : son identité vient
+            # de la session, ou reste inconnue. Aucune biométrie sur ce chemin.
+            "device": None,
         }

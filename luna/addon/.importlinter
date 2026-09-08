@@ -46,3 +46,5 @@ forbidden_modules =
     anthropic
     aiohttp
     aiosqlite
+    onnxruntime
+    numpy

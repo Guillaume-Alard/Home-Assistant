@@ -23,7 +23,19 @@
 
 const VERSION = "0.1.0";
 
+/** Où la carte garde son identifiant d'appareil (C6). Rien de biométrique. */
+const CLE_APPAREIL = "luna_appareil";
+
 const ETATS_ORBE = ["idle", "listening", "thinking", "speaking", "alert"];
+
+/** Les profils de §6, tels qu'on les montre. */
+const NOMS = {
+  guillaume: "Guillaume",
+  clara: "Clara",
+  liam: "Liam",
+  guest: "Invité",
+  unknown: "Inconnu",
+};
 
 const HEURE = new Intl.DateTimeFormat("fr-FR", {
   hour: "2-digit",
@@ -46,6 +58,14 @@ const TAUX_CIBLE = 16000;
 
 /** Combien d'échantillons par trame envoyée — 1024 à 16 kHz, soit 64 ms. */
 const TRAME = 1024;
+
+/**
+ * Huit secondes de PCM 16 bits à 16 kHz (décision C3).
+ *
+ * Une empreinte ne gagne rien à écouter plus longtemps, et le N95 a mieux à
+ * faire. Au-delà, on arrête simplement de copier.
+ */
+const OCTETS_IDENTITE_MAX = 16000 * 2 * 8;
 
 /**
  * Le rééchantillonneur, exécuté dans un `AudioWorklet`.
@@ -151,6 +171,9 @@ const STYLES = `
   .titre small { display: block; color: var(--luna-doux); font-size: 12px; }
 
   .badge {
+    cursor: pointer;
+    font: inherit;
+    color: var(--luna-texte);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -365,6 +388,12 @@ const STYLES = `
   @media (prefers-reduced-motion: reduce) { .tiroir { transition: none; } }
   .tiroir header { padding: 0 0 10px; border: none; }
   .tiroir .vide { color: var(--luna-doux); font-size: 13.5px; }
+  .panneau { display: none; overflow-y: auto; }
+  .carte[data-panneau="veille"] .alertes,
+  .carte[data-panneau="identite"] .identite { display: block; }
+  .alerte + .alerte { margin-top: 8px; }
+  .rond-large { touch-action: none; -webkit-user-select: none; user-select: none;
+                -webkit-touch-callout: none; }
   .alerte {
     background: var(--luna-fond);
     border: 1px solid var(--luna-bord);
@@ -394,7 +423,7 @@ const STYLES = `
 `;
 
 const GABARIT = `
-  <div class="carte" data-orbe="idle" data-tiroir="ferme">
+  <div class="carte" data-orbe="idle" data-tiroir="ferme" data-panneau="veille">
     <header>
       <svg class="orbe" viewBox="0 0 40 40" aria-hidden="true">
         <circle class="halo"   cx="20" cy="20" r="18"></circle>
@@ -405,11 +434,11 @@ const GABARIT = `
         <b>Luna</b>
         <small class="sous-titre">Prête</small>
       </div>
-      <div class="badge" title="Profil actif">
+      <button class="badge" title="Qui suis-je pour Luna ?">
         <span class="avatar">?</span>
         <span class="prenom">…</span>
         <span class="confiance"></span>
-      </div>
+      </button>
       <button class="cloche" data-alertes="0" title="Veille" aria-label="Veille">▤</button>
     </header>
 
@@ -422,12 +451,16 @@ const GABARIT = `
       <button class="rond envoi primaire" title="Envoyer" aria-label="Envoyer">➤</button>
     </footer>
 
-    <aside class="tiroir" aria-label="Veille">
+    <aside class="tiroir">
       <header>
-        <div class="titre"><b>Veille</b><small>Ce que Luna a remarqué</small></div>
+        <div class="titre">
+          <b class="titre-tiroir">Veille</b>
+          <small class="soustitre-tiroir">Ce que Luna a remarqué</small>
+        </div>
         <button class="fermer rond" aria-label="Fermer">✕</button>
       </header>
-      <div class="alertes"></div>
+      <div class="panneau alertes"></div>
+      <div class="panneau identite"></div>
     </aside>
   </div>
 `;
@@ -466,6 +499,16 @@ class LunaCard extends HTMLElement {
     this._attenteStt = null;
     this._desabonnerStt = null;
     this._demarrage = null;
+
+    // Identité (P3)
+    this._appareil = null;
+    this._voixNecessaire = false;
+    this._inscrits = [];
+    this._copiePcm = [];
+    this._octetsCopies = 0;
+    this._modeEcoute = "chat";
+    this._attenteCapture = null;
+    this._inscription = null;
   }
 
   // ── Contrat Lovelace ───────────────────────────────────────────────
@@ -551,6 +594,31 @@ class LunaCard extends HTMLElement {
     return this.shadowRoot.querySelector(selecteur);
   }
 
+  /**
+   * Un identifiant d'appareil, stable et anonyme (décision C6).
+   *
+   * §9.4 interdit de garder de la **biométrie** côté navigateur ; un numéro
+   * aléatoire n'en est pas. C'est lui qui permet à l'iPad du couloir et au
+   * téléphone de Clara d'avoir chacun leur profil actif.
+   */
+  _idAppareil() {
+    if (this._appareil) return this._appareil;
+    let garde = null;
+    try {
+      garde = localStorage.getItem(CLE_APPAREIL);
+      if (!garde) {
+        garde = `d_${Math.random().toString(36).slice(2, 10)}`;
+        localStorage.setItem(CLE_APPAREIL, garde);
+      }
+    } catch {
+      // Navigation privée, stockage refusé : un identifiant de session fera
+      // l'affaire. L'identité expirera juste plus souvent.
+      garde = `d_${Math.random().toString(36).slice(2, 10)}`;
+    }
+    this._appareil = garde;
+    return garde;
+  }
+
   _brancher() {
     const saisie = this._q("textarea");
     saisie.addEventListener("keydown", (evt) => {
@@ -574,7 +642,8 @@ class LunaCard extends HTMLElement {
 
     this._q(".envoi").addEventListener("click", () => this._envoyer());
     this._brancherMicro();
-    this._q(".cloche").addEventListener("click", () => this._basculerTiroir());
+    this._q(".cloche").addEventListener("click", () => this._ouvrirTiroir("veille"));
+    this._q(".badge").addEventListener("click", () => this._ouvrirTiroir("identite"));
     this._q(".fermer").addEventListener("click", () => this._basculerTiroir(false));
   }
 
@@ -605,6 +674,7 @@ class LunaCard extends HTMLElement {
     return this._hass.connection.sendMessagePromise({
       ...message,
       client_id: "loggia",
+      device: this._idAppareil(),
     });
   }
 
@@ -612,7 +682,7 @@ class LunaCard extends HTMLElement {
     if (this._desabonnerFeed) return;
     this._desabonnerFeed = await this._hass.connection.subscribeMessage(
       (evt) => this._surFeed(evt),
-      { type: "luna/feed", client_id: "loggia" },
+      { type: "luna/feed", client_id: "loggia", device: this._idAppareil() },
     );
   }
 
@@ -623,7 +693,7 @@ class LunaCard extends HTMLElement {
         else if (evt.addon === "degraded") this._bandeau(evt.detail || "Luna fonctionne en mode réduit.");
         else this._bandeau(null);
         break;
-      case "identity": // [P3]
+      case "identity":
         this._appliquerProfil(evt.profile);
         break;
       case "alert": // [P4]
@@ -680,7 +750,12 @@ class LunaCard extends HTMLElement {
     this._bulleEnCours = null;
     this._outilsEnCours = null;
 
-    const message = { type: "luna/chat", text: texte, client_id: "loggia" };
+    const message = {
+      type: "luna/chat",
+      text: texte,
+      client_id: "loggia",
+      device: this._idAppareil(),
+    };
     if (this._conversationId) message.conversation_id = this._conversationId;
 
     try {
@@ -941,7 +1016,13 @@ class LunaCard extends HTMLElement {
 
   _appliquerInfo(info) {
     this._phases = info.phases || this._phases;
+    const identite = info.identity || {};
+    // C1 : sur un appareil où la session Home Assistant désigne déjà
+    // quelqu'un, la carte n'envoie aucun audio d'identification.
+    this._voixNecessaire = Boolean(identite.voice_needed);
+    this._inscrits = identite.enrolled || [];
     this._appliquerProfil(info.profile);
+    this._rendreIdentite();
     this._rendreAlertes();
     const micro = this._q(".micro");
     const pret = Boolean(this._phases.voice) && window.isSecureContext;
@@ -974,6 +1055,19 @@ class LunaCard extends HTMLElement {
     const carte = this._q(".carte");
     const ouvert = carte.dataset.tiroir === "ouvert";
     carte.dataset.tiroir = (ouvrir ?? !ouvert) ? "ouvert" : "ferme";
+  }
+
+  _ouvrirTiroir(panneau) {
+    const carte = this._q(".carte");
+    const deja = carte.dataset.tiroir === "ouvert" && carte.dataset.panneau === panneau;
+    carte.dataset.panneau = panneau;
+    const identite = panneau === "identite";
+    this._q(".titre-tiroir").textContent = identite ? "Qui parle" : "Veille";
+    this._q(".soustitre-tiroir").textContent = identite
+      ? "Les voix que Luna reconnaît"
+      : "Ce que Luna a remarqué";
+    if (identite) this._rendreIdentite();
+    this._basculerTiroir(!deja);
   }
 
   _bandeau(texte) {
@@ -1071,14 +1165,14 @@ class LunaCard extends HTMLElement {
    * échoue, et ferme la transcription que l'arrêt attendait — l'enregistrement
    * meurt sans un mot. Sur iPad, où l'on tapote, ce n'est pas un cas rare.
    */
-  _demarrerEcoute() {
-    this._demarrage = this._faireDemarrer().finally(() => {
+  _demarrerEcoute(mode = "chat") {
+    this._demarrage = this._faireDemarrer(mode).finally(() => {
       this._demarrage = null;
     });
     return this._demarrage;
   }
 
-  async _faireDemarrer() {
+  async _faireDemarrer(mode) {
     if (this._ecoute || this._messageEnCours || this._enLigne === false) return;
     if (!this._phases.voice) {
       this._erreur(ERREURS_LOCALES.voice_phase);
@@ -1090,10 +1184,13 @@ class LunaCard extends HTMLElement {
     }
 
     this._ecoute = true;
+    this._modeEcoute = mode;
     this._handler = null;
     this._tampon = [];
+    this._copiePcm = [];
+    this._octetsCopies = 0;
     this._orbe("listening");
-    this._sousTitre("Je t'écoute…");
+    this._sousTitre(mode === "inscription" ? "Lis la phrase…" : "Je t'écoute…");
 
     try {
       this._fluxMicro = await navigator.mediaDevices.getUserMedia({
@@ -1109,7 +1206,9 @@ class LunaCard extends HTMLElement {
     }
 
     try {
-      await this._ouvrirTranscription();
+      // En inscription, on ne veut que l'audio : pas de transcription, donc pas
+      // de pipeline ouvert pour rien.
+      if (mode === "chat") await this._ouvrirTranscription();
       await this._brancherCapture();
     } catch (err) {
       this._echecEcoute(this._messageErreur(err) || ERREURS_LOCALES.mic_failed);
@@ -1168,6 +1267,13 @@ class LunaCard extends HTMLElement {
   }
 
   _envoyerPcm(echantillons) {
+    // Copie pour l'identification (C3) : une phrase, une requête, plafonnée.
+    if (this._voixNecessaire && this._octetsCopies < OCTETS_IDENTITE_MAX) {
+      this._copiePcm.push(echantillons);
+      this._octetsCopies += echantillons.byteLength;
+    }
+    if (this._modeEcoute === "inscription") return;
+
     const socket = this._hass?.connection?.socket;
     if (this._handler === null || !socket) {
       // Le pipeline n'a pas encore dit sur quel canal binaire écrire : on garde
@@ -1193,6 +1299,14 @@ class LunaCard extends HTMLElement {
     if (!this._ecoute) return;
     this._ecoute = false;
     this._couperCapture();
+
+    if (this._modeEcoute === "inscription") {
+      this._orbe("idle");
+      this._sousTitre("Prête");
+      this._attenteCapture?.ok(this._audioCopie());
+      this._attenteCapture = null;
+      return;
+    }
 
     const socket = this._hass?.connection?.socket;
     if (this._handler !== null && socket) {
@@ -1220,8 +1334,27 @@ class LunaCard extends HTMLElement {
       this._echecEcoute(ERREURS_LOCALES.stt_failed);
       return;
     }
+
+    // L'identification vient **avant** l'échange : c'est elle qui fixe le
+    // profil, donc le scope des actions (§3, F3). La faire après reviendrait à
+    // évaluer la demande au nom de quelqu'un d'autre.
+    await this._identifier();
+
     this._q("textarea").value = texte;
     await this._envoyer(true);
+  }
+
+  _audioCopie() {
+    const total = this._copiePcm.reduce((n, t) => n + t.length, 0);
+    const tout = new Int16Array(total);
+    let curseur = 0;
+    for (const trame of this._copiePcm) {
+      tout.set(trame, curseur);
+      curseur += trame.length;
+    }
+    this._copiePcm = [];
+    this._octetsCopies = 0;
+    return tout;
   }
 
   _couperCapture() {
@@ -1251,6 +1384,280 @@ class LunaCard extends HTMLElement {
     this._orbe("idle");
     this._sousTitre("Prête");
     this._erreur(message);
+  }
+
+  // ── Identité (P3) ──────────────────────────────────────────────────
+
+  /** PCM 16 bits → base64, pour une requête unique (décision C3). */
+  static _base64(echantillons) {
+    const octets = new Uint8Array(echantillons.buffer, 0, echantillons.byteLength);
+    let binaire = "";
+    // Par tranches : `String.fromCharCode(...tout)` explose la pile au-delà de
+    // quelques dizaines de milliers d'octets, et on en a des centaines.
+    for (let i = 0; i < octets.length; i += 8192) {
+      binaire += String.fromCharCode.apply(null, octets.subarray(i, i + 8192));
+    }
+    return btoa(binaire);
+  }
+
+  /**
+   * Envoie une copie de la phrase pour reconnaître la voix.
+   *
+   * Ne fait rien si la session Home Assistant désigne déjà quelqu'un (C1) :
+   * sur un N95, ne pas calculer est la meilleure optimisation.
+   */
+  async _identifier() {
+    if (!this._voixNecessaire) {
+      this._copiePcm = [];
+      this._octetsCopies = 0;
+      return;
+    }
+    const audio = this._audioCopie();
+    if (!audio.length) return;
+
+    try {
+      const resultat = await this._appel({
+        type: "luna/identity/voice",
+        audio: LunaCard._base64(audio),
+      });
+      if (resultat.asked) this._demanderQuiParle();
+    } catch (err) {
+      const code = err && err.code;
+      if (code === "not_enrolled") {
+        this._erreur(
+          "Je ne connais encore aucune voix. Ouvre le badge en haut à droite " +
+            "pour m'apprendre la tienne.",
+        );
+      } else if (code !== "remote_biometrics" && code !== "model_unavailable") {
+        this._erreur(this._messageErreur(err));
+      }
+      // Un refus en distant ou un modèle absent ne casse pas la conversation :
+      // Luna continue, simplement sans savoir qui parle.
+    }
+  }
+
+  /** La branche « ça ne suffit pas » de C4 : Luna demande plutôt que deviner. */
+  _demanderQuiParle() {
+    const bloc = document.createElement("div");
+    bloc.className = "proposition";
+    const titre = document.createElement("h4");
+    titre.textContent = "Je ne suis pas sûre de qui parle.";
+    const pourquoi = document.createElement("p");
+    pourquoi.textContent = "Dis-le-moi, et je m'en souviens quelques minutes.";
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    const repondre = async (profil, accepte) => {
+      for (const b of actions.querySelectorAll("button")) b.disabled = true;
+      try {
+        await this._appel({
+          type: "luna/identity/confirm",
+          profile: profil,
+          accept: accepte,
+        });
+        bloc.replaceChildren(
+          Object.assign(document.createElement("p"), {
+            textContent: accepte ? `C'est noté, ${profil}.` : "Très bien.",
+          }),
+        );
+      } catch (err) {
+        this._erreur(this._messageErreur(err));
+      }
+    };
+
+    for (const profil of this._inscrits) {
+      const bouton = document.createElement("button");
+      bouton.textContent = NOMS[profil] || profil;
+      bouton.addEventListener("click", () => repondre(profil, true));
+      actions.append(bouton);
+    }
+    const ni = document.createElement("button");
+    ni.textContent = "Ni l'un ni l'autre";
+    ni.addEventListener("click", () => repondre(this._inscrits[0] || "", false));
+    actions.append(ni);
+
+    bloc.append(titre, pourquoi, actions);
+    this._q(".fil").append(bloc);
+    this._defiler();
+  }
+
+  // ── Panneau d'identité ─────────────────────────────────────────────
+
+  _rendreIdentite() {
+    const hote = this._q(".identite");
+    if (!hote) return;
+    hote.replaceChildren();
+
+    if (!this._phases.identity) {
+      hote.append(this._texteSimple("La reconnaissance arrive en phase 3."));
+      return;
+    }
+    if (!this._voixNecessaire) {
+      hote.append(
+        this._texteSimple(
+          "Sur cet appareil, Home Assistant sait déjà qui tu es : je n'ai " +
+            "aucune voix à reconnaître.",
+        ),
+      );
+      return;
+    }
+
+    for (const profil of ["guillaume", "clara", "liam"]) {
+      const ligne = document.createElement("div");
+      ligne.className = "alerte";
+      const nom = document.createElement("h5");
+      nom.textContent = NOMS[profil] || profil;
+      const etat = document.createElement("p");
+      etat.textContent = this._inscrits.includes(profil)
+        ? "Voix enregistrée."
+        : "Voix inconnue.";
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const apprendre = document.createElement("button");
+      apprendre.className = "primaire";
+      apprendre.textContent = this._inscrits.includes(profil)
+        ? "Réapprendre"
+        : "Apprendre ma voix";
+      apprendre.addEventListener("click", () => this._inscrire(profil));
+      actions.append(apprendre);
+
+      if (this._inscrits.includes(profil)) {
+        const oublier = document.createElement("button");
+        oublier.textContent = "Oublier";
+        oublier.addEventListener("click", () => this._oublier(profil));
+        actions.append(oublier);
+      }
+      ligne.append(nom, etat, actions);
+      hote.append(ligne);
+    }
+  }
+
+  _texteSimple(texte) {
+    const p = document.createElement("p");
+    p.className = "vide";
+    p.textContent = texte;
+    return p;
+  }
+
+  /** Inscription : une phrase, un appui, cinq fois (H45, H46). */
+  async _inscrire(profil) {
+    const hote = this._q(".identite");
+    let session;
+    let phrases;
+    try {
+      ({ session, phrases } = await this._appel({
+        type: "luna/identity/enroll/start",
+        profile: profil,
+      }));
+    } catch (err) {
+      this._erreur(this._messageErreur(err));
+      return;
+    }
+
+    this._inscription = { session, profil, index: 0, phrases, retenues: 0 };
+    hote.replaceChildren();
+
+    const consigne = document.createElement("div");
+    consigne.className = "alerte";
+    const titre = document.createElement("h5");
+    const phrase = document.createElement("p");
+    const etat = document.createElement("p");
+    etat.className = "vide";
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const bouton = document.createElement("button");
+    bouton.className = "primaire rond-large";
+    bouton.textContent = "Maintenir et lire";
+    const annuler = document.createElement("button");
+    annuler.textContent = "Annuler";
+    annuler.addEventListener("click", () => {
+      this._inscription = null;
+      this._rendreIdentite();
+    });
+    actions.append(bouton, annuler);
+    consigne.append(titre, phrase, etat, actions);
+    hote.append(consigne);
+
+    const afficher = () => {
+      const i = this._inscription.index;
+      titre.textContent = `Phrase ${i + 1} sur ${phrases.length}`;
+      phrase.textContent = phrases[i];
+    };
+    afficher();
+
+    bouton.addEventListener("pointerdown", async (evt) => {
+      evt.preventDefault();
+      this._debloquerAudio();
+      etat.textContent = "";
+      await this._demarrerEcoute("inscription");
+    });
+    for (const fin of ["pointerup", "pointercancel", "pointerleave"]) {
+      bouton.addEventListener(fin, async () => {
+        if (!this._ecoute || this._modeEcoute !== "inscription") return;
+        const audio = await new Promise((ok) => {
+          this._attenteCapture = { ok };
+          this._arreterEcoute();
+        });
+        if (!audio.length) return;
+
+        let reponse;
+        try {
+          reponse = await this._appel({
+            type: "luna/identity/enroll/sample",
+            session,
+            index: this._inscription.index,
+            audio: LunaCard._base64(audio),
+          });
+        } catch (err) {
+          this._erreur(this._messageErreur(err));
+          return;
+        }
+
+        if (!reponse.accepted) {
+          etat.textContent =
+            reponse.quality === "trop_court"
+              ? "Trop court — garde le bouton appuyé pendant toute la phrase."
+              : "Trop faible — parle un peu plus près du micro.";
+          return;
+        }
+        this._inscription.retenues += 1;
+        this._inscription.index += 1;
+        if (this._inscription.index < phrases.length) {
+          afficher();
+          etat.textContent = "";
+          return;
+        }
+        try {
+          const fini = await this._appel({
+            type: "luna/identity/enroll/finish",
+            session,
+          });
+          this._inscrits = [...new Set([...this._inscrits, profil])];
+          this._inscription = null;
+          this._rendreIdentite();
+          this._erreur(
+            fini.coherence < 0.75
+              ? `J'ai retenu ta voix, mais sans grande netteté (${fini.coherence}). ` +
+                  "Recommence au calme si je me trompe."
+              : `C'est retenu, ${NOMS[profil] || profil}.`,
+          );
+        } catch (err) {
+          this._erreur(this._messageErreur(err));
+        }
+      });
+    }
+    bouton.addEventListener("contextmenu", (evt) => evt.preventDefault());
+  }
+
+  async _oublier(profil) {
+    try {
+      await this._appel({ type: "luna/identity/forget", profile: profil });
+      this._inscrits = this._inscrits.filter((p) => p !== profil);
+      this._rendreIdentite();
+    } catch (err) {
+      this._erreur(this._messageErreur(err));
+    }
   }
 
   // ── Lecture de la réponse ──────────────────────────────────────────

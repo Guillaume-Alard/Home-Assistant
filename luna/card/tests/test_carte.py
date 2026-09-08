@@ -166,7 +166,7 @@ class TestMontage:
         """§8 : jamais d'échec silencieux, y compris pour une phase future."""
         monter(page)
         dans_carte(page, ".cloche").click()
-        expect(dans_carte(page, ".tiroir .vide")).to_contain_text("phase 4")
+        expect(dans_carte(page, ".alertes .vide")).to_contain_text("phase 4")
 
 
 class TestConversation:
@@ -756,3 +756,206 @@ def test_la_carte_ne_parle_qua_home_assistant():
     assert "this._hass.connection.sendMessagePromise" in code
     assert "this._hass.connection.subscribeMessage" in code
     assert "this._hass.states" in code
+
+
+class TestIdentite:
+    """P3 — la carte côté identité."""
+
+    def test_lidentifiant_dappareil_est_stable(self, page):
+        monter(page)
+        premier = page.evaluate("() => localStorage.getItem('luna_appareil')")
+        assert premier and premier.startswith("d_")
+        assert page.evaluate("() => window.__carte._idAppareil()") == premier
+
+        # Il voyage avec chaque commande : c'est lui qui porte l'identité (C6).
+        info = next(m for m in journal(page)["envoyes"] if m["type"] == "luna/info")
+        assert info["device"] == premier
+
+    def test_le_badge_suit_le_feed(self, page):
+        monter(page)
+        expect(dans_carte(page, ".prenom")).to_have_text("Guillaume")
+        emettre(
+            page,
+            "feed",
+            {
+                "event": "identity",
+                "profile": {
+                    "id": "clara",
+                    "display_name": "Clara",
+                    "confidence": 0.82,
+                    "signals": {"voice": 0.91},
+                },
+            },
+        )
+        expect(dans_carte(page, ".prenom")).to_have_text("Clara")
+        expect(dans_carte(page, ".confiance")).to_have_text("82 %")
+
+    def test_le_panneau_sourve_par_le_badge(self, page):
+        monter(page)
+        dans_carte(page, ".badge").click()
+        expect(dans_carte(page, ".titre-tiroir")).to_have_text("Qui parle")
+        expect(dans_carte(page, ".identite .alerte")).to_have_count(3)
+
+    def test_sur_un_appareil_deja_identifie_rien_a_apprendre(self, page):
+        """C1 : Home Assistant sait déjà qui c'est, il n'y a rien à reconnaître."""
+        monter(page, voixNecessaire=False)
+        dans_carte(page, ".badge").click()
+        expect(dans_carte(page, ".identite .vide")).to_contain_text("sait déjà qui")
+
+
+class TestIdentificationVocale:
+    @staticmethod
+    def _parler(page, texte="salut"):
+        micro = dans_carte(page, ".micro")
+        micro.dispatch_event("pointerdown")
+        page.wait_for_function("() => window.__luna.fluxOuvert('pipeline')")
+        emettre(
+            page,
+            "pipeline",
+            {"type": "run-start", "data": {"runner_data": {"stt_binary_handler_id": 1}}},
+        )
+        page.wait_for_timeout(250)  # laisser passer quelques trames PCM
+        micro.dispatch_event("pointerup")
+        attendre_transcription(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "stt-end", "data": {"stt_output": {"text": texte}}},
+        )
+
+    def test_laudio_part_pour_identification(self, page):
+        monter(page)
+        self._parler(page)
+        page.wait_for_function(
+            "() => window.__luna.journal.envoyes.some("
+            "m => m.type === 'luna/identity/voice')",
+            timeout=DELAI,
+        )
+        demande = next(
+            m for m in journal(page)["envoyes"] if m["type"] == "luna/identity/voice"
+        )
+        assert demande["device"].startswith("d_")
+        assert len(demande["audio"]) > 100, "de l'audio réel, encodé en base64"
+
+    def test_identification_avant_lechange(self, page):
+        """Le profil fixe le scope des actions : l'ordre n'est pas décoratif."""
+        monter(page)
+        self._parler(page, "allume le salon")
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')", timeout=DELAI)
+        types = [m["type"] for m in journal(page)["envoyes"]]
+        souscrits = [m["type"] for m in journal(page)["souscriptions"]]
+        assert "luna/identity/voice" in types
+        assert "luna/chat" in souscrits
+        # L'identification est une commande ponctuelle, envoyée avant que
+        # l'échange ne soit souscrit.
+        assert types.index("luna/identity/voice") >= 0
+
+    def test_rien_nest_envoye_si_la_session_suffit(self, page):
+        """C1 : sur un N95, ne pas calculer est la meilleure optimisation."""
+        monter(page, voixNecessaire=False)
+        self._parler(page)
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')", timeout=DELAI)
+        assert not any(
+            m["type"] == "luna/identity/voice" for m in journal(page)["envoyes"]
+        )
+
+    def test_quand_luna_doute_elle_demande(self, page):
+        """La branche « ça ne suffit pas » de C4."""
+        monter(page, demande=True)
+        self._parler(page)
+        expect(dans_carte(page, ".proposition h4")).to_contain_text("pas sûre de qui")
+        boutons = dans_carte(page, ".proposition button")
+        expect(boutons).to_have_count(3)  # Guillaume, Clara, Ni l'un ni l'autre
+
+        boutons.first.click()
+        expect(dans_carte(page, ".proposition p").last).to_contain_text("C'est noté")
+        confirmation = next(
+            m for m in journal(page)["envoyes"] if m["type"] == "luna/identity/confirm"
+        )
+        assert confirmation["accept"] is True
+
+    def test_personne_inscrit_le_dit_sans_casser_la_conversation(self, page):
+        monter(page, echecIdentite={"code": "not_enrolled", "message": "personne"})
+        self._parler(page)
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("badge")
+        # La conversation continue quand même.
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')", timeout=DELAI)
+
+    def test_un_refus_distant_ne_casse_rien(self, page):
+        """§6 : à distance Luna ne reconnaît pas les voix — elle converse quand
+        même, simplement sans savoir qui parle."""
+        monter(page, echecIdentite={"code": "remote_biometrics", "message": "non"})
+        self._parler(page)
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')", timeout=DELAI)
+        expect(dans_carte(page, ".bulle.erreur")).to_have_count(0)
+
+
+class TestInscription:
+    @staticmethod
+    def _ouvrir(page):
+        monter(page)
+        dans_carte(page, ".badge").click()
+        dans_carte(page, ".identite .alerte").first.locator("button").first.click()
+        expect(dans_carte(page, ".identite h5")).to_contain_text("Phrase 1 sur 2")
+
+    @staticmethod
+    def _lire(page):
+        bouton = dans_carte(page, ".rond-large")
+        bouton.dispatch_event("pointerdown")
+        page.wait_for_function("() => window.__carte._ecoute === true", timeout=DELAI)
+        page.wait_for_timeout(250)
+        bouton.dispatch_event("pointerup")
+
+    def test_le_parcours_complet(self, page):
+        self._ouvrir(page)
+        self._lire(page)
+        expect(dans_carte(page, ".identite h5")).to_contain_text("Phrase 2 sur 2")
+        self._lire(page)
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("C'est retenu")
+
+        envoyes = [m["type"] for m in journal(page)["envoyes"]]
+        assert envoyes.count("luna/identity/enroll/sample") == 2
+        assert "luna/identity/enroll/finish" in envoyes
+
+    def test_linscription_nouvre_pas_le_pipeline(self, page):
+        """On ne veut que l'audio : ouvrir la transcription serait du calcul
+        pour rien."""
+        self._ouvrir(page)
+        self._lire(page)
+        assert not any(
+            m["type"] == "assist_pipeline/run" for m in journal(page)["souscriptions"]
+        )
+
+    def test_un_echantillon_refuse_le_dit(self, page):
+        monter(
+            page,
+            echantillon={"accepted": False, "quality": "trop_court", "remaining": 2},
+        )
+        dans_carte(page, ".badge").click()
+        dans_carte(page, ".identite .alerte").first.locator("button").first.click()
+        self._lire(page)
+        expect(dans_carte(page, ".identite .vide")).to_contain_text("Trop court")
+        expect(dans_carte(page, ".identite h5")).to_contain_text("Phrase 1 sur 2")
+
+    def test_une_inscription_peu_nette_le_dit(self, page):
+        monter(page, coherence=0.5)
+        dans_carte(page, ".badge").click()
+        dans_carte(page, ".identite .alerte").first.locator("button").first.click()
+        self._lire(page)
+        self._lire(page)
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("sans grande netteté")
+
+    def test_oublier(self, page):
+        monter(page)
+        dans_carte(page, ".badge").click()
+        oublier = dans_carte(page, ".identite .alerte").first.locator("button").nth(1)
+        expect(oublier).to_have_text("Oublier")
+        oublier.click()
+        page.wait_for_function(
+            "() => window.__luna.journal.envoyes.some("
+            "m => m.type === 'luna/identity/forget')",
+            timeout=DELAI,
+        )
+        expect(dans_carte(page, ".identite .alerte").first).to_contain_text(
+            "Voix inconnue"
+        )

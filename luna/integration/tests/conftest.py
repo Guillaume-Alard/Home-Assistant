@@ -67,10 +67,44 @@ class FauxRelais:
             },
             "history": {"conversation_id": "c_1", "messages": [], "has_more": False},
             "decide": {"executed": True, "results": []},
+            "identity": {
+                "profile": {
+                    "id": "guillaume",
+                    "display_name": "Guillaume",
+                    "confidence": 0.82,
+                    "signals": {"voice": 0.91},
+                },
+                "expires_at": None,
+                "enrolled": ["guillaume"],
+                "voice_needed": True,
+                "voice_available": True,
+            },
+            "identity_voice": {
+                "profile": "guillaume",
+                "confidence": 0.82,
+                "margin": 0.31,
+                "asked": False,
+            },
+            "identity_confirm": {
+                "profile": "guillaume",
+                "confidence": 1.0,
+                "expires_at": None,
+            },
+            "enroll_start": {"session": "e_1", "phrases": ["une", "deux"]},
+            "enroll_sample": {"accepted": True, "quality": "ok", "remaining": 4},
+            "enroll_finish": {
+                "profile": "guillaume",
+                "samples": 5,
+                "coherence": 0.91,
+            },
+            "identity_forget": {"removed": 5},
         }
         self.erreurs: dict[str, dict[str, str]] = {
             "patterns": {"code": "not_implemented", "message": "Phase 4."},
         }
+        #: Tout ce qui est arrivé jusqu'ici. Sert à prouver qu'un refus s'est
+        #: fait **avant** le relais, pas après.
+        self.audio_recu: list[str] = []
         self.evenements_chat = [
             {"event": "accepted", "message_id": "m_1", "conversation_id": "c_1"},
             {"event": "delta", "message_id": "m_1", "text": "Bonjour."},
@@ -97,6 +131,8 @@ class FauxRelais:
 
     async def _traiter(self, ws: web.WebSocketResponse, trame: dict[str, Any]) -> None:
         self.recu.append(trame)
+        if audio := (trame.get("payload") or {}).get("audio"):
+            self.audio_recu.append(audio)
         identifiant, op = trame.get("id"), trame.get("op")
         if op in self.erreurs:
             await ws.send_json({"id": identifiant, "error": self.erreurs[op]})

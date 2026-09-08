@@ -98,6 +98,49 @@ class PropositionInconnue(LunaError):
         super().__init__(message or "Je ne retrouve plus cette proposition.", **kw)
 
 
+class BiometrieDistante(LunaError):
+    """§6 : « La biométrie n'est active que sur le réseau local. »
+
+    Levée par sécurité côté add-on ; l'intégration refuse déjà en amont, pour
+    qu'aucun octet d'audio ne traverse le relais Nabu Casa (décision C3).
+    """
+
+    code = "remote_biometrics"
+
+    def __init__(self, message: str | None = None, **kw: str | None) -> None:
+        super().__init__(
+            message
+            or "Je ne reconnais les voix que sur le réseau de la maison. "
+            "À distance, passe par le PIN de Loggia.",
+            **kw,
+        )
+
+
+class ModeleVoixIndisponible(LunaError):
+    code = "model_unavailable"
+
+    def __init__(self, message: str | None = None, **kw: str | None) -> None:
+        super().__init__(
+            message
+            or "Le modèle de reconnaissance de voix n'est pas chargé. "
+            "Vérifie l'option « modele_voix » de l'add-on.",
+            **kw,
+        )
+
+
+class AudioTropCourt(LunaError):
+    code = "audio_too_short"
+
+    def __init__(self, message: str | None = None, **kw: str | None) -> None:
+        super().__init__(
+            message or "C'était trop court pour que je reconnaisse la voix.", **kw
+        )
+
+
+class ProfilNonInscrit(LunaError):
+    code = "not_enrolled"
+
+
 class PasEncoreImplemente(LunaError):
     """Commande d'une phase future. Documentée en P1, vivante plus tard."""
 

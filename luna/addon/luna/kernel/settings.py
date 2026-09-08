@@ -28,6 +28,9 @@ class CorrespondanceProfil(BaseModel):
 
     utilisateur_ha: str
     profil: str
+    #: L'entité `device_tracker` de la personne (H42). Sans elle, la présence
+    #: ne présume rien et la voix décide seule.
+    presence: str = ""
 
 
 class Reglages(BaseModel):
@@ -36,6 +39,8 @@ class Reglages(BaseModel):
     anthropic_api_key: str = ""
     modele: str = "claude-sonnet-5"
     effort: str = "low"
+    #: Le modèle d'empreinte de locuteur, en ONNX (C2). Vide = pas de voix.
+    modele_voix: str = ""
     relay_secret: str = ""
     relay_port: int = 8099
     fuseau: str = "Europe/Paris"
@@ -63,6 +68,32 @@ class Reglages(BaseModel):
                 return entree.profil
         return self.profil_par_defaut
 
+    def utilisateur_connu(self, *, nom: str | None, identifiant: str | None) -> bool:
+        """L'utilisateur Home Assistant désigne-t-il un profil à lui ?
+
+        C'est la règle de C1 : si oui, l'identité est déjà résolue et il n'y a
+        aucune empreinte à calculer. Si non, on est sur un appareil partagé —
+        l'iPad du couloir — et c'est là que P3 sert.
+        """
+        return any(
+            (nom and entree.utilisateur_ha == nom)
+            or (identifiant and entree.utilisateur_ha == identifiant)
+            for entree in self.profils
+        )
+
+    def capteur_presence(self, profil: str) -> str | None:
+        for entree in self.profils:
+            if entree.profil == profil and entree.presence:
+                return entree.presence
+        return None
+
+    def profils_declares(self) -> list[str]:
+        vus: list[str] = []
+        for entree in self.profils:
+            if entree.profil not in vus:
+                vus.append(entree.profil)
+        return vus
+
     def secrets_masques(self) -> dict[str, object]:
         """Vue des réglages sûre à écrire dans les journaux."""
         vue = self.model_dump(mode="json")
@@ -82,6 +113,7 @@ def charger(chemin: Path | None = None) -> Reglages:
         ("LUNA_ANTHROPIC_API_KEY", "anthropic_api_key"),
         ("LUNA_MODELE", "modele"),
         ("LUNA_EFFORT", "effort"),
+        ("LUNA_MODELE_VOIX", "modele_voix"),
         ("LUNA_RELAY_SECRET", "relay_secret"),
         ("LUNA_FUSEAU", "fuseau"),
         ("LUNA_JOURNAL", "journal"),

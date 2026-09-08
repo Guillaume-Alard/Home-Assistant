@@ -259,7 +259,7 @@ class TestInfo:
         assert info["profile"]["signals"] == {"ha_user": 1.0}
         assert info["phases"] == {
             "voice": True,
-            "identity": False,
+            "identity": True,
             "veille": False,
             "guardian": False,
         }, "aucune phase future ne doit être annoncée comme prête"

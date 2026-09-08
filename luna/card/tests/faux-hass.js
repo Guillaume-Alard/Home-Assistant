@@ -23,7 +23,20 @@ window.creerFauxHass = (options = {}) => {
       confidence: 1.0,
       signals: { ha_user: 1.0 },
     },
-    phases: { voice: true, identity: false, veille: false, guardian: false },
+    phases: { voice: true, identity: true, veille: false, guardian: false },
+    identity: {
+      profile: {
+        id: "guillaume",
+        display_name: "Guillaume",
+        confidence: 1.0,
+        signals: { ha_user: 1.0 },
+      },
+      expires_at: null,
+      enrolled: options.inscrits ?? ["guillaume", "clara"],
+      // C1 : par défaut on simule l'iPad partagé, le cas que P3 traite.
+      voice_needed: options.voixNecessaire ?? true,
+      voice_available: true,
+    },
   };
 
   const historique = options.historique ?? {
@@ -61,6 +74,43 @@ window.creerFauxHass = (options = {}) => {
           case "luna/speak":
             if (options.echecSpeak) return Promise.reject(options.echecSpeak);
             return Promise.resolve({ url: AUDIO, engine: "tts.piper" });
+          case "luna/identity":
+            return Promise.resolve(info.identity);
+          case "luna/identity/voice":
+            if (options.echecIdentite) return Promise.reject(options.echecIdentite);
+            return Promise.resolve({
+              profile: "guillaume",
+              confidence: 0.82,
+              margin: 0.31,
+              asked: options.demande ?? false,
+            });
+          case "luna/identity/confirm":
+            return Promise.resolve({
+              profile: message.profile,
+              confidence: 1.0,
+              expires_at: null,
+            });
+          case "luna/identity/enroll/start":
+            return Promise.resolve({
+              session: "e_1",
+              phrases: ["Première phrase.", "Deuxième phrase."],
+            });
+          case "luna/identity/enroll/sample":
+            return Promise.resolve(
+              options.echantillon ?? {
+                accepted: true,
+                quality: "ok",
+                remaining: 1,
+              },
+            );
+          case "luna/identity/enroll/finish":
+            return Promise.resolve({
+              profile: "guillaume",
+              samples: 2,
+              coherence: options.coherence ?? 0.91,
+            });
+          case "luna/identity/forget":
+            return Promise.resolve({ removed: 5 });
           case "luna/alerts/feedback":
             return Promise.reject({
               code: "not_implemented",

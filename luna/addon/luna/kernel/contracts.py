@@ -14,6 +14,8 @@ from typing import Any, Protocol
 
 from .schemas import (
     ActionHA,
+    EmpreinteVocale,
+    EntreeIdentite,
     EntreeJournal,
     EtatEntite,
     EvenementCerveau,
@@ -61,6 +63,26 @@ class MaisonProvider(Protocol):
         ...
 
 
+class EmpreinteProvider(Protocol):
+    """Le modèle d'empreinte de locuteur (C2).
+
+    Remplaçable par construction : L2 ne connaît que cette forme, et le nom du
+    modèle voyage avec chaque empreinte pour qu'en changer les invalide.
+    """
+
+    @property
+    def disponible(self) -> bool:
+        """Faux si le modèle n'a pas pu être chargé. Luna démarre quand même."""
+        ...
+
+    @property
+    def nom(self) -> str: ...
+
+    def encoder(self, pcm: bytes) -> list[float]:
+        """PCM 16 bits, 16 kHz, mono → empreinte normalisée."""
+        ...
+
+
 class MemoireProvider(Protocol):
     """SQLite. Conversations, messages, journal des actions (§11)."""
 
@@ -79,3 +101,13 @@ class MemoireProvider(Protocol):
     async def journaliser(self, entree: EntreeJournal) -> None: ...
 
     async def derniere_action(self) -> datetime | None: ...
+
+    # ── Identité (P3) ────────────────────────────────────────────────────
+
+    async def ajouter_empreinte(self, empreinte: EmpreinteVocale) -> None: ...
+
+    async def empreintes(self, modele: str) -> list[EmpreinteVocale]: ...
+
+    async def oublier_empreintes(self, profil: str) -> int: ...
+
+    async def journaliser_identite(self, entree: EntreeIdentite) -> None: ...

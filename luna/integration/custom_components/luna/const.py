@@ -22,3 +22,7 @@ BACKOFF_MAX = 30.0
 DELAI_REQUETE = 30.0
 
 SIGNAL_STATUT = f"{DOMAINE}_statut"
+
+#: Au-delà, on refuse : une phrase d'identification tient en 8 s de PCM 16 kHz,
+#: soit environ 350 ko une fois en base64 (décision C3).
+TAILLE_AUDIO_MAX = 600_000

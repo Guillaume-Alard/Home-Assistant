@@ -3,8 +3,9 @@
 Assistante domestique de Guillaume Alard. Elle vit **dans** Home Assistant, sur
 Nova. Reconstruction complète, elle remplace « Sentinelle ».
 
-**Phases 1 et 2 livrées** : piloter la maison par écrit **et à la voix**, depuis
-la carte Loggia ou depuis n'importe quel appareil qui parle à Assist.
+**Phases 1, 2 et 3 livrées** : piloter la maison par écrit **et à la voix**,
+depuis la carte Loggia ou n'importe quel appareil qui parle à Assist — et Luna
+sait à qui elle parle.
 
 ## Trois artefacts
 
@@ -64,6 +65,12 @@ Elle lit l'état de la maison, allume et éteint les lumières et les
 interrupteurs, active une scène. Elle **propose** un réglage de thermostat —
 c'est Guillaume qui valide, et la décision est journalisée, acceptée ou refusée.
 
+Elle sait à qui elle parle : par la session Home Assistant quand il y en a une,
+par la voix sur un appareil partagé. Ça change **quoi** elle répond et **comment**
+elle le dit. Ça ne change jamais ce qu'elle a le droit de faire : le niveau
+d'une action vient du registre, et valider une proposition demande toujours la
+session Home Assistant, pas une ressemblance de voix.
+
 Elle ne commande ni les ouvrants, ni les serrures, ni l'alarme, et n'envoie rien
 vers l'extérieur : niveau 5, hors périmètre v1. Le refus est structurel — ces
 services ne sont pas déclarés à Claude, qui ne peut donc pas les demander, et
@@ -77,7 +84,7 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P1-CONTRATS.md`](docs/P1-CONTRATS.md) | Couches, contrats WebSocket, échelle d'autonomie, schéma SQLite, écarts constatés, état de la recette |
 | [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le HTTPS local, sans nom de domaine : DuckDNS et deux add-ons officiels |
 | [`docs/P2-VOIX.md`](docs/P2-VOIX.md) | La phase voix : cinq décisions, contrats, écarts constatés, état de la recette |
-| [`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md) | **En attente de validation** — sept décisions et les contrats de la phase identité |
+| [`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md) | L'identité : sept décisions, la formule de fusion, les contrats, les écarts |
 | [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova
@@ -93,12 +100,12 @@ Lovelace.
 ## Vérifier
 
 ```bash
-cd addon        && pytest -q && lint-imports    # 156 tests, 4 contrats de couches
-cd integration  && pytest -q                    # 25 tests, vraie instance HA
-cd card         && pytest -q                    # 38 tests, vrai Chromium
+cd addon        && pytest -q && lint-imports    # 202 tests, 4 contrats de couches
+cd integration  && pytest -q                    # 35 tests, vraie instance HA
+cd card         && pytest -q                    # 53 tests, vrai Chromium
 ```
 
-219 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
+290 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
 faux serveur WebSocket, le client Claude contre des réponses enregistrées, et la
 carte contre un faux `hass` qui rejoue le contrat §4 — mais avec un **vrai**
 `AudioWorklet` et un micro synthétique de Chromium, donc le chemin de capture
@@ -106,14 +113,14 @@ est réellement exercé. **La CI ne consomme jamais de crédit.**
 
 ## Où en est le projet
 
-**P1 et P2 sont livrées. P3 est cadrée et attend une validation** — voir
-[`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md).
+**P1, P2 et P3 sont livrées.** La suite, c'est P4 — apprentissage des habitudes
+et moteur de veille — et elle n'est pas cadrée : rien n'a été écrit qui
+l'anticipe.
 
-Le recadrage qui la rend faisable : le signal d'identité le plus fort du projet
-n'est pas biométrique, c'est l'utilisateur Home Assistant authentifié, et il est
-livré depuis P1. Sur un téléphone, Luna sait déjà à qui elle parle. La voix ne
-sert que là où ce signal est muet — **l'iPad partagé du couloir**. P3 se limite
-donc aux appareils partagés, ce qui évite d'intercepter l'audio partout ailleurs.
+Sur l'identité, le recadrage qui a rendu la phase faisable : le signal le plus
+fort n'est pas biométrique, c'est l'utilisateur Home Assistant authentifié, et
+il est livré depuis P1. Sur un téléphone, Luna sait déjà à qui elle parle. La
+voix ne sert que là où ce signal est muet — **l'iPad partagé du couloir**.
 
 ### Ce qui reste à faire sur Nova, et que le code ne peut pas faire
 
@@ -121,6 +128,11 @@ donc aux appareils partagés, ce qui évite d'intercepter l'audio partout ailleu
   dont Luna est l'agent de conversation.
 - **Mesurer la latence de transcription** : §7 annonce 1 à 3 s sur le N95, et
   aucun test ne peut le vérifier d'ici.
+- **Déposer un modèle ONNX d'empreinte de locuteur** dans `/share`, renseigner
+  l'option `modele_voix`, déclarer les entités `device_tracker` de chacun, puis
+  inscrire les voix depuis le badge de la carte. Sans modèle, Luna converse et
+  pilote la maison comme avant — seule la reconnaissance reste éteinte, et elle
+  le dit.
 
 - **P0, le HTTPS local.** Sans lui, `getUserMedia` reste refusé sur le réseau de
   la maison et la voix n'a pas de micro. Pas de domaine en propre : la procédure

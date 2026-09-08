@@ -41,6 +41,8 @@ class ContexteRequete(Modele):
     #: D'où vient la demande. Change la **longueur** de la réponse, jamais les
     #: droits : le niveau d'une action reste décidé par le registre de L0 (§9.2).
     source: Literal["texte", "voix"] = "texte"
+    #: L'appareil, au sens de C6 : l'identité vit par appareil, pas globalement.
+    device: str | None = None
 
 
 class ProfilActif(Modele):
@@ -252,6 +254,56 @@ class ResultatOutil(Modele):
 
     contenu: str
     erreur: bool = False
+
+
+# ── Identité (P3) ────────────────────────────────────────────────────────
+
+
+class EmpreinteVocale(Modele):
+    """Un vecteur, jamais l'audio dont il vient (H50).
+
+    `model` accompagne l'empreinte : changer de modèle rend les anciennes
+    incomparables, et il vaut mieux les invalider que produire des
+    ressemblances silencieusement fausses.
+    """
+
+    id: str
+    profile: str
+    vector: list[float]
+    model: str
+    source: Literal["enrolment", "confirmed"]
+    created_at: datetime
+
+    @property
+    def dim(self) -> int:
+        return len(self.vector)
+
+
+class EtatIdentite(Modele):
+    """Ce que Luna croit savoir d'un appareil, et jusqu'à quand."""
+
+    device: str
+    profil: str
+    confiance: float
+    signals: dict[str, float] = Field(default_factory=dict)
+    expires_at: datetime | None = None
+    #: Vrai quand l'utilisateur Home Assistant suffit : rien à deviner, rien
+    #: à périmer (C6).
+    ancre_sur_session: bool = False
+
+
+class EntreeIdentite(Modele):
+    """§C.3 : chaque décision et son score, pour régler les seuils sur des
+    données plutôt qu'au jugé."""
+
+    id: str
+    ts: datetime
+    device: str
+    decided: str
+    confidence: float
+    margin: float
+    signals: dict[str, dict[str, float]] = Field(default_factory=dict)
+    asked: bool = False
 
 
 # ── Persistance ──────────────────────────────────────────────────────────

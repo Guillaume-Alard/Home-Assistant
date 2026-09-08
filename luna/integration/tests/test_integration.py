@@ -384,3 +384,156 @@ class TestSynthese:
         assert reponse["success"] is False
         assert reponse["error"]["code"] == "tts_unavailable"
         assert "Piper" in reponse["error"]["message"]
+
+
+class TestIdentite:
+    """P3 — les commandes d'identité, et la barrière de §6."""
+
+    async def test_letat_est_relaye_avec_lappareil(
+        self, hass, entree, hass_ws_client, faux_relais
+    ):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id({"type": "luna/identity", "device": "d_ipad"})
+        reponse = await client.receive_json()
+
+        assert reponse["result"]["profile"]["display_name"] == "Guillaume"
+        assert reponse["result"]["voice_needed"] is True
+        # C6 : l'identité vit par appareil, l'add-on doit savoir lequel.
+        assert faux_relais.dernier("identity")["context"]["device"] == "d_ipad"
+
+    async def test_identification_en_local(
+        self, hass, entree, hass_ws_client, faux_relais
+    ):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "luna/identity/voice", "device": "d_ipad", "audio": "QUJD"}
+        )
+        reponse = await client.receive_json()
+        assert reponse["result"]["profile"] == "guillaume"
+        assert faux_relais.audio_recu == ["QUJD"]
+
+    async def test_a_distance_laudio_ne_part_pas(
+        self, hass, entree, hass_ws_client, faux_relais
+    ):
+        """§6 : « Aucune frame ne transite par le relais Nabu Casa. »
+
+        Le refus doit précéder le relais — sinon l'audio aurait déjà traversé
+        au moment où on le refuse.
+        """
+        from unittest.mock import patch
+
+        with patch("custom_components.luna.websocket.est_local", return_value=False):
+            client = await hass_ws_client(hass)
+            await client.send_json_auto_id(
+                {"type": "luna/identity/voice", "device": "d_ipad", "audio": "QUJD"}
+            )
+            reponse = await client.receive_json()
+
+        assert reponse["success"] is False
+        assert reponse["error"]["code"] == "remote_biometrics"
+        assert "PIN" in reponse["error"]["message"]
+        assert faux_relais.audio_recu == [], "aucun octet n'a traversé le relais"
+
+    async def test_inscription_refusee_a_distance(
+        self, hass, entree, hass_ws_client, faux_relais
+    ):
+        from unittest.mock import patch
+
+        with patch("custom_components.luna.websocket.est_local", return_value=False):
+            client = await hass_ws_client(hass)
+            for message in (
+                {"type": "luna/identity/enroll/start", "profile": "guillaume"},
+                {
+                    "type": "luna/identity/enroll/sample",
+                    "session": "e_1",
+                    "index": 0,
+                    "audio": "QUJD",
+                },
+                {"type": "luna/identity/enroll/finish", "session": "e_1"},
+            ):
+                await client.send_json_auto_id(message)
+                reponse = await client.receive_json()
+                assert reponse["error"]["code"] == "remote_biometrics", message["type"]
+        assert faux_relais.audio_recu == []
+
+    async def test_oublier_marche_a_distance(self, hass, entree, hass_ws_client):
+        """Effacer une empreinte n'est pas de la biométrie : c'est le contraire."""
+        from unittest.mock import patch
+
+        with patch("custom_components.luna.websocket.est_local", return_value=False):
+            client = await hass_ws_client(hass)
+            await client.send_json_auto_id(
+                {"type": "luna/identity/forget", "profile": "clara"}
+            )
+            reponse = await client.receive_json()
+        assert reponse["result"]["removed"] == 5
+
+    async def test_inscription_complete(self, hass, entree, hass_ws_client, faux_relais):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "luna/identity/enroll/start", "profile": "guillaume"}
+        )
+        assert (await client.receive_json())["result"]["session"] == "e_1"
+
+        await client.send_json_auto_id(
+            {
+                "type": "luna/identity/enroll/sample",
+                "session": "e_1",
+                "index": 0,
+                "audio": "QUJD",
+            }
+        )
+        assert (await client.receive_json())["result"]["quality"] == "ok"
+
+        await client.send_json_auto_id(
+            {"type": "luna/identity/enroll/finish", "session": "e_1"}
+        )
+        assert (await client.receive_json())["result"]["coherence"] == 0.91
+
+    async def test_un_extrait_trop_long_est_refuse_avant_le_relais(
+        self, hass, entree, hass_ws_client, faux_relais
+    ):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "luna/identity/voice", "audio": "A" * 700_000}
+        )
+        reponse = await client.receive_json()
+        assert reponse["success"] is False
+        assert faux_relais.audio_recu == []
+
+    async def test_confirmation(self, hass, entree, hass_ws_client, faux_relais):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {
+                "type": "luna/identity/confirm",
+                "device": "d_ipad",
+                "profile": "guillaume",
+                "accept": True,
+            }
+        )
+        reponse = await client.receive_json()
+        assert reponse["result"]["confidence"] == 1.0
+        assert faux_relais.dernier("identity_confirm")["payload"] == {
+            "profile": "guillaume",
+            "accept": True,
+        }
+
+
+class TestPerimetreReseau:
+    async def test_une_connexion_nuage_nest_pas_locale(self, hass, entree):
+        from unittest.mock import patch
+
+        from custom_components.luna.websocket import est_local
+
+        with patch(
+            "custom_components.luna.websocket.reseau.is_cloud_connection",
+            return_value=True,
+        ):
+            assert est_local(hass) is False
+
+    async def test_sans_requete_on_considere_local(self, hass, entree):
+        """L'agent de conversation appelle hors contexte HTTP ; ce chemin ne
+        fait de toute façon aucune biométrie."""
+        from custom_components.luna.websocket import est_local
+
+        assert est_local(hass) is True

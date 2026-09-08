@@ -10,7 +10,6 @@ from conftest import FauxCerveau, orchestrateur_avec
 
 from luna.interfaces.http import construire_app
 from luna.interfaces.relay import EN_TETE_SECRET, FERMETURE_NON_AUTORISE, Relais
-from luna.kernel.bus import Bus
 from luna.kernel.schemas import MaisonConnectee
 
 SECRET = "secret-de-test"
@@ -35,12 +34,13 @@ CONTEXTE = {
 class Banc:
     """Un add-on complet derrière un vrai serveur HTTP, sans Claude ni HA."""
 
-    def __init__(self, cerveau, maison, memoire, arbitre, bus) -> None:
+    def __init__(self, cerveau, maison, memoire, arbitre, bus, identite) -> None:
         self.cerveau = cerveau
         self.maison = maison
         self.bus = bus
+        self.identite = identite
         self.orchestrateur = orchestrateur_avec(cerveau, maison, memoire, arbitre)
-        self.relais = Relais(self.orchestrateur, bus, SECRET, _profil_de_test)
+        self.relais = Relais(self.orchestrateur, bus, SECRET, self._contexte, identite)
         self.app = construire_app(
             orchestrateur=self.orchestrateur,
             relais=self.relais,
@@ -49,11 +49,25 @@ class Banc:
             modele="claude-sonnet-5",
         )
 
+    def _contexte(self, brut):
+        """Comme l'amorçage : la session d'abord, l'identité de l'appareil
+        ensuite, et jamais ce que le client prétend."""
+        from luna.kernel.identity import INCONNU
+        from luna.kernel.schemas import ContexteRequete
+
+        contexte = ContexteRequete(**brut)
+        session = CORRESPONDANCE.get(contexte.ha_user_name or "")
+        if session:
+            return contexte.model_copy(update={"profile": session})
+        etat = self.identite.etat(contexte)
+        return contexte.model_copy(
+            update={"profile": etat.profil if etat.profil != INCONNU else "guest"}
+        )
+
 
 @pytest.fixture
-async def banc(maison, memoire, arbitre):
-    bus = Bus()
-    b = Banc(FauxCerveau(), maison, memoire, arbitre, bus)
+async def banc(maison, memoire, arbitre, bus, identite):
+    b = Banc(FauxCerveau(), maison, memoire, arbitre, bus, identite)
     coureur = web.AppRunner(b.app, shutdown_timeout=1.0)
     await coureur.setup()
     site = web.TCPSite(coureur, "127.0.0.1", 0)
@@ -129,7 +143,6 @@ class TestOperationsPonctuelles:
     @pytest.mark.parametrize(
         ("op", "phase"),
         [
-            ("identity", "phase 3"),
             ("patterns", "phase 4"),
             ("suggestions", "phase 4"),
             ("alerts_feedback", "phase 4"),
