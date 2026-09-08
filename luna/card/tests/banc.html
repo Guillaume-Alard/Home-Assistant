@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Banc d'essai — luna-card</title>
+<body style="margin:0;background:#0b1219">
+<script src="faux-hass.js"></script>
+<script src="../luna-card.js"></script>
+<script>
+  window.monter = (options) => {
+    document.body.replaceChildren();
+    const carte = document.createElement("luna-card");
+    carte.setConfig(options?.config ?? { height: 620 });
+    document.body.append(carte);
+    carte.hass = window.creerFauxHass(options ?? {});
+    window.__carte = carte;
+    return carte;
+  };
+</script>
+</body>

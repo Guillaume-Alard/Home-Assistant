@@ -1,0 +1,73 @@
+# §3.1 du cahier des charges : « import-linter […] exécuté en CI à chaque push,
+# aux côtés de ruff et de la suite de tests ».
+#
+# Aucun travail ici n'appelle l'API Anthropic : la CI ne consomme jamais de
+# crédit (H19).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  addon:
+    name: Add-on — le cerveau
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: addon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: ruff
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Couches verrouillées (§3.1)
+        run: lint-imports
+      - name: Tests
+        run: pytest -q
+
+  integration:
+    name: Intégration — le nerf
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff homeassistant pytest-homeassistant-custom-component
+      - name: ruff
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Tests dans une vraie instance Home Assistant
+        run: pytest -q
+
+  carte:
+    name: Carte — le visage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: card
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntaxe
+        run: node --check luna-card.js
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff -r requirements-dev.txt
+      - run: ruff check . && ruff format --check .
+      - run: playwright install --with-deps chromium
+      - name: Tests dans un vrai navigateur
+        run: pytest -q

@@ -1,7 +1,11 @@
 # Luna — P1 : contradictions et hypothèses
 
-**Statut : en attente de validation.** Aucun code n'est écrit tant que ce
-document n'est pas tranché (§11 du cahier des charges).
+**Statut : validé le 8 septembre 2026.** A1 à A7 acceptés, modèle par défaut
+`claude-sonnet-5`. P1 est implémentée sur cette base — voir
+[`P1-CONTRATS.md` §16](P1-CONTRATS.md) pour les écarts constatés en chemin.
+
+Ce document reste tel qu'il a été soumis : c'est la trace de ce qui a été
+décidé, et pourquoi. Seul le tableau de validation, en fin de page, est à jour.
 
 Deux parties :
 
@@ -252,16 +256,25 @@ Explicitement, pour que ça ne dérive pas (§1, §10) :
 
 Coche, corrige, ou réponds en vrac — j'adapte le contrat avant de coder.
 
-| Point | Ma proposition | Ton verdict |
+| Point | Ma proposition | Verdict |
 |---|---|---|
-| **A1** Troisième livrable : intégration `custom_components/luna/` | oui, ~250 lignes | |
-| **A2** Ouvrants et alarme en lecture seule en v1 | oui, §9 gagne sur F1 | |
-| **A3** Caddy sur Nova, pas sur Nebula | oui | |
-| **A4** Pas de HACS en v1, déploiement par copie | oui | |
-| **A5** Routes §12 = API interne, jumelles WS pour la carte | oui | |
-| **A6** Profil P1 = utilisateur HA authentifié | oui | |
-| **A7** P1 crée `action_log` seule, pas le modèle F4 | oui | |
-| **H1** Nova est bien en HAOS | à confirmer par toi | |
-| **H21** Modèle par défaut | `claude-opus-5`, ou `claude-sonnet-5` si tu préfères | |
-| **H23** Repli automatique sur refus | activé | |
-| Nom de domaine interne + hébergeur DNS | voir [`P0-HTTPS.md`](P0-HTTPS.md) | |
+| **A1** Troisième livrable : intégration `custom_components/luna/` | oui | ✅ validé — livré, ~600 lignes avec les tests |
+| **A2** Ouvrants et alarme en lecture seule en v1 | oui, §9 gagne sur F1 | ✅ validé — refus structurel, ces services ne sont pas déclarés à Claude |
+| **A3** Caddy sur Nova, pas sur Nebula | oui | ✅ validé — reste à faire, voir [`P0-HTTPS.md`](P0-HTTPS.md) |
+| **A4** Pas de HACS en v1, déploiement par copie | oui | ✅ validé — `ops/deploy.sh` |
+| **A5** Routes §12 = API interne, jumelles WS pour la carte | oui | ✅ validé — les cinq routes répondent `501`, les onze commandes existent |
+| **A6** Profil P1 = utilisateur HA authentifié | oui | ✅ validé — et **durci** : le profil est résolu par l'add-on, pas annoncé par l'intégration |
+| **A7** P1 crée `action_log` seule, pas le modèle F4 | oui | ✅ validé — trois tables |
+| **H1** Nova est bien en HAOS | à confirmer | ⏳ **toujours ouvert** — l'add-on suppose le Supervisor |
+| **H21** Modèle par défaut | `claude-opus-5` ou `claude-sonnet-5` | ✅ **`claude-sonnet-5`** |
+| **H23** Repli automatique sur refus | activé | ⚠️ **abandonné** — le paramètre `fallbacks` est réservé à Opus 5 et Fable. Un `stop_reason: "refusal"` est traité explicitement et produit un message lisible plutôt qu'un silence. |
+| **H25** Contexte volatil en message système de milieu de conversation | oui | ⚠️ **remplacé** — capacité absente de Sonnet 5. Second bloc `system` après le point de rupture : même effet, cache préservé. |
+| Nom de domaine interne + hébergeur DNS | voir [`P0-HTTPS.md`](P0-HTTPS.md) | ⏳ **toujours ouvert** — bloque P0, donc P2 |
+
+### Les deux questions encore ouvertes
+
+1. **Nova tourne-t-elle bien Home Assistant OS ?** C'est H1, la plus
+   structurante de la liste : sans Supervisor, il n'y a pas d'add-on, et
+   l'architecture de §3 change du tout au tout.
+2. **Quel domaine, chez quel hébergeur DNS ?** Sans réponse, P0 ne peut pas
+   être écrite, et sans P0, la voix de P2 n'a pas de micro.

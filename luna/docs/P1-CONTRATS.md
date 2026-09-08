@@ -1,9 +1,14 @@
 # Luna — P1 : contrats d'API
 
-**Statut : en attente de validation.** Ce document décrit *ce qui sera écrit*,
-pas ce qui est écrit. Il suppose les décisions de
-[`P1-HYPOTHESES.md`](P1-HYPOTHESES.md) — en particulier **A1** (l'intégration
-comme troisième livrable) et **A2** (ouvrants et alarme en lecture seule).
+**Statut : validé, puis implémenté.** Ce document décrivait ce qui allait être
+écrit ; il décrit maintenant ce qui l'est. Les décisions de
+[`P1-HYPOTHESES.md`](P1-HYPOTHESES.md) sont toutes acquises — en particulier
+**A1** (l'intégration comme troisième livrable) et **A2** (ouvrants et alarme
+en lecture seule).
+
+Quelques points ont bougé en chemin, parce que le code a rencontré la réalité.
+Ils sont listés en **§16**, avec leur raison. Le reste de ce document est
+conforme à ce qui tourne.
 
 Chaque contrat porte sa phase. Ceux marqués **[Pxx]** sont *documentés
 maintenant, implémentés plus tard* — c'est ce qu'exige §12. En P1, une commande
@@ -47,11 +52,12 @@ n'atteint ⑧ sans passer par ⑦.** Un test statique le vérifie.
 ```
 luna/
 ├── addon/                              # ── LE CERVEAU ──────────────────
-│   ├── config.yaml                     #   manifeste add-on (options, ports)
-│   ├── Dockerfile
-│   ├── run.sh
+│   ├── config.yaml                     #   manifeste add-on (options, schéma)
+│   ├── Dockerfile                      #   python:3.12-alpine, ni bashio ni s6
+│   ├── requirements.txt                #   figé, pour le cache de couches Docker
 │   ├── pyproject.toml
 │   ├── .importlinter                   #   les 4 contrats de couches
+│   ├── tests/                          #   151 tests, aucun appel réseau
 │   └── luna/
 │       ├── kernel/                     # L0 — n'importe rien du projet
 │       │   ├── contracts.py            #   Protocols : BrainProvider, HomeProvider…
@@ -66,10 +72,12 @@ luna/
 │       │   ├── home.py                 #   client WebSocket Home Assistant
 │       │   └── store.py                #   SQLite (conversations, action_log)
 │       ├── engine/                     # L2 — n'importe que L0, providers injectés
-│       │   ├── orchestrator.py         #   conversation, arbitrage, propositions
-│       │   └── tools.py                #   définition des outils exposés à Claude
+│       │   ├── orchestrator.py         #   un échange, du premier delta au done
+│       │   ├── arbiter.py              #   §9 : le seul chemin vers une écriture
+│       │   └── tools.py                #   les outils exposés à Claude
 │       └── interfaces/                 # L3 — peut tout importer
-│           ├── __main__.py             #   bootstrap, injection
+│           ├── __main__.py             #   point d'entrée
+│           ├── app.py                  #   amorçage et injection
 │           ├── http.py                 #   les routes §12 (aiohttp)
 │           └── relay.py                #   WS interne, consommé par l'intégration
 │
@@ -916,3 +924,46 @@ Concrètement, la recette :
 10. `ruff`, `lint-imports` et `pytest` verts.
 
 Rien sur la voix, l'identité, la veille ou l'apprentissage : ce sont P2 à P5.
+
+---
+
+## 16. Écarts entre ce contrat et ce qui tourne
+
+Sept points ont bougé pendant l'implémentation. Aucun ne change une fonction ;
+tous viennent d'une contrainte réelle rencontrée en écrivant le code.
+
+| # | Ce que disait le contrat | Ce qui a été fait | Pourquoi |
+|---|---|---|---|
+| 1 | Le contexte volatil passe en **message système de milieu de conversation** (H25) | Un **second bloc `system`**, après le point de rupture `cache_control` | Cette capacité n'existe que sur Opus 5 et Fable. Sur `claude-sonnet-5` (H21, retenu), il faut le second bloc. Même effet, préfixe mis en cache intact. |
+| 2 | Repli automatique sur refus, `fallbacks: "default"` (H23) | `stop_reason: "refusal"` traité explicitement, message lisible | Le paramètre `fallbacks` est réservé à Opus 5 et Fable. Sans traitement, un refus renvoie un 200 avec un contenu vide : Luna paraîtrait muette sans raison. |
+| 3 | Le `context` du relais est **posé par l'intégration**, `profile` compris (§5) | L'intégration envoie l'utilisateur HA ; **l'add-on résout le profil** | La correspondance vit dans les options de l'add-on (A6). Une seule source de vérité : un client qui se déclarerait « guillaume » n'y gagne rien, et l'intégration non plus. |
+| 4 | Un `run.sh` et une image de base Home Assistant | `python:3.12-alpine`, ni bashio ni s6 | Les options sont lues directement dans `/data/options.json`, et l'arrêt est géré par un gestionnaire de signal Python. Une pièce mobile de moins, et pas de dérive de tag d'image de base. |
+| 5 | `interfaces/__main__.py` fait l'amorçage | `app.py` amorce, `__main__.py` ne fait qu'appeler | L'amorçage est testable ; un `__main__` ne l'est pas. |
+| 6 | Rien sur l'interruption d'un flux côté relais | Une opération **`stop`** | Le désabonnement de la carte doit vraiment arrêter l'échange côté add-on, sinon la requête Claude continue — et se facture. |
+| 7 | Un test « vérifie le cache » (`cache_read_input_tokens > 0`) | Le test vérifie la **disposition** : point de rupture unique, bloc figé identique d'un appel à l'autre, ordre des outils stable | Mesurer un vrai taux de cache demanderait d'appeler l'API, donc de dépenser des crédits en CI (H19). La disposition est ce qui casse en pratique ; le taux réel se vérifie à la main, étape 9 de la recette ci-dessous. |
+
+## 17. Recette de P1 — état
+
+Les dix étapes de §15, et ce qui les couvre aujourd'hui.
+
+| Étape | Couverture |
+|---|---|
+| 1. `GET /health` répond 200 | ✅ testé (`test_relay.py`) |
+| 2. `binary_sensor.luna_en_ligne` à `on` | ✅ testé dans une vraie instance HA |
+| 3. La carte s'affiche à la charte | ✅ testé dans un vrai Chromium |
+| 4. « allume le salon » allume la lumière | ✅ testé de bout en bout, avec un faux Home Assistant |
+| 5. « ferme les volets » → refus motivé + journal | ✅ testé (`test_arbiter.py`) |
+| 6. « 20 degrés » → proposition, puis exécution ou non | ✅ testé des deux côtés du relais |
+| 7. Le fil est retrouvé après rechargement | ✅ testé (`luna/history`, restauration de la carte) |
+| 8. Mode dégradé en moins de 5 secondes | ✅ testé (bascule du `binary_sensor`) |
+| 9. `cache_read_input_tokens > 0` au second tour | ⏳ **à vérifier sur Nova** — demande un vrai appel à l'API |
+| 10. `ruff`, `lint-imports`, `pytest` verts | ✅ CI sur les trois artefacts |
+
+Les huit premières étapes sont vérifiées par 191 tests automatiques. La neuvième
+demande un appel réel à l'API Anthropic ; la dixième tourne à chaque push.
+
+Ce qui reste, et qui ne dépend pas du code :
+
+- **H1** — confirmer que Nova tourne bien Home Assistant OS.
+- **P0** — le nom de domaine et l'hébergeur DNS, sans quoi la voix de P2 n'a
+  pas de micro (voir [`P0-HTTPS.md`](P0-HTTPS.md)).
