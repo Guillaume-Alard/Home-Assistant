@@ -77,6 +77,7 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P1-CONTRATS.md`](docs/P1-CONTRATS.md) | Couches, contrats WebSocket, échelle d'autonomie, schéma SQLite, écarts constatés, état de la recette |
 | [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le HTTPS local, sans nom de domaine : DuckDNS et deux add-ons officiels |
 | [`docs/P2-VOIX.md`](docs/P2-VOIX.md) | La phase voix : cinq décisions, contrats, écarts constatés, état de la recette |
+| [`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md) | **En attente de validation** — sept décisions et les contrats de la phase identité |
 | [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova
@@ -105,8 +106,14 @@ est réellement exercé. **La CI ne consomme jamais de crédit.**
 
 ## Où en est le projet
 
-**P1 et P2 sont livrées.** La suite, c'est P3 — l'identité — et elle n'est pas
-cadrée : rien n'a été écrit qui l'anticipe.
+**P1 et P2 sont livrées. P3 est cadrée et attend une validation** — voir
+[`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md).
+
+Le recadrage qui la rend faisable : le signal d'identité le plus fort du projet
+n'est pas biométrique, c'est l'utilisateur Home Assistant authentifié, et il est
+livré depuis P1. Sur un téléphone, Luna sait déjà à qui elle parle. La voix ne
+sert que là où ce signal est muet — **l'iPad partagé du couloir**. P3 se limite
+donc aux appareils partagés, ce qui évite d'intercepter l'audio partout ailleurs.
 
 ### Ce qui reste à faire sur Nova, et que le code ne peut pas faire
 
