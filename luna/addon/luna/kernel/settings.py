@@ -13,8 +13,11 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from .schemas import ActionHA
 
 CHEMIN_OPTIONS = Path("/data/options.json")
 CHEMIN_BASE = Path("/data/luna.db")
@@ -33,6 +36,56 @@ class CorrespondanceProfil(BaseModel):
     presence: str = ""
 
 
+class RegleVeille(BaseModel):
+    """Une règle de veille (D1, H53).
+
+    La **détection** n'est pas ici : elle vit dans un `binary_sensor` de Home
+    Assistant, visible dans les outils de développement et testable sans lire
+    une ligne de Python. Luna ne regarde que le verdict, et décide de la
+    pertinence, de la formulation et du moment.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entite: str
+    categorie: str = "veille"
+    niveau: Literal["info", "warning", "critical"] = "warning"
+    message: str
+    #: Pourquoi Luna le dit. Montré tel quel dans le tiroir (§8, jamais un
+    #: « parce que »).
+    raison: str = ""
+    #: `false` sur une règle qui a le droit de parler après 22 h 30 — le rappel
+    #: de coucher, dont c'est tout l'intérêt (H58).
+    silence: bool = True
+    #: Prédicat d'un fait observé qui **conditionne et justifie** la règle. Avec
+    #: `heure_de_coucher`, le rappel ne part que si Luna a vraiment observé une
+    #: heure de coucher, et sa raison la cite. Sans habitude assez sûre, pas de
+    #: rappel : c'est ce que veut dire « pertinent » dans §11.
+    fait: str = ""
+    #: Ce que proposera le bouton « Agir ». Chaque acte repasse par l'arbitre,
+    #: avec son niveau : un `cover.close_cover` déclaré ici sera refusé (D8).
+    actions: list[ActionHA] = Field(default_factory=list)
+
+
+class Observateurs(BaseModel):
+    """Ce que les observateurs déterministes de D2 ont le droit de regarder.
+
+    Rien par défaut. Un observateur sans entité déclarée ne tourne pas — Luna
+    n'invente pas ce qu'elle surveille.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Le `binary_sensor` qui dit « la maison se couche ». Son passage à `on`
+    #: est l'observation.
+    coucher: str = ""
+    #: À qui attribuer l'heure de coucher observée. Vide = la maison.
+    coucher_profil: str = ""
+    #: Les séquences récurrentes ne sont cherchées que si on le demande : c'est
+    #: l'observateur le plus bavard, et le moins demandé par §5.
+    sequences: bool = False
+
+
 class Reglages(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,6 +100,17 @@ class Reglages(BaseModel):
     journal: str = "info"
     profils: list[CorrespondanceProfil] = Field(default_factory=list)
     profil_par_defaut: str = "guest"
+
+    # ── Habitudes et veille (P4) ─────────────────────────────────────────
+    veille: list[RegleVeille] = Field(default_factory=list)
+    #: H55 — assez tard pour que la journée soit finie, assez tôt pour que le
+    #: rapport soit prêt au réveil. `HH:MM`, dans le fuseau des réglages.
+    heure_entretien: str = "03:30"
+    #: H56 — sans plafond, la facture grandit avec la maison.
+    evenements_par_entretien: int = 200
+    #: Coupe l'entretien nocturne sans toucher au reste de la veille.
+    entretien_actif: bool = True
+    observateurs: Observateurs = Field(default_factory=Observateurs)
 
     # Non exposés dans les options : déduits de l'environnement.
     url_ha: str = URL_HA_SUPERVISOR
@@ -94,6 +158,20 @@ class Reglages(BaseModel):
                 vus.append(entree.profil)
         return vus
 
+    def moment_entretien(self) -> tuple[int, int]:
+        """`heure_entretien` en (heure, minute). Une valeur illisible retombe
+        sur 3 h 30 plutôt que d'empêcher Luna de démarrer : un entretien qui
+        tourne à la mauvaise heure vaut mieux qu'un add-on qui refuse de partir.
+        """
+        try:
+            heures, minutes = self.heure_entretien.split(":", 1)
+            h, m = int(heures), int(minutes)
+        except ValueError:
+            return 3, 30
+        if not (0 <= h < 24 and 0 <= m < 60):
+            return 3, 30
+        return h, m
+
     def secrets_masques(self) -> dict[str, object]:
         """Vue des réglages sûre à écrire dans les journaux."""
         vue = self.model_dump(mode="json")
@@ -123,6 +201,8 @@ def charger(chemin: Path | None = None) -> Reglages:
             brut[cle] = valeur
     if port := os.environ.get("LUNA_RELAY_PORT"):
         brut["relay_port"] = int(port)
+    if heure := os.environ.get("LUNA_HEURE_ENTRETIEN"):
+        brut["heure_entretien"] = heure
 
     reglages = Reglages(**brut)  # type: ignore[arg-type]
 

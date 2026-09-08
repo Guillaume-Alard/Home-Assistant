@@ -34,18 +34,22 @@ CONTEXTE = {
 class Banc:
     """Un add-on complet derrière un vrai serveur HTTP, sans Claude ni HA."""
 
-    def __init__(self, cerveau, maison, memoire, arbitre, bus, identite) -> None:
+    def __init__(self, cerveau, maison, memoire, arbitre, bus, identite, veille) -> None:
         self.cerveau = cerveau
         self.maison = maison
         self.bus = bus
         self.identite = identite
+        self.veille = veille
         self.orchestrateur = orchestrateur_avec(cerveau, maison, memoire, arbitre)
-        self.relais = Relais(self.orchestrateur, bus, SECRET, self._contexte, identite)
+        self.relais = Relais(
+            self.orchestrateur, bus, SECRET, self._contexte, identite, veille
+        )
         self.app = construire_app(
             orchestrateur=self.orchestrateur,
             relais=self.relais,
             maison=maison,
             memoire=memoire,
+            veille=veille,
             modele="claude-sonnet-5",
         )
 
@@ -66,8 +70,8 @@ class Banc:
 
 
 @pytest.fixture
-async def banc(maison, memoire, arbitre, bus, identite):
-    b = Banc(FauxCerveau(), maison, memoire, arbitre, bus, identite)
+async def banc(maison, memoire, arbitre, bus, identite, veille):
+    b = Banc(FauxCerveau(), maison, memoire, arbitre, bus, identite, veille)
     coureur = web.AppRunner(b.app, shutdown_timeout=1.0)
     await coureur.setup()
     site = web.TCPSite(coureur, "127.0.0.1", 0)
@@ -140,21 +144,28 @@ class TestOperationsPonctuelles:
         assert reponse["error"]["code"] == "internal"
         await ws.close()
 
-    @pytest.mark.parametrize(
-        ("op", "phase"),
-        [
-            ("patterns", "phase 4"),
-            ("suggestions", "phase 4"),
-            ("alerts_feedback", "phase 4"),
-            ("identity_face", "phase 6"),
-        ],
-    )
+    @pytest.mark.parametrize(("op", "phase"), [("identity_face", "phase 6")])
     async def test_les_phases_futures_repondent_sans_mentir(self, banc, op, phase):
         """§8 : jamais d'échec silencieux, même pour ce qui n'existe pas encore."""
         ws = await _ouvrir(banc)
         reponse = await _demander(ws, 1, op)
         assert reponse["error"]["code"] == "not_implemented"
         assert phase in reponse["error"]["message"]
+        await ws.close()
+
+    @pytest.mark.parametrize(
+        ("op", "cle"),
+        [("suggestions", "suggestions"), ("patterns", "patterns"), ("facts", "facts")],
+    )
+    async def test_les_lectures_de_p4_repondent_vide_plutot_que_501(self, banc, op, cle):
+        """Ce qui était `not_implemented` en P1 rend maintenant une liste.
+
+        Vide, ici : le banc n'a aucune règle de veille ni aucun fait. C'est
+        exactement ce qu'une maison neuve doit voir — pas une erreur.
+        """
+        ws = await _ouvrir(banc)
+        reponse = await _demander(ws, 1, op)
+        assert reponse["result"] == {cle: []}
         await ws.close()
 
 
@@ -344,13 +355,7 @@ class TestRoutesHTTP:
 
     @pytest.mark.parametrize(
         ("methode", "chemin"),
-        [
-            ("get", "/profile/guillaume/patterns"),
-            ("get", "/suggestions"),
-            ("post", "/feedback"),
-            ("post", "/identity/voice"),
-            ("post", "/identity/face"),
-        ],
+        [("post", "/identity/voice"), ("post", "/identity/face")],
     )
     async def test_les_routes_de_la_section_12_existent_deja(self, banc, methode, chemin):
         """§12 : « À documenter dès la première phase, même si implémentés plus
@@ -358,3 +363,25 @@ class TestRoutesHTTP:
         async with getattr(banc.session, methode)(f"{banc.base}{chemin}") as reponse:
             assert reponse.status == 501
             assert (await reponse.json())["code"] == "not_implemented"
+
+    @pytest.mark.parametrize(
+        ("methode", "chemin", "cle"),
+        [
+            ("get", "/profile/guillaume/patterns", "patterns"),
+            ("get", "/suggestions", "suggestions"),
+        ],
+    )
+    async def test_les_routes_de_p4_ne_repondent_plus_501(
+        self, banc, methode, chemin, cle
+    ):
+        async with getattr(banc.session, methode)(f"{banc.base}{chemin}") as reponse:
+            assert reponse.status == 200
+            assert (await reponse.json()) == {cle: []}
+
+    async def test_feedback_sur_une_alerte_inconnue(self, banc):
+        """§8 : un identifiant périmé a droit à un message, pas à un 500."""
+        async with banc.session.post(
+            f"{banc.base}/feedback", json={"suggestion_id": "al_x", "action": "muted"}
+        ) as reponse:
+            assert reponse.status == 404
+            assert (await reponse.json())["code"] == "alert_unknown"

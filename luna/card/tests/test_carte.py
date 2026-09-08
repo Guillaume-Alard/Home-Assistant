@@ -154,6 +154,30 @@ class TestMontage:
         expect(dans_carte(page, ".prenom")).to_have_text("Guillaume")
         expect(dans_carte(page, ".avatar")).to_have_text("G")
 
+    def test_montage_direct_sans_configuration(self, page):
+        """Un `<luna-card>` posé dans une page, sans `setConfig`, doit tenir.
+
+        Lovelace configure toujours avant d'insérer ; une page écrite à la main
+        — un banc, un aperçu — ne le fait pas. Sans défauts dans le
+        constructeur, `_appliquerConfig` casse sur `_config.drawers` au montage,
+        et l'erreur ne se voit que dans la console.
+        """
+        etat = page.evaluate("""() => {
+          const c = document.createElement('luna-card');
+          document.body.appendChild(c);
+          const etat = {
+            monte: !!c.shadowRoot.querySelector('.carte'),
+            cloche: c.shadowRoot.querySelector('.cloche')?.hidden,
+            taille: c.getCardSize(),
+          };
+          c.remove();
+          return etat;
+        }""")
+        # Une exception dans `connectedCallback` ne remonte pas à
+        # `appendChild` : le navigateur la signale comme erreur de page. Le
+        # garde-fou, c'est l'assertion `pageerror` de la fixture `page`.
+        assert etat == {"monte": True, "cloche": False, "taille": 13}
+
     def test_configuration_invalide_est_refusee(self, page):
         erreur = page.evaluate("""() => {
           const c = document.createElement('luna-card');
@@ -164,9 +188,15 @@ class TestMontage:
 
     def test_le_tiroir_dit_ce_quil_ne_fait_pas_encore(self, page):
         """§8 : jamais d'échec silencieux, y compris pour une phase future."""
-        monter(page)
+        monter(page, veille=False)
         dans_carte(page, ".cloche").click()
         expect(dans_carte(page, ".alertes .vide")).to_contain_text("phase 4")
+
+    def test_le_tiroir_dit_quil_ny_a_rien_a_signaler(self, page):
+        """Une fois la phase 4 là, le vide n'est plus une excuse."""
+        monter(page)
+        dans_carte(page, ".cloche").click()
+        expect(dans_carte(page, ".alertes .vide")).to_have_text("Rien à signaler.")
 
 
 class TestConversation:
@@ -794,7 +824,7 @@ class TestIdentite:
         monter(page)
         dans_carte(page, ".badge").click()
         expect(dans_carte(page, ".titre-tiroir")).to_have_text("Qui parle")
-        expect(dans_carte(page, ".identite .alerte")).to_have_count(3)
+        expect(dans_carte(page, ".identite .bloc")).to_have_count(3)
 
     def test_sur_un_appareil_deja_identifie_rien_a_apprendre(self, page):
         """C1 : Home Assistant sait déjà qui c'est, il n'y a rien à reconnaître."""
@@ -895,7 +925,7 @@ class TestInscription:
     def _ouvrir(page):
         monter(page)
         dans_carte(page, ".badge").click()
-        dans_carte(page, ".identite .alerte").first.locator("button").first.click()
+        dans_carte(page, ".identite .bloc").first.locator("button").first.click()
         expect(dans_carte(page, ".identite h5")).to_contain_text("Phrase 1 sur 2")
 
     @staticmethod
@@ -932,7 +962,7 @@ class TestInscription:
             echantillon={"accepted": False, "quality": "trop_court", "remaining": 2},
         )
         dans_carte(page, ".badge").click()
-        dans_carte(page, ".identite .alerte").first.locator("button").first.click()
+        dans_carte(page, ".identite .bloc").first.locator("button").first.click()
         self._lire(page)
         expect(dans_carte(page, ".identite .vide")).to_contain_text("Trop court")
         expect(dans_carte(page, ".identite h5")).to_contain_text("Phrase 1 sur 2")
@@ -940,7 +970,7 @@ class TestInscription:
     def test_une_inscription_peu_nette_le_dit(self, page):
         monter(page, coherence=0.5)
         dans_carte(page, ".badge").click()
-        dans_carte(page, ".identite .alerte").first.locator("button").first.click()
+        dans_carte(page, ".identite .bloc").first.locator("button").first.click()
         self._lire(page)
         self._lire(page)
         expect(dans_carte(page, ".bulle.erreur")).to_contain_text("sans grande netteté")
@@ -948,7 +978,7 @@ class TestInscription:
     def test_oublier(self, page):
         monter(page)
         dans_carte(page, ".badge").click()
-        oublier = dans_carte(page, ".identite .alerte").first.locator("button").nth(1)
+        oublier = dans_carte(page, ".identite .bloc").first.locator("button").nth(1)
         expect(oublier).to_have_text("Oublier")
         oublier.click()
         page.wait_for_function(
@@ -956,6 +986,180 @@ class TestInscription:
             "m => m.type === 'luna/identity/forget')",
             timeout=DELAI,
         )
-        expect(dans_carte(page, ".identite .alerte").first).to_contain_text(
-            "Voix inconnue"
+        expect(dans_carte(page, ".identite .bloc").first).to_contain_text("Voix inconnue")
+
+
+ALERTE = {
+    "id": "al_1",
+    "key": "ouvrant||binary_sensor.luna_ouvrant_oublie",
+    "level": "warning",
+    "category": "ouvrant",
+    "title": "Un ouvrant est resté ouvert et il est tard.",
+    "why": "La baie vitrée du séjour est ouverte.",
+    "entity_id": "binary_sensor.luna_ouvrant_oublie",
+    "ts": "2026-09-08T23:10:00+02:00",
+    "actions": [
+        {
+            "domain": "cover",
+            "service": "close_cover",
+            "target": {"entity_id": "cover.baie_vitree"},
+            "data": {},
+        }
+    ],
+}
+
+FAIT = {
+    "id": "f_2",
+    "predicate": "preference_eclairage",
+    "value": "couloir tamisé le soir",
+    "profile": "guillaume",
+    "why": "Tu me l'as dit le 6 septembre.",
+    "created_at": "2026-09-07T03:30:00+02:00",
+}
+
+
+def alerte_sans_action() -> dict:
+    return {**ALERTE, "actions": []}
+
+
+class TestVeille:
+    """P4 : le tiroir devient vivant."""
+
+    def test_une_alerte_arrive_par_le_feed(self, page):
+        monter(page)
+        emettre(page, "feed", {"event": "alert", "alert": ALERTE})
+        expect(dans_carte(page, ".alerte h5")).to_have_text(ALERTE["title"])
+        expect(dans_carte(page, ".alerte p")).to_have_text(ALERTE["why"])
+        expect(dans_carte(page, ".cloche")).to_have_attribute("data-alertes", "1")
+
+    def test_lorbe_signale_ce_qui_attend(self, page):
+        monter(page)
+        emettre(page, "feed", {"event": "alert", "alert": ALERTE})
+        expect(dans_carte(page, ".carte")).to_have_attribute("data-orbe", "alert")
+        expect(dans_carte(page, ".sous-titre")).to_have_text("1 à signaler")
+
+    def test_une_alerte_levee_disparait(self, page):
+        """`alert_cleared` porte `alert_id` — pas `id` (contrat §4)."""
+        monter(page)
+        emettre(page, "feed", {"event": "alert", "alert": ALERTE})
+        expect(dans_carte(page, ".alerte")).to_have_count(1)
+
+        emettre(page, "feed", {"event": "alert_cleared", "alert_id": "al_1"})
+        expect(dans_carte(page, ".alerte")).to_have_count(0)
+        expect(dans_carte(page, ".cloche")).to_have_attribute("data-alertes", "0")
+
+    def test_le_niveau_se_voit(self, page):
+        monter(page)
+        emettre(
+            page, "feed", {"event": "alert", "alert": {**ALERTE, "level": "critical"}}
         )
+        expect(dans_carte(page, ".alerte")).to_have_attribute("data-niveau", "critical")
+
+    def test_agir_napparait_que_sil_y_a_quelque_chose_a_faire(self, page):
+        """§8 : un bouton qui ne peut rien faire n'a pas à exister."""
+        monter(page)
+        emettre(page, "feed", {"event": "alert", "alert": alerte_sans_action()})
+        libelles = dans_carte(page, ".alerte .actions button").all_text_contents()
+        assert libelles == ["Ignorer", "Ne plus me le dire"]
+
+    def test_agir_passe_par_larbitre_puis_note_lacceptation(self, page):
+        """D8 : « Agir » ne court-circuite rien."""
+        monter(page)
+        emettre(page, "feed", {"event": "alert", "alert": ALERTE})
+        dans_carte(page, ".alerte .actions button").first.click()
+        expect(dans_carte(page, ".alerte")).to_have_count(0)
+
+        envoyes = [m["type"] for m in journal(page)["envoyes"]]
+        assert envoyes[-2:] == ["luna/alerts/act", "luna/alerts/feedback"]
+        retour = journal(page)["envoyes"][-1]
+        assert retour == {
+            "type": "luna/alerts/feedback",
+            "suggestion_id": "al_1",
+            "action": "accepted",
+            "client_id": "loggia",
+            "device": retour["device"],
+        }
+
+    def test_un_refus_de_niveau_cinq_laisse_lalerte_et_dit_pourquoi(self, page):
+        """Recette 10, vue de la carte : fermer un ouvrant reste hors périmètre.
+
+        L'alerte **reste** : la faire disparaître laisserait croire que quelque
+        chose s'est passé.
+        """
+        monter(
+            page,
+            resultatAgir={
+                "executed": False,
+                "results": [
+                    {
+                        "domain": "cover",
+                        "service": "close_cover",
+                        "ok": False,
+                        "message": "Je ne commande pas les ouvrants — c'est hors "
+                        "de mon périmètre pour l'instant.",
+                    }
+                ],
+            },
+        )
+        emettre(page, "feed", {"event": "alert", "alert": ALERTE})
+        dans_carte(page, ".alerte .actions button").first.click()
+
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("ouvrants")
+        expect(dans_carte(page, ".alerte")).to_have_count(1)
+        assert "luna/alerts/feedback" not in [m["type"] for m in journal(page)["envoyes"]]
+
+    def test_ne_plus_me_le_dire_retire_lalerte(self, page):
+        monter(page)
+        emettre(page, "feed", {"event": "alert", "alert": ALERTE})
+        dans_carte(page, ".alerte .actions button").last.click()
+        expect(dans_carte(page, ".alerte")).to_have_count(0)
+        assert journal(page)["envoyes"][-1]["action"] == "muted"
+
+    def test_la_carte_rattrape_ce_qui_a_precede_son_ouverture(self, page):
+        """Le feed ne rejoue pas le passé : sans la lecture initiale, une
+        alerte levée avant l'ouverture de la carte serait invisible."""
+        monter(
+            page,
+            suggestions=[
+                {
+                    "id": "al_9",
+                    "key": "ouvrant||b.x",
+                    "title": "Un ouvrant est resté ouvert.",
+                    "why": "Depuis 22 h 40.",
+                    "score": 0.5,
+                    "level": 0,
+                    "actions": [],
+                }
+            ],
+        )
+        expect(dans_carte(page, ".alerte h5")).to_have_text(
+            "Un ouvrant est resté ouvert."
+        )
+
+
+class TestFileDeRelecture:
+    """D2 : ce que le modèle croit comprendre attend un humain."""
+
+    def test_un_fait_a_relire_apparait(self, page):
+        monter(page, faits=[FAIT])
+        dans_carte(page, ".cloche").click()
+        expect(dans_carte(page, ".relecture h4")).to_have_text("À relire (1)")
+        expect(dans_carte(page, ".fait h5")).to_have_text("couloir tamisé le soir")
+        expect(dans_carte(page, ".fait p")).to_have_text(FAIT["why"])
+
+    def test_accepter_un_fait_le_retire_de_la_file(self, page):
+        monter(page, faits=[FAIT])
+        dans_carte(page, ".fait .actions button").first.click()
+        expect(dans_carte(page, ".fait")).to_have_count(0)
+        assert journal(page)["envoyes"][-1]["decision"] == "accept"
+
+    def test_refuser_un_fait_le_retire_aussi(self, page):
+        monter(page, faits=[FAIT])
+        dans_carte(page, ".fait .actions button").last.click()
+        expect(dans_carte(page, ".fait")).to_have_count(0)
+        assert journal(page)["envoyes"][-1]["decision"] == "reject"
+
+    def test_sans_rien_a_relire_la_section_nexiste_pas(self, page):
+        monter(page)
+        dans_carte(page, ".cloche").click()
+        expect(dans_carte(page, ".relecture h4")).to_have_count(0)

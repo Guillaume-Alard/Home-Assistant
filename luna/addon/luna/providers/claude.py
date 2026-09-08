@@ -88,6 +88,68 @@ contournement, ne réessaie pas en boucle.\
 """
 
 
+#: Bloc stable de l'entretien nocturne (D3). Son propre point de rupture de
+#: cache : il ne change jamais d'une nuit sur l'autre, seuls les extraits varient.
+PROMPT_ENTRETIEN = """\
+Tu relis les échanges récents d'une maison pour en extraire des faits durables.
+
+Tu ne décides rien. Ce que tu proposes est relu par un humain avant d'entrer en \
+vigueur — écris donc peu, et seulement ce qui est explicite.
+
+Extrais uniquement des préférences et des faits **énoncés** par quelqu'un :
+- `preference_eclairage` : « je n'aime pas quand le couloir est à fond »
+- `preference_temperature` : « 19 degrés c'est bien pour la chambre »
+- `fait_declare` : « Clara est allergique aux chats », « Liam se lève à 7 h »
+
+N'extrais jamais :
+- une habitude d'horaire déduite d'un comportement — d'autres mécanismes la \
+mesurent, et ils la mesurent mieux que toi ;
+- une inférence, une supposition, une généralisation ;
+- l'état de la maison à un instant donné : ce n'est pas un fait durable ;
+- quoi que ce soit qui ne soit pas dit noir sur blanc dans les extraits.
+
+`valeur` est courte et se relit seule, sans les extraits. `pourquoi` cite ce qui \
+te fait dire ça. S'il n'y a rien à extraire, rends une liste vide : c'est la \
+réponse la plus fréquente et la plus utile.\
+"""
+
+#: H61 — une liste typée, jamais de la prose à réinterpréter. Un appel d'outil
+#: forcé plutôt qu'un format de sortie : c'est la même garantie de typage, sur
+#: la surface d'API que le reste du projet exerce déjà.
+OUTIL_FAITS: dict[str, Any] = {
+    "name": "enregistrer_faits",
+    "description": "Enregistre les faits durables trouvés dans les extraits.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "faits": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "predicat": {
+                            "type": "string",
+                            "enum": [
+                                "preference_eclairage",
+                                "preference_temperature",
+                                "fait_declare",
+                            ],
+                        },
+                        "valeur": {"type": "string"},
+                        "profil": {"type": "string"},
+                        "pourquoi": {"type": "string"},
+                    },
+                    "required": ["predicat", "valeur", "pourquoi"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["faits"],
+        "additionalProperties": False,
+    },
+}
+
+
 def _message_erreur_api(exc: anthropic.APIStatusError) -> Exception:
     """Traduit une erreur de l'API en erreur Luna, sans perdre le détail.
 
@@ -188,6 +250,58 @@ class CerveauClaude:
             or "Je me suis perdue dans mes outils. Reformule ta demande ?",
             usage=usage_total,
         )
+
+    async def extraire_faits(self, extraits: str) -> list[dict[str, str]]:
+        """L'entretien nocturne (D3) : un appel, une liste typée, rien d'autre.
+
+        Pas de streaming — personne ne regarde à 3 h 30. Pas d'outil réel non
+        plus : celui qui est déclaré n'exécute rien, il **impose la forme** de
+        la réponse. Le cerveau n'a ici aucun accès à la maison.
+
+        Une réponse illisible rend une liste vide plutôt qu'une exception : une
+        nuit sans fait extrait n'est pas une panne, et ne doit pas réveiller
+        Guillaume avec une erreur.
+        """
+        try:
+            reponse = await self._client.messages.create(
+                model=self._modele,
+                max_tokens=MAX_TOKENS,
+                output_config={"effort": self._effort},
+                system=[
+                    {
+                        "type": "text",
+                        "text": PROMPT_ENTRETIEN,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {"type": "text", "text": extraits},
+                ],
+                tools=[OUTIL_FAITS],
+                tool_choice={"type": "tool", "name": OUTIL_FAITS["name"]},
+                messages=[
+                    {
+                        "role": "user",
+                        "content": "Relis ces extraits et enregistre ce qui mérite "
+                        "d'être retenu.",
+                    }
+                ],
+            )
+        except anthropic.RateLimitError as exc:
+            raise TropDeRequetes() from exc
+        except anthropic.APIStatusError as exc:
+            raise _message_erreur_api(exc) from exc
+        except anthropic.APIConnectionError as exc:
+            raise CerveauIndisponible(
+                "Je n'arrive pas à joindre l'API Anthropic."
+            ) from exc
+
+        for bloc in reponse.content:
+            if getattr(bloc, "type", "") != "tool_use":
+                continue
+            faits = (bloc.input or {}).get("faits")
+            if not isinstance(faits, list):
+                return []
+            return [f for f in faits if isinstance(f, dict)]
+        return []
 
     def _systeme(self, contexte: str) -> list[dict[str, Any]]:
         """Le bloc figé et mis en cache, puis le contexte volatil, jamais l'inverse."""

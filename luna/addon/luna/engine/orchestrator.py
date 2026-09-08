@@ -261,18 +261,18 @@ class Orchestrateur:
         return {
             "version": __version__,
             "addon": "online" if self._maison.connectee else "degraded",
-            "capabilities": ["chat", "ha_control"],
+            "capabilities": ["chat", "ha_control", "veille", "facts"],
             "profile": ProfilActif(
                 id=profil,
                 display_name=NOMS_PROFILS.get(profil, profil.capitalize()),
                 confidence=1.0 if contexte and contexte.ha_user_id else 0.0,
                 signals={"ha_user": 1.0 if contexte and contexte.ha_user_id else 0.0},
             ).model_dump(mode="json"),
-            # P3 à P6. La carte grise ce qui est à false plutôt que de le cacher.
+            # P5 et P6. La carte grise ce qui est à false plutôt que de le cacher.
             "phases": {
                 "voice": True,
                 "identity": True,
-                "veille": False,
+                "veille": True,
                 "guardian": False,
             },
         }

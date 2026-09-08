@@ -200,11 +200,40 @@ class EvtIdentite(Modele):
     profile: ProfilActif
 
 
+class Alerte(Modele):
+    """[P4] Ce que la carte reçoit dans son tiroir. Aucun contexte, aucun profil.
+
+    `actions` est la liste des actes que le bouton « Agir » proposera. Ils ne
+    court-circuitent rien : ils repassent par l'arbitre, avec leur niveau (D8).
+    """
+
+    id: str
+    key: str
+    level: Literal["info", "warning", "critical"]
+    category: str
+    title: str
+    why: str
+    entity_id: str | None = None
+    ts: datetime
+    actions: list[ActionHA] = Field(default_factory=list)
+
+
 class EvtAlerte(Modele):
-    """[P4] Documenté maintenant, jamais émis avant la phase 4."""
+    """[P4] Une alerte de veille arrive dans le tiroir."""
 
     event: Literal["alert"] = "alert"
-    alert: dict[str, Any]
+    alert: Alerte
+
+
+class EvtAlerteEffacee(Modele):
+    """[P4] La condition a cessé : le tiroir retire la ligne tout seul.
+
+    C'est ce qui distingue une veille d'une boîte de réception : une alerte qui
+    n'a plus lieu d'être disparaît sans que personne ait à la ranger.
+    """
+
+    event: Literal["alert_cleared"] = "alert_cleared"
+    alert_id: str
 
 
 EvenementCarte = (
@@ -218,6 +247,7 @@ EvenementCarte = (
     | EvtMessage
     | EvtIdentite
     | EvtAlerte
+    | EvtAlerteEffacee
 )
 
 #: Après l'un de ces deux, plus rien n'arrive sur la souscription (§4).
@@ -304,6 +334,93 @@ class EntreeIdentite(Modele):
     margin: float
     signals: dict[str, dict[str, float]] = Field(default_factory=dict)
     asked: bool = False
+
+
+# ── Habitudes et veille (P4) ─────────────────────────────────────────────
+
+
+class Fait(Modele):
+    """§4 : un fait atomique, jamais supprimé.
+
+    `status` porte tout le sens de D2 : un fait mesuré par un observateur naît
+    `active`, un fait déduit d'une conversation naît `needs_review` et attend
+    une relecture. Un fait contredit passe `superseded`, un fait refusé à la
+    relecture passe `rejected` — jamais effacé, ni l'un ni l'autre (§4).
+
+    `rejected` est distinct de `superseded` à dessein : c'est lui qui permet de
+    ne pas reposer la même question la nuit suivante. Les confondre coûterait
+    exactement ce que §4 cherche à éviter — une mémoire qui radote.
+    """
+
+    id: str
+    predicate: str
+    value: str
+    profile: str | None = None
+    entity_id: str | None = None
+    #: Porte la demi-vie de D6.
+    category: str
+    status: Literal["active", "superseded", "needs_review", "rejected"]
+    source: Literal["observateur", "modele"]
+    created_at: datetime
+    last_seen_at: datetime
+    observations: int = 1
+    #: Pourquoi Luna le croit. Montré tel quel dans la file de relecture.
+    why: str = ""
+
+    @property
+    def cle(self) -> str:
+        return f"{self.predicate}|{self.profile or ''}|{self.entity_id or ''}"
+
+
+class EvenementJournal(Modele):
+    """§4 : « journal immuable de tout ce qui arrive » (D7).
+
+    `action_log` reste, et alimente aussi cette table : rien n'a été migré, rien
+    n'a été détruit.
+    """
+
+    id: str
+    ts: datetime
+    kind: Literal["message", "state", "action", "alert", "identity"]
+    profile: str | None = None
+    entity_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScoreSuggestion(Modele):
+    """§12 : ce que Luna a appris du goût de la maison pour une règle."""
+
+    cle: str
+    score: float = 0.5
+    rejections: int = 0
+    muted_until: datetime | None = None
+    updated_at: datetime
+
+
+class Suggestion(Modele):
+    """§12, `GET /suggestions` : ce que Luna propose, sans l'avoir fait."""
+
+    id: str
+    key: str
+    title: str
+    why: str
+    score: float
+    level: int
+    actions: list[ActionHA] = Field(default_factory=list)
+
+
+class ChangementEtat(Modele):
+    """Publié par le client HA à chaque `state_changed` (H63).
+
+    Les observateurs réagissent à cet événement ; rien n'interroge la maison en
+    boucle. C'est la seule façon tenable sur un N95 qui fait déjà tourner
+    Whisper et une empreinte de locuteur.
+    """
+
+    entity_id: str
+    ancien: str | None
+    nouveau: str | None
+    ts: datetime
 
 
 # ── Persistance ──────────────────────────────────────────────────────────

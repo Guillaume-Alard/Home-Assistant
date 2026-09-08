@@ -17,13 +17,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import datetime
 from typing import Any
 
 import aiohttp
 
 from ..kernel.bus import Bus
 from ..kernel.errors import MaisonIndisponible
-from ..kernel.schemas import ActionHA, EtatEntite, MaisonConnectee, Piece
+from ..kernel.schemas import (
+    ActionHA,
+    ChangementEtat,
+    EtatEntite,
+    MaisonConnectee,
+    Piece,
+)
 from .texte import normaliser
 
 log = logging.getLogger("luna.maison")
@@ -177,7 +184,7 @@ class ClientMaison:
             if genre == "result":
                 self._resoudre_attente(charge)
             elif genre == "event":
-                self._appliquer_evenement(charge.get("event") or {})
+                await self._appliquer_evenement(charge.get("event") or {})
         raise MaisonIndisponible("Le flux WebSocket s'est refermé.")
 
     def _resoudre_attente(self, charge: dict[str, Any]) -> None:
@@ -192,16 +199,41 @@ class ClientMaison:
                 MaisonIndisponible(f"Home Assistant a refusé la commande : {erreur}")
             )
 
-    def _appliquer_evenement(self, evenement: dict[str, Any]) -> None:
+    async def _appliquer_evenement(self, evenement: dict[str, Any]) -> None:
+        """Entretient le cache, puis publie le changement sur le bus (H63).
+
+        C'est la seule source d'observation de P4 : les observateurs réagissent
+        à cet événement, rien n'interroge la maison en boucle. Sur un N95 qui
+        fait déjà tourner Whisper et une empreinte de locuteur, une boucle de
+        scrutation serait le premier vrai gaspillage du projet.
+
+        Un changement d'attributs sans changement d'état — une lampe qui varie
+        de luminosité — met le cache à jour mais ne publie rien : les
+        observateurs raisonnent sur des états, pas sur du bruit.
+        """
         donnees = evenement.get("data") or {}
         entity_id = donnees.get("entity_id")
         nouvel_etat = donnees.get("new_state")
+        ancien_etat = donnees.get("old_state")
         if not entity_id:
             return
         if nouvel_etat is None:
             self._etats.pop(entity_id, None)
         else:
             self._etats[entity_id] = nouvel_etat
+
+        avant = str(ancien_etat["state"]) if ancien_etat else None
+        apres = str(nouvel_etat["state"]) if nouvel_etat else None
+        if avant == apres:
+            return
+        await self._bus.publier(
+            ChangementEtat(
+                entity_id=entity_id,
+                ancien=avant,
+                nouveau=apres,
+                ts=datetime.now().astimezone(),
+            )
+        )
 
     def _reveiller_attentes(self, erreur: Exception) -> None:
         for future in self._attentes.values():

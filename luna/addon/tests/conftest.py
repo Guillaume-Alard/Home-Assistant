@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -15,11 +16,13 @@ import pytest
 from luna.engine.arbiter import Arbitre
 from luna.engine.identity import MoteurIdentite
 from luna.engine.orchestrator import Orchestrateur
+from luna.engine.veille import MoteurVeille
 from luna.kernel.bus import Bus
 from luna.kernel.contracts import ExecuteurOutil
 from luna.kernel.errors import MaisonIndisponible
 from luna.kernel.schemas import (
     ActionHA,
+    ChangementEtat,
     ContexteRequete,
     EtatEntite,
     EvenementCerveau,
@@ -102,6 +105,23 @@ class FauxMaison:
             raise MaisonIndisponible()
         self.appels.append(action)
 
+    # ── Ce que P4 demande en plus ────────────────────────────────────────
+
+    def nom_piece(self, entity_id: str) -> str | None:
+        _, _, area = self._entites.get(entity_id, (None, None, None))
+        return self._pieces.get(area) if area else None
+
+    def poser(self, entity_id: str, etat: str) -> ChangementEtat:
+        """Change un état et rend l'événement que le vrai client publierait."""
+        nom, ancien, area = self._entites.get(entity_id, (entity_id, None, None))
+        self._entites[entity_id] = (nom, etat, area)
+        return ChangementEtat(
+            entity_id=entity_id,
+            ancien=ancien,
+            nouveau=etat,
+            ts=datetime.now().astimezone(),
+        )
+
 
 class FauxCerveau:
     """Rejoue un scénario d'événements au lieu d'appeler l'API.
@@ -114,6 +134,15 @@ class FauxCerveau:
         self.scenario = scenario or [("texte", "Bonjour.")]
         self.appels: list[dict[str, Any]] = []
         self.leve: Exception | None = None
+        #: Ce que l'entretien nocturne recevra en retour (P4).
+        self.faits: list[dict[str, str]] = []
+        self.extraits: list[str] = []
+
+    async def extraire_faits(self, extraits: str) -> list[dict[str, str]]:
+        self.extraits.append(extraits)
+        if self.leve is not None:
+            raise self.leve
+        return list(self.faits)
 
     async def repondre(
         self,
@@ -240,6 +269,41 @@ def maison() -> FauxMaison:
 @pytest.fixture
 def arbitre(maison, memoire) -> Arbitre:
     return Arbitre(maison, memoire)
+
+
+class FauxEmetteur:
+    """Recueille ce que la veille pousserait vers les cartes."""
+
+    def __init__(self) -> None:
+        self.evenements: list[Any] = []
+
+    async def __call__(self, evenement: Any) -> None:
+        self.evenements.append(evenement)
+
+    def genres(self) -> list[str]:
+        return [getattr(e, "event", "?") for e in self.evenements]
+
+
+@pytest.fixture
+def emetteur() -> FauxEmetteur:
+    return FauxEmetteur()
+
+
+def veille_avec(regles, memoire, maison, arbitre, emetteur, horloge=None) -> MoteurVeille:
+    return MoteurVeille(
+        regles=regles,
+        memoire=memoire,
+        maison=maison,
+        arbitre=arbitre,
+        emettre=emetteur,
+        horloge=horloge,
+    )
+
+
+@pytest.fixture
+def veille(memoire, maison, arbitre, emetteur) -> MoteurVeille:
+    """Un moteur sans aucune règle : suffisant pour le relais et les routes."""
+    return veille_avec([], memoire, maison, arbitre, emetteur)
 
 
 @pytest.fixture

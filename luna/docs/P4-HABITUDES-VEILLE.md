@@ -1,7 +1,8 @@
 # Luna — P4 : habitudes et veille. Hypothèses et contrats
 
-**Statut : en attente de validation.** Aucun code n'est écrit tant que ce
-document n'est pas tranché (§11 du cahier des charges).
+**Statut : validé (D1–D8) et implémenté.** Les écarts entre ce qui était prévu
+ici et ce qui a été construit sont listés en **partie G**, avec leurs raisons.
+La recette de la partie E dit où en est chaque point.
 
 Sortie testable attendue (§11) : **un rappel de coucher pertinent, une alerte
 ouvrant.**
@@ -359,20 +360,20 @@ Aussi important que le reste (§1, §10).
 
 Sortie testable de §11 : « Un rappel de coucher pertinent, une alerte ouvrant. »
 
-| # | Vérification | Automatisable |
+| # | Vérification | Où c'est vérifié |
 |---|---|---|
-| 1 | Le capteur `binary_sensor.luna_ouvrant_oublie` passe à `on` → une alerte apparaît dans le tiroir, avec sa justification | ✅ |
-| 2 | Le même capteur s'agite dix fois en une heure → **une seule** alerte (H57) | ✅ |
-| 3 | Une ampoule oubliée à 3 h du matin → rien avant 7 h (H58) | ✅ |
-| 4 | « Ne plus me le dire » → la règle ne remonte plus pendant 30 jours (§12) | ✅ |
-| 5 | Refusée trois fois → même effet, sans avoir cliqué « ne plus » (§12) | ✅ |
-| 6 | Vingt soirs de coucher observés → un fait `heure_de_coucher` de confiance > 0,7 | ✅ |
-| 7 | Aucun coucher pendant deux mois → la confiance retombe sous 0,25, le fait n'est plus proposé mais **existe toujours** (§4) | ✅ |
-| 8 | Un rappel de coucher pertinent, à la bonne heure, avec sa raison | ⏳ **sur Nova**, c'est la sortie de §11 |
-| 9 | L'entretien nocturne extrait un fait d'une conversation → il arrive en `needs_review`, pas en vigueur | ✅ |
-| 10 | `Agir` sur une alerte d'ouvrant → **refus de niveau 5**, journalisé (D8) | ✅ |
-| 11 | L'entretien saute s'il n'y a rien de neuf, et ne dépasse jamais 200 événements | ✅ |
-| 12 | `ruff`, `lint-imports`, `pytest` verts | ✅ |
+| 1 | Le capteur `binary_sensor.luna_ouvrant_oublie` passe à `on` → une alerte apparaît dans le tiroir, avec sa justification | ✅ `test_veille.py::test_un_capteur_qui_passe_a_on_produit_une_alerte`, `test_carte.py::test_une_alerte_arrive_par_le_feed` |
+| 2 | Le même capteur s'agite dix fois en une heure → **une seule** alerte (H57) | ✅ `test_dix_soubresauts_en_une_heure_font_une_alerte` |
+| 3 | Une ampoule oubliée à 3 h du matin → rien avant 7 h (H58) | ✅ `test_une_ampoule_oubliee_a_trois_heures_attend_sept_heures` |
+| 4 | « Ne plus me le dire » → la règle ne remonte plus pendant 30 jours (§12) | ✅ `test_ne_plus_me_le_dire_fait_taire_la_regle_trente_jours` |
+| 5 | Refusée plusieurs fois → même effet, sans avoir cliqué « ne plus » (§12) | ✅ `test_refusee_encore_et_encore_vaut_une_sourdine` — **deux** refus, voir G4 |
+| 6 | Vingt soirs de coucher observés → un fait `heure_de_coucher` de confiance > 0,7 | ✅ `test_vingt_soirs_donnent_une_habitude_sure` |
+| 7 | Aucun coucher pendant deux mois → la confiance retombe sous 0,25, le fait n'est plus proposé mais **existe toujours** (§4) | ✅ `test_deux_mois_sans_coucher_font_retomber_sous_le_seuil`, `test_une_habitude_perimee_fait_taire_le_rappel` |
+| 8 | Un rappel de coucher pertinent, à la bonne heure, avec sa raison | ⏳ **sur Nova**, c'est la sortie de §11. La mécanique est vérifiée par `TestRappelDeCoucher` ; ce qui reste à juger, c'est la pertinence réelle |
+| 9 | L'entretien nocturne extrait un fait d'une conversation → il arrive en `needs_review`, pas en vigueur | ✅ `test_un_fait_extrait_arrive_en_relecture` |
+| 10 | `Agir` sur une alerte d'ouvrant → **refus de niveau 5**, journalisé (D8) | ✅ `test_agir_sur_un_ouvrant_est_refuse_au_niveau_cinq`, et côté carte `test_un_refus_de_niveau_cinq_laisse_lalerte_et_dit_pourquoi` |
+| 11 | L'entretien saute s'il n'y a rien de neuf, et ne dépasse jamais 200 événements | ✅ `test_il_saute_quand_il_ny_a_rien_de_neuf`, `test_il_ne_depasse_jamais_son_plafond` |
+| 12 | `ruff`, `lint-imports`, `pytest` verts | ✅ 297 tests add-on, 43 intégration, 68 carte ; 4 contrats de couches tenus |
 
 Le point 8 demande de vraies soirées : c'est le seul que la vraie maison peut
 juger.
@@ -399,3 +400,169 @@ juger.
 
 Aucune de ces réponses ne bloque le code, sauf **Q1**, qui ajouterait une pièce.
 Dis-moi si tu valides D1 à D8, et je code P4.
+
+---
+
+# Partie G — Ce qui a bougé pendant l'écriture
+
+Comme en P1 (§16), P2 (partie F) et P3 (partie F) : ce qui est parti d'ici et
+ce que le code a fait à la place, avec la raison.
+
+## G1. La détection ne suffisait pas — il fallait aussi livrer les capteurs
+
+D1 disait « je livre un jeu de départ documenté ». C'est
+[`docs/P4-CAPTEURS.md`](P4-CAPTEURS.md), et il est plus long que prévu : les
+quatre capteurs de §5, F5, plus le contexte « coucher » sans lequel le rappel
+de §11 n'existe pas. Il documente aussi comment vérifier chacun dans les outils
+de développement — parce qu'une règle qu'on ne sait pas tester ne sera jamais
+corrigée.
+
+## G2. `Agir` a demandé un point d'entrée public sur l'arbitre
+
+D8 finissait par « rien dans P4 ne touche à `kernel/autonomy.py` ni à
+`engine/arbiter.py` ». La moitié tient : le registre des niveaux n'a pas bougé
+d'une ligne. L'arbitre, si — d'une méthode :
+
+```python
+async def agir_hors_conversation(self, acte, *, libelle, justification,
+                                 contexte, reference, emettre) -> ResultatOutil:
+    return await self._appliquer(acte, ...)   # le même chemin, exactement
+```
+
+L'alternative était d'exprimer les actions d'une alerte comme des **appels
+d'outil** (`commander_lumiere`), qui passaient déjà par `executer()`. Elle a
+été écartée pour une raison précise : il n'existe aucun outil `cover`, donc un
+`cover.close_cover` déclaré dans une règle n'aurait pas été *refusé au niveau
+5* — il aurait été « outil inconnu ». Le point 10 de la recette serait devenu
+invérifiable, et la garantie de §9.1 (« journalisée avec sa justification,
+acceptée ou refusée ») aurait été perdue là où elle compte le plus.
+
+Le corps de la méthode est un `return await self._appliquer(...)` : aucune
+logique de décision n'a été ajoutée, et `tests/test_invariants.py` continue de
+prouver que l'arbitre reste le seul appelant de `appeler_service`.
+
+## G3. Un quatrième statut de fait : `rejected`
+
+C.3 prévoyait `active | superseded | needs_review`. Un fait **refusé à la
+relecture** n'est aucun des trois : il n'est pas en vigueur, il n'attend plus,
+et il n'a été contredit par rien.
+
+Le confondre avec `superseded` coûtait précisément ce que §4 cherche à éviter :
+l'entretien de la nuit suivante aurait reproposé le même fait, et Guillaume
+l'aurait refusé de nouveau, indéfiniment. `rejected` est ce qui permet à
+`observer_fait` de reconnaître une question déjà tranchée. §4 est tenu — le
+fait est toujours en base, il ne resservira simplement jamais.
+
+C'est aussi ce statut qu'utilise l'expiration de H59 : au bout de quatorze
+jours, un fait à relire que personne n'a ouvert bascule en `rejected` plutôt
+que de disparaître.
+
+## G4. §12 se contredisait : deux refus tuaient une règle définitivement
+
+La boucle de C.2, telle qu'elle était écrite :
+
+```
+score = 0,5 au départ    rejected → −0,25    score < 0,2 → ne remonte plus
+                         3 refus → sourdine de 30 jours
+```
+
+Deux refus depuis 0,5 amènent le score à 0,0. La règle cesse alors
+d'apparaître — donc personne ne peut plus l'accepter — donc le score ne
+remontera jamais. **La règle des trois refus n'était pas atteignable**, et le
+plancher, censé être un amortissement, était une condamnation à perpétuité.
+
+Le code fait converger les deux chemins :
+
+```python
+if refus >= REFUS_AVANT_SOURDINE or valeur < SEUIL_REMONTEE:
+    return Score(score=SEUIL_REMONTEE, refus=0,
+                 sourdine_jusqua=maintenant + DUREE_SOURDINE)
+```
+
+Un refus qui crève le plancher vaut lui aussi une sourdine de trente jours,
+après quoi la règle revient **à l'essai**, au niveau du plancher. Aucun chiffre
+de §12 n'a été changé ; c'est leur interaction qui est corrigée. Les deux
+règles restent vivantes et testées séparément : depuis un score élevé, c'est
+bien le compteur de refus qui déclenche au troisième
+(`test_trois_refus_valent_un_ne_plus_me_le_dire`).
+
+Le point 5 de la recette disait « refusée trois fois » ; depuis le score
+initial, c'est **deux**. La recette a été corrigée, pas le code.
+
+## G5. Deux seuils de confiance au lieu d'un
+
+D6 posait un seuil unique à 0,25. Mais `maturité(1) = 0,29` : **une seule
+soirée observée passait déjà le seuil**, et suffisait à déclencher un rappel de
+coucher. C'est exactement le rappel non pertinent que §11 demande d'éviter.
+
+`kernel/facts.py` a donc deux seuils, qui ne répondent pas à la même question :
+
+| Seuil | Question | Valeur |
+|---|---|---|
+| `SEUIL_UTILE` | Faut-il encore garder ce fait sous la main ? | 0,25 (celui de D6) |
+| `SEUIL_PROPOSITION` | Luna a-t-elle le droit de bâtir un rappel là-dessus ? | 0,50 |
+
+Trois soirs identiques valent 0,65 et franchissent le second ; un seul vaut
+0,29 et ne franchit que le premier. Le point 7 de la recette, qui porte sur
+l'oubli, continue de viser 0,25.
+
+## G6. Les alertes de nuit sont différées, pas jetées
+
+H58 disait « une ampoule oubliée dans le garage n'a pas le droit de parler la
+nuit ». Le point 3 de la recette disait « rien avant 7 h » — ce qui suppose que
+quelque chose arrive **à** 7 h.
+
+Une alerte retenue par les heures de silence est donc gardée en attente, et
+l'ordonnanceur la reprend toutes les cinq minutes. Si la condition a cessé
+entre-temps — la lampe éteinte à 6 h —, elle ne sort jamais. C'est la
+différence entre se taire et oublier.
+
+## G7. L'entretien nocturne rend ses faits par un appel d'outil forcé
+
+D3 disait « sortie structurée (`output_config.format`) ». Le code utilise un
+**appel d'outil forcé** (`tool_choice`) dont le schéma d'entrée est la liste de
+faits attendue. La garantie de typage est la même — le modèle ne peut rendre
+que la forme déclarée, `predicat` étant un `enum` — et c'est une surface d'API
+que le reste du projet exerce déjà, donc déjà couverte par les tests
+enregistrés de `test_claude.py`.
+
+L'`enum` limite le modèle à `preference_eclairage`, `preference_temperature` et
+`fait_declare`. `heure_de_coucher` en est **exclu** : c'est un fait mesuré, et
+un modèle qui le déduirait d'une phrase le déduirait moins bien que
+l'observateur. `nightly.py` refiltre côté Luna, pour ne pas dépendre de la
+seule obéissance du modèle.
+
+## G8. Deux défauts trouvés par les tests, dans du code de P1
+
+- **`alert_cleared` lisait `evt.id`** au lieu de `evt.alert_id`. Écrit en P1
+  quand rien n'émettait l'événement, donc invisible : une alerte levée ne
+  serait jamais partie du tiroir, sans le moindre message.
+- **L'ordre de supplantation** : `observer_fait` insérait le nouveau fait avant
+  de démettre l'ancien, ce que l'index unique partiel refuse. C'est exactement
+  le rôle de cet index — il a fait son travail avant même la première nuit.
+
+Un troisième, trouvé en montant l'aperçu : la carte plantait au montage quand
+on l'insère sans `setConfig`. Lovelace configure toujours avant d'insérer, mais
+rien ne l'impose, et l'erreur n'apparaissait qu'en console.
+
+## G9. Le panneau d'identité n'est plus fait d'alertes
+
+La feuille de style de P1 réutilisait la classe `.alerte` pour les lignes du
+panneau « Qui parle ». Sans conséquence visuelle, mais faux : une ligne
+« Clara — voix enregistrée » n'est pas une alerte. La boîte est devenue
+`.bloc`, `.alerte` et `.fait` ne portent plus que ce qui les distingue.
+
+## G10. Ce que P4 continue de ne pas faire
+
+La partie D est tenue intégralement, et vérifiée :
+
+- Aucune notification mobile, aucune annonce sur enceinte (Q1 reste ouverte).
+- Aucune automatisation créée ni modifiée par Luna.
+- Aucune boucle de scrutation : `providers/home.py` publie chaque
+  `state_changed` sur le bus, et c'est la seule source des observateurs (H63).
+- Aucun accès du moteur de veille au cerveau — vérifié par les contrats de
+  couches, pas par relecture.
+- Aucune action déclenchée seule : `Agir` passe par l'arbitre (G2).
+- Aucun fait de conversation en vigueur sans relecture.
+- Aucune donnée d'habitude hors de Nova. Seuls des **extraits de conversation**
+  partent vers l'API, une fois par nuit.

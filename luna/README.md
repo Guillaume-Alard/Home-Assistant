@@ -3,9 +3,9 @@
 Assistante domestique de Guillaume Alard. Elle vit **dans** Home Assistant, sur
 Nova. Reconstruction complète, elle remplace « Sentinelle ».
 
-**Phases 1, 2 et 3 livrées** : piloter la maison par écrit **et à la voix**,
-depuis la carte Loggia ou n'importe quel appareil qui parle à Assist — et Luna
-sait à qui elle parle.
+**Phases 1 à 4 livrées** : piloter la maison par écrit **et à la voix**, depuis
+la carte Loggia ou n'importe quel appareil qui parle à Assist ; Luna sait à qui
+elle parle, apprend les habitudes de la maison et veille sur ce qui s'y oublie.
 
 ## Trois artefacts
 
@@ -71,6 +71,12 @@ elle le dit. Ça ne change jamais ce qu'elle a le droit de faire : le niveau
 d'une action vient du registre, et valider une proposition demande toujours la
 session Home Assistant, pas une ressemblance de voix.
 
+Elle surveille ce qui s'oublie — un ouvrant resté ouvert la nuit, une lumière
+allumée après le coucher — à partir de capteurs que Guillaume écrit dans Home
+Assistant. Elle n'apporte que la pertinence : elle se tait pendant les heures de
+silence, ne répète pas une alerte avant quatre heures, et retient un « ne plus
+me le dire » pendant trente jours.
+
 Elle ne commande ni les ouvrants, ni les serrures, ni l'alarme, et n'envoie rien
 vers l'extérieur : niveau 5, hors périmètre v1. Le refus est structurel — ces
 services ne sont pas déclarés à Claude, qui ne peut donc pas les demander, et
@@ -85,7 +91,8 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le HTTPS local, sans nom de domaine : DuckDNS et deux add-ons officiels |
 | [`docs/P2-VOIX.md`](docs/P2-VOIX.md) | La phase voix : cinq décisions, contrats, écarts constatés, état de la recette |
 | [`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md) | L'identité : sept décisions, la formule de fusion, les contrats, les écarts |
-| [`docs/P4-HABITUDES-VEILLE.md`](docs/P4-HABITUDES-VEILLE.md) | **En attente de validation** — huit décisions, et une liste de ce que P4 ne fait pas |
+| [`docs/P4-HABITUDES-VEILLE.md`](docs/P4-HABITUDES-VEILLE.md) | Habitudes et veille : huit décisions, la décroissance des faits, les écarts constatés, la liste de ce que P4 ne fait pas |
+| [`docs/P4-CAPTEURS.md`](docs/P4-CAPTEURS.md) | **À coller dans `configuration.yaml`** — les capteurs sans lesquels la veille n'a rien à regarder |
 | [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova
@@ -101,12 +108,12 @@ Lovelace.
 ## Vérifier
 
 ```bash
-cd addon        && pytest -q && lint-imports    # 202 tests, 4 contrats de couches
-cd integration  && pytest -q                    # 35 tests, vraie instance HA
-cd card         && pytest -q                    # 53 tests, vrai Chromium
+cd addon        && pytest -q && lint-imports    # 297 tests, 4 contrats de couches
+cd integration  && pytest -q                    # 43 tests, vraie instance HA
+cd card         && pytest -q                    # 68 tests, vrai Chromium
 ```
 
-290 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
+408 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
 faux serveur WebSocket, le client Claude contre des réponses enregistrées, et la
 carte contre un faux `hass` qui rejoue le contrat §4 — mais avec un **vrai**
 `AudioWorklet` et un micro synthétique de Chromium, donc le chemin de capture
@@ -114,17 +121,30 @@ est réellement exercé. **La CI ne consomme jamais de crédit.**
 
 ## Où en est le projet
 
-**P1, P2 et P3 sont livrées. P4 est cadrée et attend une validation** — voir
-[`docs/P4-HABITUDES-VEILLE.md`](docs/P4-HABITUDES-VEILLE.md).
+**P1 à P4 sont livrées. La suite est P5, la gardienne.**
 
-C'est la phase pour laquelle §1 a été écrit : une fois que Luna observe la
+P4 est la phase pour laquelle §1 a été écrit : une fois que Luna observe la
 maison et prend la parole, tout devient tentant. Le document tient donc une
-liste de ce que P4 **ne fait pas**, aussi longue que celle de ce qu'elle fait.
+liste de ce que P4 **ne fait pas**, aussi longue que celle de ce qu'elle fait —
+et elle est tenue.
+
 La décision structurante : **la détection reste dans Home Assistant**, sous
 forme de capteurs déclaratifs. Luna ne calcule jamais « fenêtre ouverte et nuit
 et alarme non armée » — elle regarde le verdict, et n'apporte que ce que Home
 Assistant ne sait pas faire : ne pas harceler, choisir le moment, se souvenir
 d'un « ne plus me le dire ».
+
+Deux sources de faits, et une seule entre en vigueur toute seule. Les
+**observateurs** mesurent — l'heure de coucher, les séquences d'une même pièce —
+et ce qu'ils produisent est actif d'emblée. Le **modèle**, une fois par nuit,
+relit les échanges récents et **propose** ; ce qu'il croit comprendre attend
+dans une file de relecture, et s'efface tout seul au bout de quatorze jours si
+personne ne l'ouvre.
+
+Un fait n'est jamais supprimé, il se périme : `confiance = maturité × fraîcheur`,
+avec une demi-vie par catégorie — trente jours pour une heure de coucher, un an
+pour « Clara est allergique aux chats ». Sous le seuil, il existe toujours ; il
+cesse simplement d'être proposé. C'est la différence entre oublier et se taire.
 
 Sur l'identité, le recadrage qui a rendu la phase faisable : le signal le plus
 fort n'est pas biométrique, c'est l'utilisateur Home Assistant authentifié, et
@@ -157,6 +177,14 @@ voix ne sert que là où ce signal est muet — **l'iPad partagé du couloir**.
   d'oreille : `rhasspy.github.io/piper-samples`. En remplacer une par une voix
   entraînée sur mesure est une side-quest à part —
   [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md).
+- **Coller les capteurs de veille** dans `configuration.yaml`, puis déclarer les
+  règles correspondantes dans les options de l'add-on
+  ([`docs/P4-CAPTEURS.md`](docs/P4-CAPTEURS.md)). Sans eux, la veille démarre et
+  annonce dans son journal qu'elle n'a rien à surveiller.
+- **Laisser passer une vingtaine de soirées.** Le rappel de coucher ne part que
+  si Luna a vraiment observé une habitude : trois soirs pour qu'elle s'y
+  autorise, une vingtaine pour qu'elle en soit sûre. C'est le point 8 de la
+  recette de P4, et le seul que la vraie maison peut juger.
 
 ## Licence et parenté
 

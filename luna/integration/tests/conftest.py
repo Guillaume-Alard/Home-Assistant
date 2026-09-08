@@ -98,9 +98,52 @@ class FauxRelais:
                 "coherence": 0.91,
             },
             "identity_forget": {"removed": 5},
+            # ── Habitudes et veille (P4) ─────────────────────────────────
+            "suggestions": {
+                "suggestions": [
+                    {
+                        "id": "al_1",
+                        "key": "ouvrant||binary_sensor.luna_ouvrant_oublie",
+                        "title": "Un ouvrant est resté ouvert et il est tard.",
+                        "why": "La baie vitrée du séjour est ouverte.",
+                        "score": 0.5,
+                        "level": 0,
+                        "actions": [],
+                    }
+                ]
+            },
+            "patterns": {
+                "patterns": [
+                    {
+                        "id": "f_1",
+                        "predicate": "heure_de_coucher",
+                        "value": "23:20",
+                        "entity_id": None,
+                        "confidence": 0.74,
+                        "observations": 23,
+                        "last_seen": "2026-09-07T23:18:00+02:00",
+                        "status": "active",
+                    }
+                ]
+            },
+            "alerts_feedback": {"ok": True, "score": 0.25, "muted_until": None},
+            "alerts_act": {"executed": True, "results": []},
+            "facts": {
+                "facts": [
+                    {
+                        "id": "f_2",
+                        "predicate": "preference_eclairage",
+                        "value": "couloir tamisé le soir",
+                        "profile": "guillaume",
+                        "why": "Tu me l'as dit le 6 septembre.",
+                        "created_at": "2026-09-07T03:30:00+02:00",
+                    }
+                ]
+            },
+            "facts_decide": {"status": "active"},
         }
         self.erreurs: dict[str, dict[str, str]] = {
-            "patterns": {"code": "not_implemented", "message": "Phase 4."},
+            "identity_face": {"code": "not_implemented", "message": "Phase 6."},
         }
         #: Tout ce qui est arrivé jusqu'ici. Sert à prouver qu'un refus s'est
         #: fait **avant** le relais, pas après.

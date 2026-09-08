@@ -16,10 +16,14 @@ from aiohttp import web
 
 from ..engine.arbiter import Arbitre
 from ..engine.identity import MoteurIdentite
+from ..engine.nightly import EntretienNocturne
+from ..engine.observers import ObservateurCoucher, ObservateurSequences
 from ..engine.orchestrator import NOMS_PROFILS, Orchestrateur
+from ..engine.scheduler import Ordonnanceur
+from ..engine.veille import MoteurVeille
 from ..kernel.bus import Bus
 from ..kernel.identity import INCONNU
-from ..kernel.schemas import ContexteRequete
+from ..kernel.schemas import ChangementEtat, ContexteRequete
 from ..kernel.settings import Reglages, charger
 from ..providers.claude import CerveauClaude
 from ..providers.home import ClientMaison
@@ -64,21 +68,84 @@ class Luna:
             arbitre=self.arbitre,
             fuseau=reglages.fuseau,
         )
+
+        # ── Habitudes et veille (P4) ─────────────────────────────────────
+        # Le moteur émet vers les cartes par une fonction, pas par un import :
+        # L2 ne connaît pas le relais. C'est la même injection que partout.
+        self.veille = MoteurVeille(
+            regles=reglages.veille,
+            memoire=self.memoire,
+            maison=self.maison,
+            arbitre=self.arbitre,
+            emettre=self._diffuser,
+        )
+        self.observateurs = [
+            ObservateurCoucher(
+                self.memoire,
+                entite=reglages.observateurs.coucher,
+                profil=reglages.observateurs.coucher_profil,
+            ),
+            ObservateurSequences(
+                self.memoire,
+                actif=reglages.observateurs.sequences,
+                piece_de=self.maison.nom_piece,
+            ),
+        ]
+        self.entretien = EntretienNocturne(
+            cerveau=self.cerveau,
+            memoire=self.memoire,
+            plafond=reglages.evenements_par_entretien,
+            actif=reglages.entretien_actif,
+        )
+        self.ordonnanceur = Ordonnanceur(
+            veille=self.veille,
+            entretien=self.entretien,
+            memoire=self.memoire,
+            heure=reglages.moment_entretien(),
+        )
+        # H63 : les observateurs et la veille réagissent au bus. Rien
+        # n'interroge la maison en boucle.
+        self.bus.abonner(ChangementEtat, self._sur_changement)
+
         self.relais = Relais(
             self.orchestrateur,
             self.bus,
             reglages.relay_secret,
             self._contexte,
             self.identite,
+            self.veille,
         )
         self.app = construire_app(
             orchestrateur=self.orchestrateur,
             relais=self.relais,
             maison=self.maison,
             memoire=self.memoire,
+            veille=self.veille,
             modele=reglages.modele,
         )
         self._purge: asyncio.Task[None] | None = None
+
+    async def _diffuser(self, evenement: object) -> None:
+        """Pousse un événement de veille vers les cartes ouvertes.
+
+        Le relais est construit après le moteur — d'où le passage par une
+        méthode plutôt que par une référence directe.
+        """
+        await self.relais.diffuser(evenement)
+
+    async def _sur_changement(self, evenement: ChangementEtat) -> None:
+        """Un changement d'état, distribué à qui le regarde.
+
+        Un observateur qui lève n'empêche pas les autres de voir passer
+        l'événement, et surtout n'empêche pas la veille de sortir son alerte :
+        c'est elle qui porte la promesse de §5.
+        """
+        await self.veille.sur_changement(evenement)
+        for observateur in self.observateurs:
+            try:
+                await observateur.sur_changement(evenement)
+            except Exception:
+                log.exception("Observateur %s", type(observateur).__name__)
 
     def _profil_de_session(self, contexte: ContexteRequete) -> str | None:
         """Le profil que désigne la session Home Assistant, s'il en désigne un.
@@ -119,8 +186,20 @@ class Luna:
                 "Reconnaissance de voix inactive — %s", self.empreinte.motif_indisponible
             )
         self._purge = asyncio.create_task(self._boucle_purge(), name="luna-purge")
+        # Un ouvrant déjà ouvert au démarrage ne doit pas attendre qu'on le
+        # referme pour être signalé.
+        await self.veille.amorcer()
+        await self.ordonnanceur.demarrer()
+        if self.veille.entites_surveillees:
+            log.info(
+                "Veille : %s capteur(s) surveillé(s)",
+                len(self.veille.entites_surveillees),
+            )
+        else:
+            log.info("Veille : aucune règle déclarée — rien à surveiller.")
 
     async def arreter(self) -> None:
+        await self.ordonnanceur.arreter()
         if self._purge is not None:
             self._purge.cancel()
             with contextlib.suppress(asyncio.CancelledError):

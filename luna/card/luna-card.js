@@ -391,18 +391,37 @@ const STYLES = `
   .panneau { display: none; overflow-y: auto; }
   .carte[data-panneau="veille"] .alertes,
   .carte[data-panneau="identite"] .identite { display: block; }
-  .alerte + .alerte { margin-top: 8px; }
   .rond-large { touch-action: none; -webkit-user-select: none; user-select: none;
                 -webkit-touch-callout: none; }
-  .alerte {
+
+  /* .bloc est la boîte ; .alerte et .fait sont ce qu'elle contient. Les
+     séparer évite qu'une ligne du panneau d'identité soit, littéralement, une
+     alerte — et rend les sélecteurs sans ambiguïté. */
+  .bloc {
     background: var(--luna-fond);
     border: 1px solid var(--luna-bord);
-    border-left: 3px solid var(--luna-alerte);
     border-radius: 9px;
     padding: 10px 12px;
   }
-  .alerte h5 { margin: 0 0 3px; font-size: 14px; }
-  .alerte p { margin: 0 0 8px; font-size: 12.5px; color: var(--luna-doux); }
+  .bloc + .bloc { margin-top: 8px; }
+  .bloc h5 { margin: 0 0 3px; font-size: 14px; }
+  .bloc p { margin: 0 0 8px; font-size: 12.5px; color: var(--luna-doux); }
+
+  .alerte { border-left: 3px solid var(--luna-alerte); }
+  .alerte[data-niveau="info"]     { border-left-color: var(--luna-accent); }
+  .alerte[data-niveau="critical"] { border-left-color: #e05a5a; }
+
+  /* ── File de relecture (P4) ────────────────────────────────────────── */
+
+  /* En pointillés : ce n'est pas encore vrai, ça attend qu'on le dise. */
+  .fait { border-style: dashed; }
+  .relecture:empty { display: none; }
+  .relecture h4 {
+    margin: 18px 0 8px;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--luna-doux);
+  }
 
   /* ── Bandeau hors ligne ────────────────────────────────────────────── */
 
@@ -470,7 +489,11 @@ class LunaCard extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null;
-    this._config = {};
+    // Les défauts, pas un objet vide : Lovelace appelle toujours `setConfig`
+    // avant d'insérer la carte, mais rien ne l'impose — un `<luna-card>` écrit
+    // à la main dans une page se monte sans configuration. Partir des défauts
+    // évite qu'un montage direct casse sur `_config.drawers`.
+    this._config = LunaCard.getStubConfig();
     this._monte = false;
     this._pret = false;
 
@@ -482,6 +505,8 @@ class LunaCard extends HTMLElement {
     this._bulleEnCours = null;
     this._outilsEnCours = null;
     this._alertes = new Map();
+    //: La file de relecture (P4, D2). Vide tant que personne n'a rien proposé.
+    this._faits = [];
     this._phases = { voice: false, identity: false, veille: false, guardian: false };
     this._enLigne = null;
     this._colle = true;
@@ -662,6 +687,9 @@ class LunaCard extends HTMLElement {
       this._appliquerInfo(info);
       await this._charger();
       await this._ouvrirFeed();
+      // Après le feed : ce que la lecture rattrape ne peut alors plus doubler
+      // ce que le feed vient de pousser — la map est indexée par identifiant.
+      await this._chargerVeille();
     } catch (err) {
       this._pret = false;
       this._horsLigne(this._messageErreur(err));
@@ -696,15 +724,18 @@ class LunaCard extends HTMLElement {
       case "identity":
         this._appliquerProfil(evt.profile);
         break;
-      case "alert": // [P4]
+      case "alert":
         this._alertes.set(evt.alert.id, evt.alert);
         this._rendreAlertes();
         break;
-      case "alert_cleared": // [P4]
-        this._alertes.delete(evt.id);
+      case "alert_cleared":
+        // Le contrat §4 nomme ce champ `alert_id`. Lire `id` marchait tant que
+        // rien n'émettait l'événement : une alerte levée ne partait jamais du
+        // tiroir, et rien ne le disait.
+        this._alertes.delete(evt.alert_id);
         this._rendreAlertes();
         break;
-      case "message": // [P4] Luna prend la parole d'elle-même
+      case "message": // Luna prend la parole d'elle-même
         this._bulle("luna", evt.message.text, new Date(evt.message.ts));
         break;
       case "error":
@@ -811,9 +842,24 @@ class LunaCard extends HTMLElement {
     this._messageEnCours = null;
     this._bulleEnCours = null;
     this._outilsEnCours = null;
-    this._orbe(this._alertes.size ? "alert" : "idle");
-    this._sousTitre(this._alertes.size ? `${this._alertes.size} à signaler` : "Prête");
+    this._auRepos(true);
     this._defiler();
+  }
+
+  /**
+   * L'orbe et le sous-titre quand Luna n'a rien en cours.
+   *
+   * Sans `force`, n'intervient que depuis « idle » ou « alert » : une alerte
+   * qui arrive pendant qu'elle écoute ou qu'elle parle ne doit pas éteindre
+   * l'orbe au milieu d'une phrase. La fin d'un tour, elle, ramène toujours au
+   * repos — c'est justement ce qu'elle signifie.
+   */
+  _auRepos(force = false) {
+    const actuel = this._q(".carte").dataset.orbe;
+    if (!force && actuel !== "idle" && actuel !== "alert") return;
+    const attend = this._alertes.size;
+    this._orbe(attend ? "alert" : "idle");
+    this._sousTitre(attend ? `${attend} à signaler` : "Prête");
   }
 
   _fermerFlux() {
@@ -958,42 +1004,161 @@ class LunaCard extends HTMLElement {
         ? "Rien à signaler."
         : "La veille arrive en phase 4. Rien à signaler d'ici là.";
       hote.append(vide);
-      return;
+    } else {
+      for (const alerte of this._alertes.values()) hote.append(this._blocAlerte(alerte));
     }
+    hote.append(this._blocRelecture());
+    this._auRepos();
+  }
 
-    for (const alerte of this._alertes.values()) {
+  _blocAlerte(alerte) {
+    const bloc = document.createElement("div");
+    bloc.className = "bloc alerte";
+    bloc.dataset.niveau = alerte.level || "warning";
+
+    const titre = document.createElement("h5");
+    titre.textContent = alerte.title;
+    const pourquoi = document.createElement("p");
+    pourquoi.textContent = alerte.why || "";
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    // « Agir » n'apparaît que si la règle propose quelque chose à faire. Un
+    // bouton qui ne peut rien faire est exactement ce que §8 interdit.
+    const choix = [];
+    if ((alerte.actions || []).length) choix.push(["Agir", "act"]);
+    choix.push(["Ignorer", "rejected"], ["Ne plus me le dire", "muted"]);
+
+    for (const [libelle, action] of choix) {
+      const bouton = document.createElement("button");
+      bouton.textContent = libelle;
+      bouton.addEventListener("click", () => this._deciderAlerte(alerte, action, bouton));
+      actions.append(bouton);
+    }
+    bloc.append(titre, pourquoi, actions);
+    return bloc;
+  }
+
+  /**
+   * Une décision sur une alerte.
+   *
+   * « Agir » passe par `luna/alerts/act`, donc par l'arbitre d'autonomie :
+   * fermer un ouvrant reste du niveau 5, donc refusé. Dans ce cas l'alerte
+   * **reste** dans le tiroir et le motif s'affiche — la faire disparaître
+   * laisserait croire que quelque chose s'est passé.
+   */
+  async _deciderAlerte(alerte, action, bouton) {
+    const actifs = bouton.parentElement.querySelectorAll("button");
+    for (const b of actifs) b.disabled = true;
+    try {
+      if (action === "act") {
+        const resultat = await this._appel({
+          type: "luna/alerts/act",
+          suggestion_id: alerte.id,
+        });
+        const echec = (resultat.results || []).find((r) => !r.ok);
+        if (echec) {
+          this._erreur(echec.message);
+          return;
+        }
+      }
+      await this._appel({
+        type: "luna/alerts/feedback",
+        suggestion_id: alerte.id,
+        action: action === "act" ? "accepted" : action,
+      });
+      this._alertes.delete(alerte.id);
+      this._rendreAlertes();
+    } catch (err) {
+      this._erreur(this._messageErreur(err));
+    } finally {
+      for (const b of actifs) b.disabled = false;
+    }
+  }
+
+  /**
+   * La file de relecture (P4, D2).
+   *
+   * Ce que le modèle a cru comprendre d'une conversation n'entre jamais en
+   * vigueur tout seul. Tant que personne ne tranche, le fait attend ici — et
+   * au bout de quatorze jours il s'efface de lui-même, parce qu'une file que
+   * personne n'ouvre ne protège plus rien.
+   */
+  _blocRelecture() {
+    const section = document.createElement("div");
+    section.className = "relecture";
+    if (!this._faits.length) return section;
+
+    const titre = document.createElement("h4");
+    titre.textContent = `À relire (${this._faits.length})`;
+    section.append(titre);
+
+    for (const fait of this._faits) {
       const bloc = document.createElement("div");
-      bloc.className = "alerte";
-      const titre = document.createElement("h5");
-      titre.textContent = alerte.title;
+      bloc.className = "bloc fait";
+      const valeur = document.createElement("h5");
+      valeur.textContent = fait.value;
       const pourquoi = document.createElement("p");
-      pourquoi.textContent = alerte.why || "";
+      pourquoi.textContent = fait.why || "Proposé par l'entretien de cette nuit.";
       const actions = document.createElement("div");
       actions.className = "actions";
-      for (const [libelle, action] of [
-        ["Agir", "accepted"],
-        ["Ignorer", "rejected"],
-        ["Ne plus me le dire", "muted"],
+      for (const [libelle, decision] of [
+        ["C'est juste", "accept"],
+        ["Non", "reject"],
       ]) {
         const bouton = document.createElement("button");
         bouton.textContent = libelle;
         bouton.addEventListener("click", async () => {
+          bouton.disabled = true;
           try {
             await this._appel({
-              type: "luna/alerts/feedback",
-              suggestion_id: alerte.id,
-              action,
+              type: "luna/facts/decide",
+              fact_id: fait.id,
+              decision,
             });
-            this._alertes.delete(alerte.id);
+            this._faits = this._faits.filter((f) => f.id !== fait.id);
             this._rendreAlertes();
           } catch (err) {
+            bouton.disabled = false;
             this._erreur(this._messageErreur(err));
           }
         });
         actions.append(bouton);
       }
-      bloc.append(titre, pourquoi, actions);
-      hote.append(bloc);
+      bloc.append(valeur, pourquoi, actions);
+      section.append(bloc);
+    }
+    return section;
+  }
+
+  /**
+   * Rattrape ce qui s'est passé avant l'ouverture de la carte.
+   *
+   * Le feed ne rejoue pas le passé : sans cette lecture, une alerte levée à
+   * 19 h serait invisible sur une carte ouverte à 20 h. Un échec est silencieux
+   * ici, et seulement ici — l'add-on hors ligne a déjà son bandeau, et un
+   * second message ne dirait rien de plus.
+   */
+  async _chargerVeille() {
+    if (!this._phases.veille) return;
+    try {
+      const [suggestions, faits] = await Promise.all([
+        this._appel({ type: "luna/suggestions" }),
+        this._appel({ type: "luna/facts" }),
+      ]);
+      for (const s of suggestions.suggestions || []) {
+        this._alertes.set(s.id, {
+          id: s.id,
+          title: s.title,
+          why: s.why,
+          level: s.level_name || "warning",
+          actions: s.actions || [],
+        });
+      }
+      this._faits = faits.facts || [];
+      this._rendreAlertes();
+    } catch {
+      // Rien : la carte reste utilisable, et le bandeau dit déjà l'essentiel.
     }
   }
 
@@ -1504,7 +1669,7 @@ class LunaCard extends HTMLElement {
 
     for (const profil of ["guillaume", "clara", "liam"]) {
       const ligne = document.createElement("div");
-      ligne.className = "alerte";
+      ligne.className = "bloc";
       const nom = document.createElement("h5");
       nom.textContent = NOMS[profil] || profil;
       const etat = document.createElement("p");
@@ -1559,7 +1724,7 @@ class LunaCard extends HTMLElement {
     hote.replaceChildren();
 
     const consigne = document.createElement("div");
-    consigne.className = "alerte";
+    consigne.className = "bloc";
     const titre = document.createElement("h5");
     const phrase = document.createElement("p");
     const etat = document.createElement("p");

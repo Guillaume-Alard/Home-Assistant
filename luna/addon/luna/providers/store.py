@@ -1,8 +1,12 @@
-"""L1 — la mémoire de P1 : SQLite.
+"""L1 — la mémoire : SQLite.
 
-Trois tables et pas une de plus (décision A7) : le modèle à faits atomiques de
-F4 arrive en P4, sans migration destructive. `action_log` alimentera `events`
-le moment venu.
+Le schéma a grandi par ajouts successifs, jamais par destruction : P1 a posé
+conversations, messages et `action_log` ; P3 les empreintes et le journal
+d'identité ; P4 les faits, leurs observations, leurs relations, le journal
+immuable et les scores de suggestion (D7).
+
+`action_log` **reste** et est désormais recopié dans `events` : §9.1 impose le
+premier, §4 impose le second, les deux vivent ensemble. Rien à migrer.
 
 Base unique sur Nova (§4, F4 : « Aucune donnée d'habitude ne quitte la maison »).
 """
@@ -23,14 +27,17 @@ from ..kernel.schemas import (
     EmpreinteVocale,
     EntreeIdentite,
     EntreeJournal,
+    EvenementJournal,
+    Fait,
     MessageEnregistre,
     OutilResume,
+    ScoreSuggestion,
 )
 from .voiceprint import depaqueter, empaqueter
 
 log = logging.getLogger("luna.store")
 
-VERSION_SCHEMA = 2
+VERSION_SCHEMA = 3
 
 #: Au-delà, on ouvre une nouvelle conversation plutôt que de reprendre le fil.
 FENETRE_CONVERSATION = timedelta(hours=12)
@@ -103,6 +110,69 @@ CREATE TABLE IF NOT EXISTS identity_log (
     asked        INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_identity_log_ts ON identity_log(ts);
+
+-- ── Habitudes et veille (P4) ────────────────────────────────────────────
+-- §4 : « journal immuable de tout ce qui arrive ».
+CREATE TABLE IF NOT EXISTS events (
+    id        TEXT PRIMARY KEY,
+    ts        TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    profile   TEXT,
+    entity_id TEXT,
+    payload   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_ts   ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, ts);
+
+-- §4 : les faits atomiques. Jamais supprimés — au pire `superseded`.
+CREATE TABLE IF NOT EXISTS facts (
+    id           TEXT PRIMARY KEY,
+    predicate    TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    profile      TEXT,
+    entity_id    TEXT,
+    category     TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    observations INTEGER NOT NULL DEFAULT 1,
+    why          TEXT NOT NULL DEFAULT ''
+);
+-- C'est cet index, et pas la discipline de l'appelant, qui applique
+-- « un fait ré-observé est renforcé, jamais dupliqué » (§4).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_cle
+    ON facts(predicate, IFNULL(profile,''), IFNULL(entity_id,''))
+    WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_facts_statut ON facts(status, last_seen_at);
+
+-- §4 : « renforcement sans duplication » — chaque renfort laisse sa trace.
+CREATE TABLE IF NOT EXISTS fact_observations (
+    id       TEXT PRIMARY KEY,
+    fact_id  TEXT NOT NULL REFERENCES facts(id),
+    ts       TEXT NOT NULL,
+    source   TEXT NOT NULL,
+    event_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fact_obs ON fact_observations(fact_id, ts);
+
+-- §4 : supersedes | contradicts | supports
+CREATE TABLE IF NOT EXISTS fact_relations (
+    id      TEXT PRIMARY KEY,
+    de_id   TEXT NOT NULL REFERENCES facts(id),
+    vers_id TEXT NOT NULL REFERENCES facts(id),
+    genre   TEXT NOT NULL,
+    ts      TEXT NOT NULL
+);
+
+-- §12 : la boucle de feedback, par clé de suggestion et pas par occurrence.
+CREATE TABLE IF NOT EXISTS suggestion_scores (
+    cle         TEXT PRIMARY KEY,
+    score       REAL NOT NULL DEFAULT 0.5,
+    rejections  INTEGER NOT NULL DEFAULT 0,
+    muted_until TEXT,
+    updated_at  TEXT NOT NULL
+);
 """
 
 
@@ -198,6 +268,23 @@ class MagasinSQLite:
             (message.ts.isoformat(), message.conversation_id),
         )
         await self._co.commit()
+        # D7 : le journal immuable reçoit aussi les messages. C'est la matière
+        # de l'entretien nocturne — le seul endroit d'où partent des extraits
+        # de conversation vers l'API (H60).
+        await self.enregistrer_evenement(
+            EvenementJournal(
+                id=nouvel_id("e"),
+                ts=message.ts,
+                kind="message",
+                profile=message.profile,
+                entity_id=None,
+                payload={
+                    "role": message.role,
+                    "text": message.text,
+                    "conversation_id": message.conversation_id,
+                },
+            )
+        )
 
     async def historique(
         self, conversation_id: str | None, *, profil: str, limite: int
@@ -257,6 +344,25 @@ class MagasinSQLite:
             ),
         )
         await self._co.commit()
+        # D7 : `action_log` reste (§9.1) et alimente aussi `events` (§4). Les
+        # deux journaux coexistent, aucun n'a été migré dans l'autre.
+        await self.enregistrer_evenement(
+            EvenementJournal(
+                id=nouvel_id("e"),
+                ts=entree.ts,
+                kind="action",
+                profile=entree.profile,
+                entity_id=None,
+                payload={
+                    "service": entree.action.cle,
+                    "target": entree.action.target,
+                    "level": int(entree.level),
+                    "decision": entree.decision,
+                    "executed": entree.executed,
+                    "justification": entree.justification,
+                },
+            )
+        )
         log.info(
             "Journal : %s %s niveau %s → %s",
             entree.action.cle,
@@ -381,3 +487,324 @@ class MagasinSQLite:
             )
             for ligne in await curseur.fetchall()
         ]
+
+    # ── Habitudes et veille (P4) ─────────────────────────────────────────
+
+    async def enregistrer_evenement(self, evenement: EvenementJournal) -> None:
+        """§4, D7 : le journal immuable. Rien n'en sort jamais que par lecture."""
+        await self._co.execute(
+            "INSERT INTO events (id, ts, kind, profile, entity_id, payload) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                evenement.id,
+                evenement.ts.isoformat(),
+                evenement.kind,
+                evenement.profile,
+                evenement.entity_id,
+                json.dumps(evenement.payload, ensure_ascii=False),
+            ),
+        )
+        await self._co.commit()
+
+    async def evenements_depuis(
+        self, depuis: datetime | None, *, limite: int
+    ) -> list[EvenementJournal]:
+        """Les `limite` événements les plus récents, rendus chronologiquement.
+
+        `depuis` borne l'entretien nocturne à ce qui est neuf (D3) ; la limite
+        le borne tout court (H56).
+        """
+        if depuis is None:
+            curseur = await self._co.execute(
+                "SELECT * FROM events ORDER BY ts DESC, id DESC LIMIT ?", (limite,)
+            )
+        else:
+            curseur = await self._co.execute(
+                "SELECT * FROM events WHERE ts > ? ORDER BY ts DESC, id DESC LIMIT ?",
+                (depuis.isoformat(), limite),
+            )
+        return [
+            self._vers_evenement(ligne) for ligne in reversed(await curseur.fetchall())
+        ]
+
+    @staticmethod
+    def _vers_evenement(ligne: aiosqlite.Row) -> EvenementJournal:
+        return EvenementJournal(
+            id=ligne["id"],
+            ts=datetime.fromisoformat(ligne["ts"]),
+            kind=ligne["kind"],
+            profile=ligne["profile"],
+            entity_id=ligne["entity_id"],
+            payload=json.loads(ligne["payload"]),
+        )
+
+    # ── Faits ────────────────────────────────────────────────────────────
+
+    async def observer_fait(
+        self, fait: Fait, *, event_id: str | None = None
+    ) -> tuple[Fait, bool]:
+        """Crée le fait, ou renforce celui qui existe (§4, « sans duplication »).
+
+        Trois cas, et un seul écrit une ligne neuve dans `facts` :
+
+        * **même clé, même valeur** → `observations + 1`, `last_seen_at` avancé.
+          C'est un vingtième soir de coucher, pas un vingtième fait.
+        * **même clé, valeur différente** → l'ancien passe `superseded`, une
+          relation `supersedes` est écrite, le neuf devient actif (H62).
+        * **rien de comparable** → création.
+
+        Un fait à relire (`needs_review`) ne supplante rien : il attend. Et il
+        n'est pas recréé si un jumeau attend déjà, ou si Guillaume l'a refusé —
+        sinon l'entretien nocturne repose la même question toutes les nuits.
+        """
+        if fait.status == "needs_review":
+            return await self._deposer_relecture(fait, event_id)
+
+        courant = await self._fait_actif(fait.predicate, fait.profile, fait.entity_id)
+        if courant is None:
+            await self._inserer_fait(fait)
+            await self._noter_observation(
+                fait.id, fait.last_seen_at, fait.source, event_id
+            )
+            return fait, True
+
+        if courant.value == fait.value:
+            renforce = courant.model_copy(
+                update={
+                    "observations": courant.observations + 1,
+                    "last_seen_at": fait.last_seen_at,
+                }
+            )
+            await self._co.execute(
+                "UPDATE facts SET observations = ?, last_seen_at = ? WHERE id = ?",
+                (renforce.observations, renforce.last_seen_at.isoformat(), courant.id),
+            )
+            await self._noter_observation(
+                courant.id, fait.last_seen_at, fait.source, event_id
+            )
+            await self._co.commit()
+            return renforce, False
+
+        # L'ordre compte : l'index unique partiel n'admet qu'un seul fait
+        # `active` par clé. Insérer avant de démettre le précédent le fait
+        # échouer — c'est exactement ce que l'index est là pour garantir.
+        await self._demettre(courant.id)
+        await self._inserer_fait(fait)
+        await self._lier(fait.id, courant.id, "supersedes", fait.last_seen_at)
+        await self._noter_observation(fait.id, fait.last_seen_at, fait.source, event_id)
+        return fait, True
+
+    async def _deposer_relecture(
+        self, fait: Fait, event_id: str | None
+    ) -> tuple[Fait, bool]:
+        curseur = await self._co.execute(
+            "SELECT * FROM facts WHERE predicate = ? AND IFNULL(profile,'') = ? "
+            "AND IFNULL(entity_id,'') = ? AND value = ? "
+            "AND status IN ('needs_review', 'rejected') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (fait.predicate, fait.profile or "", fait.entity_id or "", fait.value),
+        )
+        if (ligne := await curseur.fetchone()) is not None:
+            return self._vers_fait(ligne), False
+        await self._inserer_fait(fait)
+        await self._noter_observation(fait.id, fait.last_seen_at, fait.source, event_id)
+        return fait, True
+
+    async def _fait_actif(
+        self, predicat: str, profil: str | None, entite: str | None
+    ) -> Fait | None:
+        curseur = await self._co.execute(
+            "SELECT * FROM facts WHERE predicate = ? AND IFNULL(profile,'') = ? "
+            "AND IFNULL(entity_id,'') = ? AND status = 'active'",
+            (predicat, profil or "", entite or ""),
+        )
+        ligne = await curseur.fetchone()
+        return self._vers_fait(ligne) if ligne is not None else None
+
+    async def _inserer_fait(self, fait: Fait) -> None:
+        await self._co.execute(
+            "INSERT INTO facts (id, predicate, value, profile, entity_id, category, "
+            "status, source, created_at, last_seen_at, observations, why) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                fait.id,
+                fait.predicate,
+                fait.value,
+                fait.profile,
+                fait.entity_id,
+                fait.category,
+                fait.status,
+                fait.source,
+                fait.created_at.isoformat(),
+                fait.last_seen_at.isoformat(),
+                fait.observations,
+                fait.why,
+            ),
+        )
+        await self._co.commit()
+
+    async def _noter_observation(
+        self, fait_id: str, quand: datetime, source: str, event_id: str | None
+    ) -> None:
+        await self._co.execute(
+            "INSERT INTO fact_observations (id, fact_id, ts, source, event_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (nouvel_id("o"), fait_id, quand.isoformat(), source, event_id),
+        )
+        await self._co.commit()
+
+    async def _demettre(self, fait_id: str) -> None:
+        await self._co.execute(
+            "UPDATE facts SET status = 'superseded' WHERE id = ?", (fait_id,)
+        )
+        await self._co.commit()
+
+    async def _lier(self, de_id: str, vers_id: str, genre: str, quand: datetime) -> None:
+        await self._co.execute(
+            "INSERT INTO fact_relations (id, de_id, vers_id, genre, ts) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (nouvel_id("r"), de_id, vers_id, genre, quand.isoformat()),
+        )
+        await self._co.commit()
+
+    async def supplanter_fait(self, ancien_id: str, nouveau_id: str) -> None:
+        quand = datetime.now().astimezone()
+        await self._demettre(ancien_id)
+        await self._lier(nouveau_id, ancien_id, "supersedes", quand)
+
+    async def renforcer_fait(
+        self, fait_id: str, *, valeur: str, quand: datetime, event_id: str | None = None
+    ) -> Fait | None:
+        """Dérive de valeur, sans supplantation. Voir le contrat de L0."""
+        fait = await self.fait(fait_id)
+        if fait is None:
+            return None
+        await self._co.execute(
+            "UPDATE facts SET value = ?, last_seen_at = ?, "
+            "observations = observations + 1 WHERE id = ?",
+            (valeur, quand.isoformat(), fait_id),
+        )
+        await self._noter_observation(fait_id, quand, fait.source, event_id)
+        await self._co.commit()
+        return fait.model_copy(
+            update={
+                "value": valeur,
+                "last_seen_at": quand,
+                "observations": fait.observations + 1,
+            }
+        )
+
+    async def faits(
+        self, *, statut: str | None = None, profil: str | None = None
+    ) -> list[Fait]:
+        requete = "SELECT * FROM facts"
+        clauses: list[str] = []
+        parametres: list[object] = []
+        if statut:
+            clauses.append("status = ?")
+            parametres.append(statut)
+        if profil:
+            clauses.append("profile = ?")
+            parametres.append(profil)
+        if clauses:
+            requete += " WHERE " + " AND ".join(clauses)
+        requete += " ORDER BY last_seen_at DESC"
+        curseur = await self._co.execute(requete, tuple(parametres))
+        return [self._vers_fait(ligne) for ligne in await curseur.fetchall()]
+
+    async def fait(self, fait_id: str) -> Fait | None:
+        curseur = await self._co.execute("SELECT * FROM facts WHERE id = ?", (fait_id,))
+        ligne = await curseur.fetchone()
+        return self._vers_fait(ligne) if ligne is not None else None
+
+    async def trancher_fait(self, fait_id: str, *, accepte: bool) -> Fait | None:
+        """Sort un fait de la file de relecture (D2).
+
+        Accepté, il entre en vigueur — et supplante celui qu'il contredit, s'il
+        y en a un. Refusé, il devient `rejected` : ni actif, ni en attente, et
+        surtout **pas supprimé** (§4). C'est ce statut qui empêche l'entretien
+        de reposer la même question la nuit suivante.
+        """
+        fait = await self.fait(fait_id)
+        if fait is None or fait.status != "needs_review":
+            return None
+        if not accepte:
+            await self._co.execute(
+                "UPDATE facts SET status = 'rejected' WHERE id = ?", (fait_id,)
+            )
+            await self._co.commit()
+            return fait.model_copy(update={"status": "rejected"})
+
+        courant = await self._fait_actif(fait.predicate, fait.profile, fait.entity_id)
+        if courant is not None:
+            await self.supplanter_fait(courant.id, fait.id)
+        await self._co.execute(
+            "UPDATE facts SET status = 'active' WHERE id = ?", (fait_id,)
+        )
+        await self._co.commit()
+        return fait.model_copy(update={"status": "active"})
+
+    async def expirer_relectures(self, avant: datetime) -> int:
+        """H59 : une file qu'on n'ouvre plus ne protège plus rien."""
+        curseur = await self._co.execute(
+            "UPDATE facts SET status = 'rejected' "
+            "WHERE status = 'needs_review' AND created_at < ?",
+            (avant.isoformat(),),
+        )
+        await self._co.commit()
+        expires = int(curseur.rowcount or 0)
+        if expires:
+            log.info("%s fait(s) à relire expiré(s)", expires)
+        return expires
+
+    @staticmethod
+    def _vers_fait(ligne: aiosqlite.Row) -> Fait:
+        return Fait(
+            id=ligne["id"],
+            predicate=ligne["predicate"],
+            value=ligne["value"],
+            profile=ligne["profile"],
+            entity_id=ligne["entity_id"],
+            category=ligne["category"],
+            status=ligne["status"],
+            source=ligne["source"],
+            created_at=datetime.fromisoformat(ligne["created_at"]),
+            last_seen_at=datetime.fromisoformat(ligne["last_seen_at"]),
+            observations=int(ligne["observations"]),
+            why=ligne["why"] or "",
+        )
+
+    # ── Scores de suggestion (§12) ───────────────────────────────────────
+
+    async def score_suggestion(self, cle: str) -> ScoreSuggestion | None:
+        curseur = await self._co.execute(
+            "SELECT * FROM suggestion_scores WHERE cle = ?", (cle,)
+        )
+        ligne = await curseur.fetchone()
+        if ligne is None:
+            return None
+        return ScoreSuggestion(
+            cle=ligne["cle"],
+            score=float(ligne["score"]),
+            rejections=int(ligne["rejections"]),
+            muted_until=datetime.fromisoformat(ligne["muted_until"])
+            if ligne["muted_until"]
+            else None,
+            updated_at=datetime.fromisoformat(ligne["updated_at"]),
+        )
+
+    async def enregistrer_score(self, score: ScoreSuggestion) -> None:
+        await self._co.execute(
+            "INSERT INTO suggestion_scores (cle, score, rejections, muted_until, "
+            "updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(cle) DO UPDATE SET "
+            "score = excluded.score, rejections = excluded.rejections, "
+            "muted_until = excluded.muted_until, updated_at = excluded.updated_at",
+            (
+                score.cle,
+                score.score,
+                score.rejections,
+                score.muted_until.isoformat() if score.muted_until else None,
+                score.updated_at.isoformat(),
+            ),
+        )
+        await self._co.commit()

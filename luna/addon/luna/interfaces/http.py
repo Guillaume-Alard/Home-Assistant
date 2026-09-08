@@ -17,16 +17,15 @@ from aiohttp import web
 
 from .. import __version__
 from ..engine.orchestrator import Orchestrateur
+from ..engine.veille import MoteurVeille
 from ..kernel.contracts import MaisonProvider, MemoireProvider
+from ..kernel.errors import LunaError
 from .relay import Relais
 
 DEMARRAGE = time.monotonic()
 
 #: Route §12 → phase où elle prend vie.
 ROUTES_FUTURES = {
-    "patterns": "Cette capacité arrive en phase 4.",
-    "suggestions": "Cette capacité arrive en phase 4.",
-    "feedback": "Cette capacité arrive en phase 4.",
     "identity_voice": "Cette capacité arrive en phase 3.",
     "identity_face": "Cette capacité arrive en phase 6.",
 }
@@ -44,6 +43,7 @@ def construire_app(
     relais: Relais,
     maison: MaisonProvider,
     memoire: MemoireProvider,
+    veille: MoteurVeille,
     modele: str,
 ) -> web.Application:
     app = web.Application()
@@ -67,14 +67,46 @@ def construire_app(
 
     # ── §12, à leur lettre ───────────────────────────────────────────────
 
-    async def patterns(_: web.Request) -> web.Response:
-        return _pas_encore("patterns")
+    async def patterns(requete: web.Request) -> web.Response:
+        """§12, à la lettre : `GET /profile/{user}/patterns`.
+
+        `{user}` est un profil Luna, pas un utilisateur Home Assistant : c'est
+        le profil qui porte les habitudes. `tous` les rend toutes.
+        """
+        profil = requete.match_info.get("user") or ""
+        return web.json_response(
+            {"patterns": await veille.patterns(None if profil == "tous" else profil)}
+        )
 
     async def suggestions(_: web.Request) -> web.Response:
-        return _pas_encore("suggestions")
+        return web.json_response(
+            {
+                "suggestions": [
+                    s.model_dump(mode="json") for s in await veille.suggestions()
+                ]
+            }
+        )
 
-    async def feedback(_: web.Request) -> web.Response:
-        return _pas_encore("feedback")
+    async def feedback(requete: web.Request) -> web.Response:
+        """§12 : `POST /feedback` — `{suggestion_id, action}`.
+
+        L'API interne n'a pas de session Home Assistant : elle enregistre un
+        retour, elle n'agit jamais. « Agir » passe par le relais, donc par un
+        contexte construit à partir de `connection.user`, donc par l'arbitre.
+        """
+        try:
+            corps = await requete.json()
+        except ValueError:
+            return web.json_response(
+                {"code": "bad_request", "message": "Corps JSON illisible."}, status=400
+            )
+        try:
+            resultat = await veille.retour(
+                str(corps.get("suggestion_id") or ""), str(corps.get("action") or "")
+            )
+        except LunaError as exc:
+            return web.json_response(exc.charge_utile(), status=404)
+        return web.json_response(resultat)
 
     async def identite_voix(_: web.Request) -> web.Response:
         return _pas_encore("identity_voice")

@@ -24,6 +24,7 @@ from aiohttp import WSMsgType, web
 
 from ..engine.identity import MoteurIdentite
 from ..engine.orchestrator import Orchestrateur
+from ..engine.veille import MoteurVeille
 from ..kernel.bus import Bus
 from ..kernel.errors import LunaError, PasEncoreImplemente
 from ..kernel.ids import nouvel_id
@@ -42,9 +43,6 @@ FERMETURE_NON_AUTORISE = 4401
 
 #: Documentées en P1, vivantes plus tard (§12). Jamais un silence (§8).
 OPS_FUTURES = {
-    "alerts_feedback": "Cette capacité arrive en phase 4.",
-    "patterns": "Cette capacité arrive en phase 4.",
-    "suggestions": "Cette capacité arrive en phase 4.",
     "identity_face": "Cette capacité arrive en phase 6.",
 }
 
@@ -63,12 +61,14 @@ class Relais:
         secret: str,
         resoudre_contexte: ResolveurContexte,
         identite: MoteurIdentite,
+        veille: MoteurVeille,
     ) -> None:
         self._orchestrateur = orchestrateur
         self._bus = bus
         self._secret = secret
         self._resoudre_contexte = resoudre_contexte
         self._identite = identite
+        self._veille = veille
         self._connexions: set[Connexion] = set()
         bus.abonner(MaisonConnectee, self._sur_maison)
 
@@ -100,6 +100,7 @@ class Relais:
             self._resoudre_contexte,
             self.diffuser,
             self._identite,
+            self._veille,
         )
         self._connexions.add(connexion)
         log.info("Relais : intégration connectée (%s)", requete.remote)
@@ -120,12 +121,14 @@ class Connexion:
         resoudre_contexte: ResolveurContexte,
         diffuser_a_tous: Callable[[Any], Awaitable[None]],
         identite: MoteurIdentite,
+        veille: MoteurVeille,
     ) -> None:
         self._ws = ws
         self._orchestrateur = orchestrateur
         self._resoudre_contexte = resoudre_contexte
         self._diffuser_a_tous = diffuser_a_tous
         self._identite = identite
+        self._veille = veille
         self._verrou = asyncio.Lock()
         self._flux: dict[int, asyncio.Task[None]] = {}
         self._abonnes_feed: set[int] = set()
@@ -274,6 +277,53 @@ class Connexion:
                     contexte=contexte, session=str(charge.get("session") or "")
                 ),
             )
+        elif op == "suggestions":
+            await self._resultat(
+                identifiant,
+                {
+                    "suggestions": [
+                        s.model_dump(mode="json")
+                        for s in await self._veille.suggestions()
+                    ]
+                },
+            )
+        elif op == "patterns":
+            await self._resultat(
+                identifiant,
+                {"patterns": await self._veille.patterns(charge.get("profile"))},
+            )
+        elif op == "alerts_feedback":
+            await self._resultat(
+                identifiant,
+                await self._veille.retour(
+                    str(charge.get("suggestion_id") or ""),
+                    str(charge.get("action") or ""),
+                ),
+            )
+        elif op == "alerts_act":
+            await self._resultat(
+                identifiant,
+                await self._veille.agir(
+                    str(charge.get("suggestion_id") or ""), contexte=contexte
+                ),
+            )
+        elif op == "facts":
+            await self._resultat(
+                identifiant,
+                {
+                    "facts": [
+                        _fait_a_relire(f) for f in await self._veille.faits_a_relire()
+                    ]
+                },
+            )
+        elif op == "facts_decide":
+            await self._resultat(
+                identifiant,
+                await self._veille.trancher_fait(
+                    str(charge.get("fact_id") or ""),
+                    str(charge.get("decision") or ""),
+                ),
+            )
         elif op == "identity_forget":
             efface = await self._identite.oublier(profil=str(charge.get("profile") or ""))
             await self._resultat(identifiant, {"removed": efface})
@@ -355,6 +405,23 @@ class Connexion:
         for identifiant in list(self._flux):
             await self._arreter(identifiant)
         self._abonnes_feed.clear()
+
+
+def _fait_a_relire(fait: Any) -> dict[str, Any]:
+    """La forme documentée en C.1 pour `luna/facts`.
+
+    Volontairement pauvre : la file de relecture montre ce qu'il faut pour
+    trancher — le prédicat, la valeur, la raison — et rien de ce qui ne sert
+    qu'à la mécanique interne.
+    """
+    return {
+        "id": fait.id,
+        "predicate": fait.predicate,
+        "value": fait.value,
+        "profile": fait.profile,
+        "why": fait.why,
+        "created_at": fait.created_at.isoformat(),
+    }
 
 
 def _audio(charge: dict[str, Any]) -> bytes:

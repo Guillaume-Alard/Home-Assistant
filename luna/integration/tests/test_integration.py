@@ -190,13 +190,99 @@ class TestCommandesWebSocket:
     ):
         """§12 : documentée dès P1. §8 : jamais un silence."""
         client = await hass_ws_client(hass)
-        await client.send_json_auto_id({"type": "luna/patterns"})
+        await client.send_json_auto_id({"type": "luna/identity/face", "image": "AAAA"})
         reponse = await client.receive_json()
         assert reponse["success"] is False
         # Le code de l'add-on ressort intact : le réécrire en « addon_offline »
         # ferait passer une capacité de phase future pour une panne.
         assert reponse["error"]["code"] == "not_implemented"
-        assert "Phase 4." in reponse["error"]["message"]
+        assert "Phase 6." in reponse["error"]["message"]
+
+
+class TestVeille:
+    """P4 : les commandes qui répondaient 501 en P1 rendent maintenant des
+    données, et le contexte part bien de l'intégration."""
+
+    async def test_luna_suggestions(self, hass, entree, hass_ws_client):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id({"type": "luna/suggestions"})
+        reponse = await client.receive_json()
+        assert reponse["success"] is True
+        assert reponse["result"]["suggestions"][0]["id"] == "al_1"
+
+    async def test_luna_patterns(self, hass, entree, hass_ws_client, faux_relais):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id({"type": "luna/patterns", "profile": "guillaume"})
+        reponse = await client.receive_json()
+        assert reponse["result"]["patterns"][0]["value"] == "23:20"
+        assert faux_relais.dernier("patterns")["payload"] == {"profile": "guillaume"}
+
+    async def test_luna_alerts_feedback(self, hass, entree, hass_ws_client, faux_relais):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {
+                "type": "luna/alerts/feedback",
+                "suggestion_id": "al_1",
+                "action": "muted",
+            }
+        )
+        reponse = await client.receive_json()
+        assert reponse["result"]["ok"] is True
+        assert faux_relais.dernier("alerts_feedback")["payload"] == {
+            "suggestion_id": "al_1",
+            "action": "muted",
+        }
+
+    async def test_une_action_de_retour_inconnue_est_refusee_par_le_schema(
+        self, hass, entree, hass_ws_client
+    ):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "luna/alerts/feedback", "suggestion_id": "al_1", "action": "bof"}
+        )
+        assert (await client.receive_json())["success"] is False
+
+    async def test_agir_porte_le_contexte_de_la_session(
+        self, hass, entree, hass_ws_client, faux_relais
+    ):
+        """D8 : c'est ce contexte-là que l'arbitre lira pour décider du droit
+        d'agir seul. La carte ne peut pas le fabriquer."""
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "luna/alerts/act", "suggestion_id": "al_1"}
+        )
+        reponse = await client.receive_json()
+        assert reponse["result"]["executed"] is True
+        contexte = faux_relais.dernier("alerts_act")["context"]
+        assert contexte["ha_user_id"]
+        assert "profile" not in contexte or contexte["profile"] == "unknown"
+
+    async def test_la_file_de_relecture(self, hass, entree, hass_ws_client):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id({"type": "luna/facts"})
+        reponse = await client.receive_json()
+        assert reponse["result"]["facts"][0]["value"] == "couloir tamisé le soir"
+
+    async def test_trancher_un_fait(self, hass, entree, hass_ws_client, faux_relais):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "luna/facts/decide", "fact_id": "f_2", "decision": "accept"}
+        )
+        reponse = await client.receive_json()
+        assert reponse["result"]["status"] == "active"
+        assert faux_relais.dernier("facts_decide")["payload"] == {
+            "fact_id": "f_2",
+            "decision": "accept",
+        }
+
+    async def test_une_decision_invalide_est_refusee_par_le_schema(
+        self, hass, entree, hass_ws_client
+    ):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id(
+            {"type": "luna/facts/decide", "fact_id": "f_2", "decision": "peut-etre"}
+        )
+        assert (await client.receive_json())["success"] is False
 
 
 class TestModeDegrade:

@@ -253,14 +253,14 @@ class TestInfo:
         info = await orchestrateur.info(contexte)
 
         assert info["addon"] == "online"
-        assert info["capabilities"] == ["chat", "ha_control"]
+        assert info["capabilities"] == ["chat", "ha_control", "veille", "facts"]
         assert info["profile"]["id"] == "guillaume"
         assert info["profile"]["display_name"] == "Guillaume"
         assert info["profile"]["signals"] == {"ha_user": 1.0}
         assert info["phases"] == {
             "voice": True,
             "identity": True,
-            "veille": False,
+            "veille": True,
             "guardian": False,
         }, "aucune phase future ne doit être annoncée comme prête"
 

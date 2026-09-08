@@ -23,7 +23,12 @@ window.creerFauxHass = (options = {}) => {
       confidence: 1.0,
       signals: { ha_user: 1.0 },
     },
-    phases: { voice: true, identity: true, veille: false, guardian: false },
+    phases: {
+      voice: true,
+      identity: true,
+      veille: options.veille ?? true,
+      guardian: false,
+    },
     identity: {
       profile: {
         id: "guillaume",
@@ -111,11 +116,21 @@ window.creerFauxHass = (options = {}) => {
             });
           case "luna/identity/forget":
             return Promise.resolve({ removed: 5 });
-          case "luna/alerts/feedback":
-            return Promise.reject({
-              code: "not_implemented",
-              message: "Cette capacité arrive en phase 4.",
+          // ── Habitudes et veille (P4) ────────────────────────────────
+          case "luna/suggestions":
+            return Promise.resolve({ suggestions: options.suggestions ?? [] });
+          case "luna/facts":
+            return Promise.resolve({ facts: options.faits ?? [] });
+          case "luna/facts/decide":
+            return Promise.resolve({
+              status: message.decision === "accept" ? "active" : "rejected",
             });
+          case "luna/alerts/feedback":
+            return Promise.resolve({ ok: true, score: 0.25, muted_until: null });
+          case "luna/alerts/act":
+            return Promise.resolve(
+              options.resultatAgir ?? { executed: true, results: [] },
+            );
           default:
             return Promise.reject({ code: "internal", message: "inconnu" });
         }

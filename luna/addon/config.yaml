@@ -11,7 +11,7 @@ version: "0.1.0"
 slug: luna
 description: >-
   Le cerveau de Luna — orchestrateur, API Claude, contrôle de Home Assistant.
-  Phase 1 : chat écrit et pilotage des éclairages depuis la carte Loggia.
+  Phases 1 à 4 : chat, voix, identité, habitudes et veille.
 url: https://github.com/Alardware/luna
 arch:
   - amd64
@@ -41,6 +41,21 @@ options:
       presence: ""
   profil_par_defaut: "guest"
 
+  # ── Habitudes et veille (P4) ────────────────────────────────────────
+  #
+  # La **détection** n'est pas ici : elle vit dans des `binary_sensor` de Home
+  # Assistant, visibles dans les outils de développement (§5, F5). Ces règles
+  # disent seulement quoi en faire — le message, le niveau, le moment.
+  # Un jeu de capteurs de départ est fourni dans docs/P4-CAPTEURS.md.
+  veille: []
+  observateurs:
+    coucher: ""
+    coucher_profil: ""
+    sequences: false
+  heure_entretien: "03:30"
+  evenements_par_entretien: 200
+  entretien_actif: true
+
 schema:
   anthropic_api_key: password
   modele: str
@@ -55,3 +70,23 @@ schema:
       profil: list(guillaume|clara|liam|guest)
       presence: str?
   profil_par_defaut: list(guillaume|clara|liam|guest|unknown)
+  veille:
+    - entite: str
+      categorie: str?
+      niveau: list(info|warning|critical)?
+      message: str
+      raison: str?
+      silence: bool?
+      fait: str?
+      actions:
+        - domain: str
+          service: str
+          target: dict?
+          data: dict?
+  observateurs:
+    coucher: str?
+    coucher_profil: str?
+    sequences: bool?
+  heure_entretien: match(^([01]\d|2[0-3]):[0-5]\d$)
+  evenements_par_entretien: int(10,500)
+  entretien_actif: bool

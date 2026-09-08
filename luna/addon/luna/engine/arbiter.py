@@ -380,6 +380,39 @@ class Arbitre:
             )
         )
 
+    # ── Point d'entrée depuis la veille (P4, D8) ─────────────────────────
+
+    async def agir_hors_conversation(
+        self,
+        acte: ActionHA,
+        *,
+        libelle: str,
+        justification: str,
+        contexte: ContexteRequete,
+        reference: str,
+        emettre: Emetteur,
+    ) -> ResultatOutil:
+        """Le bouton « Agir » d'une alerte, et rien d'autre.
+
+        Ce n'est pas une porte dérobée : c'est exactement `_appliquer`, donc
+        exactement le même fil de décision que pour une demande de Guillaume —
+        niveau lu dans le registre de L0, refus de niveau 5 journalisé,
+        proposition au-delà du confort. Ce qui change, c'est seulement d'où
+        vient l'acte : d'une règle de veille au lieu d'un outil de Claude.
+
+        `reference` remplace le `message_id` d'une conversation : c'est
+        l'identifiant de l'alerte, et il se retrouve tel quel dans le journal.
+        """
+        return await self._appliquer(
+            acte,
+            libelle=libelle,
+            nom_outil="veille",
+            justification=justification,
+            message_id=reference,
+            contexte=contexte,
+            emettre=emettre,
+        )
+
     # ── Décision de l'utilisateur ────────────────────────────────────────
 
     async def decider(

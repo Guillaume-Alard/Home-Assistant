@@ -53,8 +53,11 @@ def enregistrer_commandes(hass: HomeAssistant) -> None:
         ws_identity_forget,
         ws_identity,
         ws_alerts_feedback,
+        ws_alerts_act,
         ws_patterns,
         ws_suggestions,
+        ws_facts,
+        ws_facts_decide,
         ws_identity_face,
     ):
         websocket_api.async_register_command(hass, commande)
@@ -498,11 +501,64 @@ async def ws_alerts_feedback(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): "luna/patterns", vol.Optional("profile"): str}
+    {
+        vol.Required("type"): "luna/alerts/act",
+        vol.Required("suggestion_id"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_alerts_act(hass, connection, msg) -> None:
+    """Le bouton « Agir » d'une alerte (D8).
+
+    Le contexte part d'ici, construit à partir de `connection.user` : c'est lui
+    que l'arbitre lira pour décider si le profil a le droit d'agir seul. La
+    carte ne peut ni le fournir ni l'influencer.
+    """
+    await _ponctuelle(
+        hass, connection, msg, "alerts_act", {"suggestion_id": msg["suggestion_id"]}
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/patterns",
+        vol.Optional("profile"): str,
+        vol.Optional("client_id"): str,
+    }
 )
 @websocket_api.async_response
 async def ws_patterns(hass, connection, msg) -> None:
     await _ponctuelle(hass, connection, msg, "patterns", {"profile": msg.get("profile")})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/facts", vol.Optional("client_id"): str}
+)
+@websocket_api.async_response
+async def ws_facts(hass, connection, msg) -> None:
+    """La file de relecture : ce que le modèle propose et que personne n'a
+    tranché (D2)."""
+    await _ponctuelle(hass, connection, msg, "facts", {})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/facts/decide",
+        vol.Required("fact_id"): str,
+        vol.Required("decision"): vol.In(("accept", "reject")),
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_facts_decide(hass, connection, msg) -> None:
+    await _ponctuelle(
+        hass,
+        connection,
+        msg,
+        "facts_decide",
+        {"fact_id": msg["fact_id"], "decision": msg["decision"]},
+    )
 
 
 @websocket_api.websocket_command(
