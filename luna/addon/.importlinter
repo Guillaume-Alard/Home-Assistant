@@ -1,0 +1,48 @@
+; Les couches verrouillées de §3.1 du cahier des charges.
+; Exécuté en CI à chaque push, aux côtés de ruff et de la suite de tests.
+;
+; Les trois premiers contrats sont ceux du cahier des charges, à la lettre.
+; Le quatrième est un ajout (hypothèse H15) : sans lui, la règle la plus
+; importante de L0 — « stdlib + pydantic uniquement » — n'est vérifiée par rien.
+
+[importlinter]
+root_package = luna
+include_external_packages = True
+
+[importlinter:contract:l0-kernel]
+name = L0 kernel n'importe rien du projet
+type = forbidden
+source_modules =
+    luna.kernel
+forbidden_modules =
+    luna.providers
+    luna.engine
+    luna.interfaces
+
+[importlinter:contract:l1-providers]
+name = L1 providers n'importe que L0
+type = forbidden
+source_modules =
+    luna.providers
+forbidden_modules =
+    luna.engine
+    luna.interfaces
+
+[importlinter:contract:l2-engine]
+name = L2 engine n'importe que L0 (les providers arrivent par injection)
+type = forbidden
+source_modules =
+    luna.engine
+forbidden_modules =
+    luna.providers
+    luna.interfaces
+
+[importlinter:contract:l0-stdlib]
+name = L0 kernel : stdlib et pydantic uniquement
+type = forbidden
+source_modules =
+    luna.kernel
+forbidden_modules =
+    anthropic
+    aiohttp
+    aiosqlite

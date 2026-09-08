@@ -1,0 +1,50 @@
+# Manifeste de l'add-on Luna.
+#
+# `homeassistant_api: true` donne accès à ws://supervisor/core/websocket avec le
+# SUPERVISOR_TOKEN : aucun jeton longue durée à créer ni à faire tourner (H6).
+#
+# Aucun port n'est publié sur l'hôte : le relais n'est joignable que depuis le
+# réseau des add-ons, par l'intégration (H8). C'est volontaire — le relais
+# n'authentifie que par secret partagé, il n'a rien à faire sur le LAN.
+name: Luna
+version: "0.1.0"
+slug: luna
+description: >-
+  Le cerveau de Luna — orchestrateur, API Claude, contrôle de Home Assistant.
+  Phase 1 : chat écrit et pilotage des éclairages depuis la carte Loggia.
+url: https://github.com/Alardware/luna
+arch:
+  - amd64
+init: false
+startup: application
+boot: auto
+homeassistant_api: true
+hassio_api: false
+ingress: false
+host_network: false
+
+options:
+  anthropic_api_key: ""
+  modele: "claude-sonnet-5"
+  effort: "low"
+  relay_secret: ""
+  relay_port: 8099
+  fuseau: "Europe/Paris"
+  journal: "info"
+  profils:
+    - utilisateur_ha: "Guillaume"
+      profil: "guillaume"
+  profil_par_defaut: "guest"
+
+schema:
+  anthropic_api_key: password
+  modele: str
+  effort: list(low|medium|high|xhigh|max)
+  relay_secret: password
+  relay_port: port
+  fuseau: str
+  journal: list(debug|info|warning|error)
+  profils:
+    - utilisateur_ha: str
+      profil: list(guillaume|clara|liam|guest)
+  profil_par_defaut: list(guillaume|clara|liam|guest|unknown)
