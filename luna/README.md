@@ -95,6 +95,7 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md) | L'identité : sept décisions, la formule de fusion, les contrats, les écarts |
 | [`docs/P4-HABITUDES-VEILLE.md`](docs/P4-HABITUDES-VEILLE.md) | Habitudes et veille : huit décisions, la décroissance des faits, les écarts constatés, la liste de ce que P4 ne fait pas |
 | [`docs/P4-CAPTEURS.md`](docs/P4-CAPTEURS.md) | **À coller dans `configuration.yaml`** — les capteurs sans lesquels la veille n'a rien à regarder |
+| [`docs/P5-GARDIENNE.md`](docs/P5-GARDIENNE.md) | **En attente de validation** — la gardienne de l'installation, définie par ses refus |
 | [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova
@@ -123,7 +124,22 @@ est réellement exercé. **La CI ne consomme jamais de crédit.**
 
 ## Où en est le projet
 
-**P1 à P4 sont livrées. La suite est P5, la gardienne.**
+**P1 à P4 sont livrées. P5 est cadrée et attend une validation** — voir
+[`docs/P5-GARDIENNE.md`](docs/P5-GARDIENNE.md).
+
+P5 part d'un fait vérifié dans le code de Home Assistant, et qui change tout le
+cadrage : **Luna est déjà administratrice**. L'add-on passe par le Supervisor,
+dont l'utilisateur vit dans `GROUP_ID_ADMIN` — réécrire le dashboard ou
+désactiver une intégration lui est ouvert aujourd'hui, sans rien changer. Ça
+n'avait jamais eu d'importance : P1 à P4 n'appellent que `call_service` sur des
+lumières.
+
+P5 est donc la première phase où « ce que Home Assistant l'empêche de faire » et
+« ce qu'elle refuse de faire » cessent d'être la même chose. Le document
+commence par les refus, et ils tiennent par des tests statiques plutôt que par
+de la vigilance : aucun fichier n'a le droit de mentionner
+`lovelace/config/save`, exactement comme un seul a le droit de mentionner
+`appeler_service`.
 
 P4 est la phase pour laquelle §1 a été écrit : une fois que Luna observe la
 maison et prend la parole, tout devient tentant. Le document tient donc une
