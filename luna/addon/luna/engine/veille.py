@@ -30,7 +30,9 @@ from ..kernel.contracts import MaisonProvider, MemoireProvider
 from ..kernel.errors import LunaError
 from ..kernel.facts import assez_sur_pour_proposer, confiance
 from ..kernel.ids import nouvel_id
+from ..kernel.permissions import MAISON
 from ..kernel.schemas import (
+    ActionHA,
     Alerte,
     ChangementEtat,
     ContexteRequete,
@@ -42,11 +44,12 @@ from ..kernel.schemas import (
     ScoreSuggestion,
     Suggestion,
 )
-from ..kernel.settings import RegleVeille
+from ..kernel.settings import Annonce, RegleVeille
 from ..kernel.veille import (
     Score,
     appliquer_retour,
     cle_suggestion,
+    dans_les_heures_de_silence,
     peut_parler,
     peut_repeter,
 )
@@ -55,6 +58,21 @@ from .arbiter import Arbitre
 log = logging.getLogger("luna.veille")
 
 Emetteur = Callable[[EvenementCarte], Awaitable[None]]
+
+#: Le contexte d'une action née de la veille et non d'une personne.
+#:
+#: `is_admin=False` est délibéré : rien de ce que la veille déclenche seule ne
+#: doit pouvoir emprunter des droits d'administrateur. Le profil `maison` n'est
+#: celui de personne, et n'a donc que ce que la politique accorde à tout le
+#: monde (§9, `kernel/permissions.py`).
+CONTEXTE_VEILLE = ContexteRequete(
+    ha_user_id=None,
+    ha_user_name=None,
+    is_admin=False,
+    profile=MAISON,
+    client_id="veille",
+    local=True,
+)
 
 #: Fréquence de réexamen des alertes retenues. Une ampoule oubliée à 3 h n'est
 #: pas perdue : elle est **différée** jusqu'à la fin des heures de silence, et
@@ -78,6 +96,7 @@ class MoteurVeille:
         maison: MaisonProvider,
         arbitre: Arbitre,
         emettre: Emetteur,
+        annonce: Annonce | None = None,
         horloge: Callable[[], datetime] | None = None,
     ) -> None:
         self._regles = {regle.entite: regle for regle in regles}
@@ -85,6 +104,7 @@ class MoteurVeille:
         self._maison = maison
         self._arbitre = arbitre
         self._emettre = emettre
+        self._annonce = annonce or Annonce()
         self._maintenant = horloge or (lambda: datetime.now().astimezone())
 
         #: Ce qui est affiché dans le tiroir, par clé de suggestion.
@@ -197,6 +217,82 @@ class MoteurVeille:
         )
         await self._emettre(EvtAlerte(alert=alerte))
         log.info("Alerte : %s (%s)", alerte.title, cle)
+        await self._annoncer(regle, alerte, maintenant)
+
+    async def _annoncer(
+        self, regle: RegleVeille, alerte: Alerte, maintenant: datetime
+    ) -> None:
+        """Dit l'alerte à voix haute, si une enceinte est déclarée.
+
+        Trois choses valent d'être dites sur cette poignée de lignes :
+
+        * **Elle passe par l'arbitre.** `tts.speak` a un niveau comme tout le
+          reste, et le journal garde la trace. Ce n'est pas une porte de sortie
+          discrète du chemin de §9.
+        * **Elle ne dit que le titre**, jamais la raison. La raison contient
+          l'heure — « il est 23:35 » — donc un texte différent à chaque fois,
+          donc une synthèse vocale refaite à chaque fois. Le titre, lui, vient
+          mot pour mot de la configuration : Home Assistant le retrouve dans
+          son cache et ne rappelle pas Piper (§7, couche 1).
+        * **Elle ne fait jamais tomber l'alerte.** Une enceinte débranchée,
+          c'est une ligne dans le journal — pas une alerte perdue.
+        """
+        if not self._annonce.enceinte or not self._a_annoncer(regle, alerte):
+            return
+        if self._silence_vocal(regle, maintenant):
+            log.debug("Annonce retenue (heures de silence) : %s", alerte.title)
+            return
+
+        acte = ActionHA(
+            domain="tts",
+            service="speak",
+            target={"entity_id": self._annonce.moteur},
+            data={
+                "media_player_entity_id": self._annonce.enceinte,
+                "message": alerte.title,
+                "cache": True,
+            },
+        )
+        try:
+            resultat = await self._arbitre.agir_hors_conversation(
+                acte,
+                libelle=f"Annoncer : {alerte.title}",
+                justification=alerte.why,
+                contexte=CONTEXTE_VEILLE,
+                reference=alerte.id,
+                # Silencieux : la progression d'une annonce n'est pas l'affaire
+                # des cartes. Un événement `tool` portant l'identifiant d'une
+                # alerte au lieu d'un message n'aurait de sens pour personne.
+                emettre=_muet,
+            )
+        except LunaError as exc:
+            log.warning("Annonce impossible : %s", exc.message)
+            return
+        if resultat.erreur:
+            log.warning("Annonce refusée : %s", resultat.contenu)
+
+    def _a_annoncer(self, regle: RegleVeille, alerte: Alerte) -> bool:
+        """La règle décide si elle le dit ; sinon, c'est le niveau qui décide."""
+        if regle.annonce is not None:
+            return regle.annonce
+        return alerte.level in self._annonce.niveaux
+
+    def _silence_vocal(self, regle: RegleVeille, maintenant: datetime) -> bool:
+        """Faut-il retenir l'annonce à cette heure-ci ?
+
+        Deux réglages, et ils ne disent pas la même chose :
+
+        * `regle.silence = false` — « cette règle a le droit de parler la nuit ».
+          Le rappel de coucher, dont c'est tout l'intérêt : il apparaît **et**
+          il se dit à 23 h 20, sinon il ne sert à rien.
+        * `annonce.silence = true` — « ne réveille pas la maison ». Il couvre
+          tout le reste, **y compris une alerte `critical`** : elle a le droit
+          d'apparaître dans le tiroir à 3 h du matin, réveiller la maison est
+          une autre décision.
+        """
+        if not self._annonce.silence or not regle.silence:
+            return False
+        return dans_les_heures_de_silence(maintenant)
 
     async def _justifier(self, regle: RegleVeille, maintenant: datetime) -> str | None:
         """La raison montrée sous l'alerte. `None` = pas de raison, pas d'alerte.
@@ -419,3 +515,7 @@ class MoteurVeille:
             refus=enregistre.rejections,
             sourdine_jusqua=enregistre.muted_until,
         )
+
+
+async def _muet(_evenement: EvenementCarte) -> None:
+    """Un émetteur qui n'émet rien. Voir `MoteurVeille._annoncer`."""

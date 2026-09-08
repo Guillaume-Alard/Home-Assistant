@@ -55,6 +55,16 @@ options:
   heure_entretien: "03:30"
   evenements_par_entretien: 200
   entretien_actif: true
+  # Faire dire les alertes à voix haute. `enceinte` vide = rien n'est jamais
+  # annoncé. `silence: true` couvre aussi les alertes `critical` : elles
+  # s'affichent dans le tiroir à 3 h du matin, elles ne réveillent personne.
+  annonce:
+    enceinte: ""
+    moteur: "tts.piper"
+    niveaux:
+      - warning
+      - critical
+    silence: true
 
 schema:
   anthropic_api_key: password
@@ -77,6 +87,7 @@ schema:
       message: str
       raison: str?
       silence: bool?
+      annonce: bool?
       fait: str?
       actions:
         - domain: str
@@ -90,3 +101,9 @@ schema:
   heure_entretien: match(^([01]\d|2[0-3]):[0-5]\d$)
   evenements_par_entretien: int(10,500)
   entretien_actif: bool
+  annonce:
+    enceinte: str?
+    moteur: str?
+    niveaux:
+      - list(info|warning|critical)
+    silence: bool?

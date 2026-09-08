@@ -57,6 +57,9 @@ class RegleVeille(BaseModel):
     #: `false` sur une règle qui a le droit de parler après 22 h 30 — le rappel
     #: de coucher, dont c'est tout l'intérêt (H58).
     silence: bool = True
+    #: Forcer ou interdire l'annonce vocale pour cette règle. `null` (défaut) :
+    #: suivre les niveaux déclarés dans `annonce.niveaux`.
+    annonce: bool | None = None
     #: Prédicat d'un fait observé qui **conditionne et justifie** la règle. Avec
     #: `heure_de_coucher`, le rappel ne part que si Luna a vraiment observé une
     #: heure de coucher, et sa raison la cite. Sans habitude assez sûre, pas de
@@ -86,6 +89,31 @@ class Observateurs(BaseModel):
     sequences: bool = False
 
 
+class Annonce(BaseModel):
+    """Faire dire une alerte à voix haute sur une enceinte de la maison.
+
+    Éteint par défaut : sans `enceinte`, rien n'est jamais annoncé. C'est §1 —
+    ce qui n'est pas demandé n'existe pas — appliqué à une fonction qui a été
+    demandée explicitement, et qui reste donc explicitement à activer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Le `media_player` qui parle. Vide = aucune annonce, jamais.
+    enceinte: str = ""
+    #: L'entité TTS qui fabrique la voix. C'est celle du pipeline Assist.
+    moteur: str = "tts.piper"
+    #: Les niveaux d'alerte qui méritent qu'on parle. Une `info` s'affiche
+    #: dans le tiroir sans interrompre la pièce.
+    niveaux: list[Literal["info", "warning", "critical"]] = Field(
+        default_factory=lambda: ["warning", "critical"]
+    )
+    #: Se taire pendant les heures de silence — **y compris pour une alerte
+    #: `critical`**. Une alerte critique a le droit d'apparaître dans le tiroir
+    #: à 3 h du matin ; réveiller la maison est une autre décision.
+    silence: bool = True
+
+
 class Reglages(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -111,6 +139,7 @@ class Reglages(BaseModel):
     #: Coupe l'entretien nocturne sans toucher au reste de la veille.
     entretien_actif: bool = True
     observateurs: Observateurs = Field(default_factory=Observateurs)
+    annonce: Annonce = Field(default_factory=Annonce)
 
     # Non exposés dans les options : déduits de l'environnement.
     url_ha: str = URL_HA_SUPERVISOR

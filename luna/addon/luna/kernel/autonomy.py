@@ -43,6 +43,13 @@ REGISTRE: dict[str, Niveau] = {
     "media_player.media_stop": Niveau.CONFORT,
     "media_player.volume_set": Niveau.CONFORT,
     "script.turn_on": Niveau.CONFORT,
+    # Parler dans une pièce ne laisse rien derrière soi : c'est du son, pas un
+    # état. Et c'est **dedans** — §9 range à 5 « l'envoi de messages vers
+    # l'extérieur », ce qui n'est pas la même chose qu'une enceinte du salon.
+    # Aucun outil `tts` n'est déclaré à Claude : cette entrée n'élargit donc
+    # rien de ce que le modèle peut demander, elle donne un niveau à ce que la
+    # veille, elle, peut faire dire.
+    "tts.speak": Niveau.CONFORT,
     # ── 3 — état persistant ──────────────────────────────────────────────
     "climate.set_temperature": Niveau.PERSISTANT,
     "climate.set_hvac_mode": Niveau.PERSISTANT,

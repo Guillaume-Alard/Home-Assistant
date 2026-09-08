@@ -289,13 +289,16 @@ def emetteur() -> FauxEmetteur:
     return FauxEmetteur()
 
 
-def veille_avec(regles, memoire, maison, arbitre, emetteur, horloge=None) -> MoteurVeille:
+def veille_avec(
+    regles, memoire, maison, arbitre, emetteur, horloge=None, annonce=None
+) -> MoteurVeille:
     return MoteurVeille(
         regles=regles,
         memoire=memoire,
         maison=maison,
         arbitre=arbitre,
         emettre=emetteur,
+        annonce=annonce,
         horloge=horloge,
     )
 

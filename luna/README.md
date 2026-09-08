@@ -75,7 +75,9 @@ Elle surveille ce qui s'oublie — un ouvrant resté ouvert la nuit, une lumièr
 allumée après le coucher — à partir de capteurs que Guillaume écrit dans Home
 Assistant. Elle n'apporte que la pertinence : elle se tait pendant les heures de
 silence, ne répète pas une alerte avant quatre heures, et retient un « ne plus
-me le dire » pendant trente jours.
+me le dire » pendant trente jours. Si une enceinte lui est déclarée, elle le dit
+à voix haute — par l'arbitre, comme tout le reste, et avec les droits d'un
+invité quand elle agit d'elle-même.
 
 Elle ne commande ni les ouvrants, ni les serrures, ni l'alarme, et n'envoie rien
 vers l'extérieur : niveau 5, hors périmètre v1. Le refus est structurel — ces
@@ -108,12 +110,12 @@ Lovelace.
 ## Vérifier
 
 ```bash
-cd addon        && pytest -q && lint-imports    # 297 tests, 4 contrats de couches
+cd addon        && pytest -q && lint-imports    # 309 tests, 4 contrats de couches
 cd integration  && pytest -q                    # 43 tests, vraie instance HA
 cd card         && pytest -q                    # 68 tests, vrai Chromium
 ```
 
-408 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
+420 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
 faux serveur WebSocket, le client Claude contre des réponses enregistrées, et la
 carte contre un faux `hass` qui rejoue le contrat §4 — mais avec un **vrai**
 `AudioWorklet` et un micro synthétique de Chromium, donc le chemin de capture

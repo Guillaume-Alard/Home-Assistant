@@ -191,6 +191,48 @@ Trois jetons sont disponibles dans `raison` : `{valeur}` (l'heure observée),
 
 ---
 
+## 6 bis. Faire dire les alertes à voix haute
+
+Éteint par défaut. Pour l'allumer, une seule ligne compte — le reste a des
+valeurs saines :
+
+```yaml
+annonce:
+  enceinte: media_player.salon    # ← sans elle, rien n'est jamais annoncé
+  moteur: tts.piper               # l'entité TTS de ton pipeline Assist
+  niveaux: [warning, critical]    # une `info` s'affiche sans couper la pièce
+  silence: true                   # ne réveille pas la maison entre 22 h 30 et 7 h
+```
+
+Deux choses à savoir avant de l'allumer :
+
+- **`silence: true` couvre aussi les alertes `critical`.** Elles apparaissent
+  dans le tiroir à 3 h du matin, elles ne réveillent personne. Si tu veux
+  qu'une alerte d'alarme te sorte du lit, mets `silence: false` — c'est un
+  choix, pas un défaut.
+- **Une règle en `silence: false` parle aussi à voix haute la nuit.** C'est
+  voulu : le rappel de coucher qui s'afficherait à 23 h 20 sans jamais se dire
+  ne réglerait rien.
+
+Pour couper l'annonce sur une règle précise, ou la forcer sur une `info` —
+typiquement le rappel de coucher :
+
+```yaml
+veille:
+  - entite: binary_sensor.luna_heure_de_se_coucher
+    niveau: info
+    annonce: true      # ← malgré le niveau `info`
+    silence: false
+    ...
+```
+
+Le texte annoncé est le `message`, **jamais la `raison`** : la raison contient
+l'heure, donc un texte neuf à chaque fois, donc une synthèse vocale refaite à
+chaque fois. Le message, lui, vient mot pour mot d'ici — Home Assistant le
+retrouve dans son cache. Écris-le pour l'oreille.
+
+---
+
 ## 7. Vérifier que ça marche
 
 1. **Outils de développement → Modèle** : colle la condition d'un capteur et
@@ -213,5 +255,7 @@ Trois jetons sont disponibles dans `raison` : `{valeur}` (l'heure observée),
 - Elle ne les fait pas lire par le modèle de langage. Le moteur de veille n'a
   aucun accès au cerveau (§9.2) : ce n'est pas une consigne de prompt, c'est
   une propriété du code.
-- Elle n'envoie **aucune notification mobile** et ne parle sur **aucune
-  enceinte**. §5 ne le demande pas.
+- Elle n'envoie **aucune notification mobile**. §5 ne le demande pas.
+- Elle ne parle sur une enceinte que si tu lui en déclares une (§6 bis), et
+  passe alors par l'arbitre comme pour tout le reste : `tts.speak` est du
+  niveau 2, journalisé, avec les droits d'un invité et pas davantage.

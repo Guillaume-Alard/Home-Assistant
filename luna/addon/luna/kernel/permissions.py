@@ -10,6 +10,11 @@ from .autonomy import Niveau
 
 PROFILS = ("guillaume", "clara", "liam", "guest", "unknown")
 
+#: La maison agissant d'elle-même (P4). Ce n'est le profil de personne : il
+#: n'apparaît donc pas dans `PROFILS`, ne peut pas être choisi comme profil par
+#: défaut, et n'est jamais résolu à partir d'un utilisateur Home Assistant.
+MAISON = "maison"
+
 CONFORT = "confort"
 PERSONNEL = "personnel"
 
@@ -20,6 +25,11 @@ SCOPES: dict[str, frozenset[str]] = {
     "guest": frozenset({CONFORT}),
     # Personne d'identifié : Luna répond et lit, mais ne déclenche rien.
     "unknown": frozenset(),
+    # La veille, quand elle agit sans que personne le lui ait demandé : les
+    # droits d'un invité, jamais plus. Annoncer une alerte est du confort ;
+    # tout ce qui dépasse le confort passera par une proposition, donc par un
+    # humain — y compris déclenché par la maison elle-même.
+    MAISON: frozenset({CONFORT}),
 }
 
 

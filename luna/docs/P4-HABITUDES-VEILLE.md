@@ -117,6 +117,9 @@ un rappel. Annoncer sur une enceinte réglerait ça — mais §5 ne le demande p
 non plus. **Je ne le construis pas sans que tu le demandes** (question Q1). La
 plomberie est prévue pour que ce soit un provider à ajouter, pas une refonte.
 
+> **Q1 a été tranchée : oui.** L'annonce vocale est construite. Voir **G11** —
+> elle n'a même pas demandé de provider.
+
 ## D5. La couche 1 de §7 est déjà là. Il n'y a rien à construire.
 
 §7 décrit un cache audio : « Les alertes de veille sont templatées […] générées
@@ -373,7 +376,8 @@ Sortie testable de §11 : « Un rappel de coucher pertinent, une alerte ouvrant.
 | 9 | L'entretien nocturne extrait un fait d'une conversation → il arrive en `needs_review`, pas en vigueur | ✅ `test_un_fait_extrait_arrive_en_relecture` |
 | 10 | `Agir` sur une alerte d'ouvrant → **refus de niveau 5**, journalisé (D8) | ✅ `test_agir_sur_un_ouvrant_est_refuse_au_niveau_cinq`, et côté carte `test_un_refus_de_niveau_cinq_laisse_lalerte_et_dit_pourquoi` |
 | 11 | L'entretien saute s'il n'y a rien de neuf, et ne dépasse jamais 200 événements | ✅ `test_il_saute_quand_il_ny_a_rien_de_neuf`, `test_il_ne_depasse_jamais_son_plafond` |
-| 12 | `ruff`, `lint-imports`, `pytest` verts | ✅ 297 tests add-on, 43 intégration, 68 carte ; 4 contrats de couches tenus |
+| 12 | `ruff`, `lint-imports`, `pytest` verts | ✅ 309 tests add-on, 43 intégration, 68 carte ; 4 contrats de couches tenus |
+| 13 | Une alerte `warning` se dit sur l'enceinte ; une `info` non ; une `critical` de nuit s'affiche sans réveiller personne | ✅ `TestAnnonceVocale` (G11) |
 
 Le point 8 demande de vraies soirées : c'est le seul que la vraie maison peut
 juger.
@@ -382,11 +386,8 @@ juger.
 
 # Partie F — Ce dont j'ai besoin de toi
 
-> **Q1 — Faut-il annoncer sur une enceinte ?** §5 ne le demande pas, donc je ne
-> le construis pas. Mais un rappel de coucher que personne ne regarde n'est pas
-> un rappel. Si tu veux qu'il sorte sur un `media_player`, dis-le : c'est un
-> provider à ajouter et une option, pas une refonte — et ça reste du niveau 2,
-> donc encadré par §9.
+> ~~**Q1 — Faut-il annoncer sur une enceinte ?**~~ **Tranchée : oui.** Construit,
+> éteint par défaut, décrit en **G11**.
 
 > **Q2 — Les capteurs.** As-tu déjà des *template sensors* pour le contexte
 > « coucher », les ouvrants regroupés, ou l'absence ? Sinon je livre un jeu de
@@ -566,3 +567,74 @@ La partie D est tenue intégralement, et vérifiée :
 - Aucun fait de conversation en vigueur sans relecture.
 - Aucune donnée d'habitude hors de Nova. Seuls des **extraits de conversation**
   partent vers l'API, une fois par nuit.
+
+## G11. L'annonce vocale, ajoutée après coup (Q1 : oui)
+
+Elle n'a pas demandé de provider. J'avais annoncé « un provider à ajouter » ;
+c'est une vingtaine de lignes dans le moteur de veille, et voici pourquoi.
+
+L'annonce est un **appel de service Home Assistant** comme un autre :
+`tts.speak`, ciblé sur l'entité TTS du pipeline Assist, avec le `media_player`
+en donnée. Or un seul fichier du projet a le droit d'appeler un service —
+l'arbitre. Écrire un provider qui parle à Home Assistant aurait donc violé
+l'invariant de §9.2, ou dupliqué l'arbitre. Le chemin correct était déjà là :
+
+```python
+acte = ActionHA(domain="tts", service="speak",
+                target={"entity_id": moteur},
+                data={"media_player_entity_id": enceinte,
+                      "message": alerte.title, "cache": True})
+await self._arbitre.agir_hors_conversation(acte, ..., contexte=CONTEXTE_VEILLE)
+```
+
+C'est le même chemin que le bouton « Agir » (G2), donc le même registre, le
+même journal. Quand une couche est juste, la fonction qu'on n'avait pas prévue
+tombe dedans toute seule.
+
+### Trois décisions dans ces vingt lignes
+
+**`tts.speak` entre dans le registre d'autonomie, au niveau 2.** Parler dans
+une pièce ne laisse rien derrière soi ; et c'est **dedans** — §9 range au
+niveau 5 « l'envoi de messages vers l'extérieur », ce qui n'est pas une
+enceinte du salon. Aucun outil `tts` n'est déclaré à Claude : cette entrée
+n'élargit donc pas d'un pouce ce que le modèle peut demander. Elle donne un
+niveau à ce que la veille, elle, peut faire dire.
+
+**La veille agissant seule a les droits d'un invité.** Elle emprunte un profil
+`maison` qui n'est celui de personne, avec `is_admin=False` et le seul scope
+`confort`. Une règle qui voudrait faire régler le thermostat toute seule
+n'obtiendrait donc qu'une proposition — pas une action. `maison` n'est pas dans
+`PROFILS` : il ne peut pas être choisi comme profil par défaut, ni résolu à
+partir d'un utilisateur Home Assistant.
+
+**L'annonce ne dit que le titre, jamais la raison.** La raison contient l'heure
+— « il est 23:35 » — donc un texte neuf à chaque fois, donc une synthèse
+vocale refaite à chaque fois. Le titre vient mot pour mot de la configuration :
+Home Assistant le retrouve dans son cache et ne rappelle pas Piper. C'est la
+couche 1 de §7, obtenue en écrivant une ligne de moins plutôt qu'une de plus
+(D5). Un test vérifie que deux occurrences de la même alerte produisent le même
+texte à l'octet près — c'est la condition du cache, et elle est fragile.
+
+### Deux réglages de silence, qui ne disent pas la même chose
+
+| | Ce que ça veut dire |
+|---|---|
+| `regle.silence: false` | *Cette règle a le droit de parler la nuit.* Vaut pour le tiroir **et** pour l'enceinte — sinon le rappel de coucher s'afficherait à 23 h 20 sans jamais se dire, ce qui est exactement le problème qu'une enceinte est censée régler |
+| `annonce.silence: true` | *Ne réveille pas la maison.* Couvre tout le reste, **y compris une alerte `critical`** : elle a le droit d'apparaître dans le tiroir à 3 h du matin ; réveiller la maison est une autre décision |
+
+Par défaut : `warning` et `critical` se disent, `info` non, et rien ne parle
+entre 22 h 30 et 7 h sauf les règles qui l'ont demandé.
+
+### Éteint par défaut
+
+Sans `annonce.enceinte`, rien n'est jamais annoncé, et l'add-on ne le mentionne
+même pas dans son journal. §1 appliqué à une fonction qui a été demandée
+explicitement : elle reste explicitement à activer.
+
+```yaml
+annonce:
+  enceinte: media_player.salon
+  moteur: tts.piper
+  niveaux: [warning, critical]
+  silence: true
+```

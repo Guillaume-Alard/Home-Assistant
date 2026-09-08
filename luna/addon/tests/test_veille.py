@@ -20,7 +20,7 @@ from luna.engine.observers import ObservateurCoucher, ObservateurSequences
 from luna.engine.scheduler import Ordonnanceur
 from luna.kernel.facts import confiance
 from luna.kernel.schemas import ActionHA, MessageEnregistre
-from luna.kernel.settings import RegleVeille
+from luna.kernel.settings import Annonce, RegleVeille
 
 OUVRANT = "binary_sensor.luna_ouvrant_oublie"
 AMPOULE = "binary_sensor.luna_lumiere_oubliee"
@@ -376,6 +376,239 @@ class TestAgir:
         await allumer(veille, maison, OUVRANT, horloge)
         resultat = await veille.agir(veille.alertes()[0].id, contexte=_contexte())
         assert resultat == {"executed": False, "results": []}
+
+
+class TestAnnonceVocale:
+    """Faire dire une alerte sur une enceinte, demandé après coup.
+
+    Le point qui compte : ça passe par l'arbitre comme le reste. Ce n'est pas
+    une porte de sortie discrète du chemin de §9.
+    """
+
+    def _annonce(self, **kw) -> Annonce:
+        return Annonce(enceinte="media_player.salon", moteur="tts.piper", **kw)
+
+    async def test_sans_enceinte_rien_nest_annonce(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """§1 : par défaut, la fonction n'existe pas."""
+        veille = veille_avec(
+            [regle_ouvrant(silence=False)], memoire, maison, arbitre, emetteur, horloge
+        )
+        await allumer(veille, maison, OUVRANT, horloge)
+
+        assert emetteur.genres() == ["alert"]
+        assert maison.appels == []
+
+    async def test_une_alerte_warning_est_dite(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        veille = veille_avec(
+            [regle_ouvrant(silence=False)],
+            memoire,
+            maison,
+            arbitre,
+            emetteur,
+            horloge,
+            self._annonce(),
+        )
+        await allumer(veille, maison, OUVRANT, horloge)
+
+        assert [a.cle for a in maison.appels] == ["tts.speak"]
+        acte = maison.appels[0]
+        assert acte.target == {"entity_id": "tts.piper"}
+        assert acte.data["media_player_entity_id"] == "media_player.salon"
+
+    async def test_elle_ne_dit_que_le_titre(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """La raison contient l'heure — donc un texte neuf à chaque fois, donc
+        une synthèse refaite à chaque fois. Le titre vient de la configuration
+        et se retrouve dans le cache de Home Assistant (§7, couche 1)."""
+        veille = veille_avec(
+            [regle_ouvrant(silence=False)],
+            memoire,
+            maison,
+            arbitre,
+            emetteur,
+            horloge,
+            self._annonce(),
+        )
+        await allumer(veille, maison, OUVRANT, horloge)
+
+        message = maison.appels[0].data["message"]
+        assert message == "Un ouvrant est resté ouvert et il est tard."
+        assert "23" not in message and ":" not in message
+        assert maison.appels[0].data["cache"] is True
+
+    async def test_deux_fois_la_meme_alerte_donnent_le_meme_texte(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """La condition du cache : identique à l'octet près d'une fois sur
+        l'autre (D5)."""
+        veille = veille_avec(
+            [regle_ouvrant(silence=False)],
+            memoire,
+            maison,
+            arbitre,
+            emetteur,
+            horloge,
+            self._annonce(),
+        )
+        await allumer(veille, maison, OUVRANT, horloge)
+        await eteindre(veille, maison, OUVRANT, horloge)
+        horloge.avancer(hours=13)  # 20 h → 9 h : hors heures de silence
+        await allumer(veille, maison, OUVRANT, horloge)
+
+        textes = {a.data["message"] for a in maison.appels}
+        assert len(maison.appels) == 2
+        assert len(textes) == 1
+
+    async def test_une_info_ne_coupe_pas_la_piece(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """Par défaut seuls `warning` et `critical` parlent."""
+        regle = RegleVeille(entite=AMPOULE, niveau="info", message="Une lumière traîne.")
+        veille = veille_avec(
+            [regle], memoire, maison, arbitre, emetteur, horloge, self._annonce()
+        )
+        await allumer(veille, maison, AMPOULE, horloge)
+
+        assert emetteur.genres() == ["alert"]
+        assert maison.appels == []
+
+    async def test_une_regle_peut_forcer_lannonce(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """Le rappel de coucher : `info`, mais c'est justement lui qu'on veut
+        entendre."""
+        regle = RegleVeille(
+            entite=COUCHER,
+            niveau="info",
+            message="Il est l'heure d'aller te coucher.",
+            annonce=True,
+        )
+        veille = veille_avec(
+            [regle], memoire, maison, arbitre, emetteur, horloge, self._annonce()
+        )
+        horloge.a(21, 30)
+        await allumer(veille, maison, COUCHER, horloge)
+
+        assert [a.cle for a in maison.appels] == ["tts.speak"]
+
+    async def test_une_regle_peut_interdire_lannonce(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        veille = veille_avec(
+            [regle_ouvrant(silence=False, annonce=False)],
+            memoire,
+            maison,
+            arbitre,
+            emetteur,
+            horloge,
+            self._annonce(),
+        )
+        await allumer(veille, maison, OUVRANT, horloge)
+
+        assert emetteur.genres() == ["alert"]
+        assert maison.appels == []
+
+    async def test_une_regle_qui_parle_la_nuit_parle_aussi_a_voix_haute(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """`silence: false` vaut pour le tiroir **et** pour l'enceinte.
+
+        Sinon le rappel de coucher s'afficherait à 23 h 20 sans jamais se dire,
+        ce qui est exactement le problème qu'une enceinte est censée régler.
+        """
+        regle = RegleVeille(
+            entite=COUCHER,
+            message="Il est l'heure d'aller te coucher.",
+            silence=False,
+            annonce=True,
+        )
+        veille = veille_avec(
+            [regle], memoire, maison, arbitre, emetteur, horloge, self._annonce()
+        )
+        horloge.a(23, 20)
+        await allumer(veille, maison, COUCHER, horloge)
+
+        assert [a.cle for a in maison.appels] == ["tts.speak"]
+
+    async def test_une_alerte_critique_de_nuit_saffiche_sans_reveiller(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """`critical` traverse les heures de silence dans le tiroir. Réveiller
+        la maison est une autre décision."""
+        regle = RegleVeille(
+            entite=AMPOULE, niveau="critical", message="L'alarme n'est pas armée."
+        )
+        veille = veille_avec(
+            [regle], memoire, maison, arbitre, emetteur, horloge, self._annonce()
+        )
+        horloge.a(3, 0)
+        await allumer(veille, maison, AMPOULE, horloge)
+
+        assert emetteur.genres() == ["alert"], "elle apparaît bien dans le tiroir"
+        assert maison.appels == [], "mais l'enceinte reste muette"
+
+    async def test_annonce_de_nuit_si_on_la_demande(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        regle = RegleVeille(
+            entite=AMPOULE, niveau="critical", message="L'alarme n'est pas armée."
+        )
+        veille = veille_avec(
+            [regle],
+            memoire,
+            maison,
+            arbitre,
+            emetteur,
+            horloge,
+            self._annonce(silence=False),
+        )
+        horloge.a(3, 0)
+        await allumer(veille, maison, AMPOULE, horloge)
+
+        assert [a.cle for a in maison.appels] == ["tts.speak"]
+
+    async def test_une_enceinte_muette_ne_perd_pas_lalerte(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """Une enceinte débranchée, c'est une ligne de journal — pas une alerte
+        perdue."""
+        maison.echoue = True
+        veille = veille_avec(
+            [regle_ouvrant(silence=False)],
+            memoire,
+            maison,
+            arbitre,
+            emetteur,
+            horloge,
+            self._annonce(),
+        )
+        await allumer(veille, maison, OUVRANT, horloge)
+
+        assert emetteur.genres() == ["alert"]
+        assert len(veille.alertes()) == 1
+
+    async def test_la_maison_seule_na_que_les_droits_dun_invite(
+        self, memoire, maison, arbitre, emetteur, horloge
+    ):
+        """§9 : ce que la veille déclenche d'elle-même est plafonné au confort.
+
+        Une règle qui voudrait faire régler le thermostat toute seule
+        n'obtiendrait qu'une proposition — et pour l'annonce, le profil
+        `maison` n'emprunte aucun droit d'administrateur.
+        """
+        from luna.engine.veille import CONTEXTE_VEILLE
+        from luna.kernel.autonomy import Niveau
+        from luna.kernel.permissions import MAISON, peut_agir_seule
+
+        assert CONTEXTE_VEILLE.profile == MAISON
+        assert CONTEXTE_VEILLE.is_admin is False
+        assert peut_agir_seule(MAISON, Niveau.CONFORT)
+        assert not peut_agir_seule(MAISON, Niveau.PERSISTANT)
 
 
 class TestObservateurCoucher:

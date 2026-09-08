@@ -78,6 +78,7 @@ class Luna:
             maison=self.maison,
             arbitre=self.arbitre,
             emettre=self._diffuser,
+            annonce=reglages.annonce,
         )
         self.observateurs = [
             ObservateurCoucher(
@@ -197,6 +198,13 @@ class Luna:
             )
         else:
             log.info("Veille : aucune règle déclarée — rien à surveiller.")
+        if self.reglages.annonce.enceinte:
+            log.info(
+                "Annonce vocale : %s (%s), niveaux %s",
+                self.reglages.annonce.enceinte,
+                self.reglages.annonce.moteur,
+                ", ".join(self.reglages.annonce.niveaux),
+            )
 
     async def arreter(self) -> None:
         await self.ordonnanceur.arreter()
