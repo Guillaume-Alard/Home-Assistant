@@ -317,27 +317,28 @@ télécharge Python, puis installe les dépendances. C'est normal, et ça n'arri
 qu'une fois — les reconstructions suivantes réutilisent la couche des
 dépendances.
 
-Onglet **Configuration**, avant de démarrer :
+Onglet **Configuration**. Tous les champs sont déjà remplis avec des valeurs
+saines — **tu n'as que trois choses à changer**, et à laisser tout le reste tel
+quel :
 
-```yaml
-anthropic_api_key: "sk-ant-…"
-modele: "claude-sonnet-5"
-effort: "low"
-relay_secret: "le-secret-fabriqué-au-§3"
-fuseau: "Europe/Paris"
-journal: "info"
-profils:
-  - utilisateur_ha: "Guillaume"
-    profil: "guillaume"
-    presence: ""
-profil_par_defaut: "guest"
-```
+| Champ | Ce que tu mets |
+|---|---|
+| `anthropic_api_key` | Ta clé, celle qui commence par `sk-ant-` (§3) |
+| `relay_secret` | Le secret fabriqué au §3 |
+| `profils` → `utilisateur_ha` | **Le nom exact de ton utilisateur Home Assistant** |
 
-`utilisateur_ha` doit correspondre **exactement** au nom de ton utilisateur
-Home Assistant — c'est lui qui fait qu'elle sait à qui elle parle.
+Ce troisième point mérite qu'on s'y arrête : c'est lui qui fait que Luna sait à
+qui elle parle. Le nom doit correspondre **au caractère près** à celui affiché
+dans **Paramètres → Personnes**. « Guillaume » et « guillaume » sont deux
+personnes différentes pour elle.
 
-Laisse tout le reste par défaut : la voix, l'identité, la veille et la gardienne
+Laisse `modele`, `effort`, `fuseau`, `journal`, `profil_par_defaut` tels quels.
+Laisse aussi vides tous les blocs `veille`, `observateurs`, `annonce`,
+`gardienne`, `modele_voix` : la voix, l'identité, les habitudes et la gardienne
 s'allument plus tard, chacune quand tu lui donneras de quoi travailler.
+
+> Si tu préfères éditer en YAML, le bouton **⋮ → Éditer en YAML** en haut de
+> l'onglet bascule la vue.
 
 **Démarrer**, puis onglet **Journal**. Tu dois y lire :
 
