@@ -98,7 +98,6 @@ luna/
 │   └── P1-CONTRATS.md                  #   ce fichier
 │
 ├── ops/
-│   ├── caddy/Caddyfile
 │   └── deploy.sh                       #   rsync vers Nova via l'add-on SSH
 │
 └── .github/workflows/ci.yml            #   ruff + lint-imports + pytest

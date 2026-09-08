@@ -80,12 +80,16 @@ de crédit.**
 
 ## Ce qui reste avant P2
 
-- Confirmer que Nova tourne bien Home Assistant OS (hypothèse H1).
-- Choisir le nom de domaine et l'hébergeur DNS, pour le HTTPS local. Sans lui,
-  `getUserMedia` reste refusé sur le réseau de la maison et la voix n'a pas de
-  micro — voir [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md).
-- Vérifier sur Nova que le cache de prompt prend vraiment
-  (`cache_read_input_tokens > 0` au second échange) : c'est le levier de coût
+Plus aucune décision en attente — seulement de l'exécution sur Nova.
+
+- **P0, le HTTPS local.** Sans lui, `getUserMedia` reste refusé sur le réseau de
+  la maison et la voix n'a pas de micro. Pas de domaine en propre : la procédure
+  passe par un sous-domaine **DuckDNS** gratuit et deux add-ons officiels, en
+  sept étapes chiffrées dans [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md).
+  La première, vider l'URL interne dans l'app Companion, débloque le micro en
+  deux minutes en attendant le reste.
+- **Vérifier que le cache de prompt prend** sur Nova
+  (`cache_read_input_tokens > 0` au second échange). C'est le levier de coût
   numéro un, et le seul point de la recette qu'aucun test ne peut couvrir sans
   dépenser des crédits.
 

@@ -100,8 +100,15 @@ Si Caddy tourne sur Nebula — l'endroit naturel, il y a déjà Docker — alors
 éteindre le NAS coupe le HTTPS, donc le micro, donc la moitié de Luna. La règle
 d'indépendance est violée par le prérequis censé la servir.
 
-**Ce que je propose.** Caddy tourne **sur Nova**, en add-on HAOS. Détails,
-alternative plus simple et critère de choix dans [`P0-HTTPS.md`](P0-HTTPS.md).
+**Ce que je propose.** Le proxy tourne **sur Nova**, en add-on HAOS.
+
+> **Mise à jour du 8 septembre.** Le principe tient — le proxy est sur Nova —
+> mais ce n'est plus Caddy. Faute de domaine en propre, le certificat vient de
+> l'add-on officiel **Duck DNS**, et l'add-on officiel **NGINX SSL proxy** le
+> sert sur le 443. Caddy n'était recommandé que parce qu'il sait *aussi*
+> obtenir le certificat ; ce n'est plus lui qui s'en charge, et un add-on Caddy
+> capable de DNS-01 demanderait une image personnalisée à maintenir. Procédure
+> complète dans [`P0-HTTPS.md`](P0-HTTPS.md).
 
 ## A4. Un dépôt HACS ne porte qu'une seule catégorie
 
@@ -260,21 +267,33 @@ Coche, corrige, ou réponds en vrac — j'adapte le contrat avant de coder.
 |---|---|---|
 | **A1** Troisième livrable : intégration `custom_components/luna/` | oui | ✅ validé — livré, ~600 lignes avec les tests |
 | **A2** Ouvrants et alarme en lecture seule en v1 | oui, §9 gagne sur F1 | ✅ validé — refus structurel, ces services ne sont pas déclarés à Claude |
-| **A3** Caddy sur Nova, pas sur Nebula | oui | ✅ validé — reste à faire, voir [`P0-HTTPS.md`](P0-HTTPS.md) |
+| **A3** Le proxy tourne sur Nova, pas sur Nebula | oui | ✅ validé sur le principe — mais **Caddy est remplacé** par les add-ons Duck DNS + NGINX SSL proxy, voir plus bas et [`P0-HTTPS.md`](P0-HTTPS.md) |
 | **A4** Pas de HACS en v1, déploiement par copie | oui | ✅ validé — `ops/deploy.sh` |
 | **A5** Routes §12 = API interne, jumelles WS pour la carte | oui | ✅ validé — les cinq routes répondent `501`, les onze commandes existent |
 | **A6** Profil P1 = utilisateur HA authentifié | oui | ✅ validé — et **durci** : le profil est résolu par l'add-on, pas annoncé par l'intégration |
 | **A7** P1 crée `action_log` seule, pas le modèle F4 | oui | ✅ validé — trois tables |
-| **H1** Nova est bien en HAOS | à confirmer | ⏳ **toujours ouvert** — l'add-on suppose le Supervisor |
+| **H1** Nova est bien en HAOS | à confirmer | ✅ **confirmé** le 8 septembre 2026 — l'architecture de §3 tient telle quelle |
 | **H21** Modèle par défaut | `claude-opus-5` ou `claude-sonnet-5` | ✅ **`claude-sonnet-5`** |
 | **H23** Repli automatique sur refus | activé | ⚠️ **abandonné** — le paramètre `fallbacks` est réservé à Opus 5 et Fable. Un `stop_reason: "refusal"` est traité explicitement et produit un message lisible plutôt qu'un silence. |
 | **H25** Contexte volatil en message système de milieu de conversation | oui | ⚠️ **remplacé** — capacité absente de Sonnet 5. Second bloc `system` après le point de rupture : même effet, cache préservé. |
-| Nom de domaine interne + hébergeur DNS | voir [`P0-HTTPS.md`](P0-HTTPS.md) | ⏳ **toujours ouvert** — bloque P0, donc P2 |
+| Nom de domaine interne + hébergeur DNS | voir [`P0-HTTPS.md`](P0-HTTPS.md) | ✅ **tranché** — aucun domaine possédé, donc **DuckDNS** (gratuit) plutôt qu'un achat |
 
-### Les deux questions encore ouvertes
+### Ce qui reste à faire, et par qui
 
-1. **Nova tourne-t-elle bien Home Assistant OS ?** C'est H1, la plus
-   structurante de la liste : sans Supervisor, il n'y a pas d'add-on, et
-   l'architecture de §3 change du tout au tout.
-2. **Quel domaine, chez quel hébergeur DNS ?** Sans réponse, P0 ne peut pas
-   être écrite, et sans P0, la voix de P2 n'a pas de micro.
+Plus aucune question ouverte : les deux dernières sont tombées le 8 septembre.
+
+- **H1 confirmée.** Nova tourne Home Assistant OS. L'add-on, le Supervisor et
+  `ws://supervisor/core/websocket` sont donc disponibles comme supposé.
+- **Le domaine.** Guillaume n'en possède aucun, seulement l'adresse Nabu Casa.
+  [`P0-HTTPS.md`](P0-HTTPS.md) a été réécrit autour de cette contrainte : un
+  sous-domaine **DuckDNS** gratuit et l'add-on officiel du même nom fournissent
+  le certificat, l'add-on **NGINX SSL proxy** le sert sur le 443. Un vrai
+  domaine reste souhaitable à terme, mais rien n'attend après lui.
+
+  Écart avec §4 du cahier des charges : Caddy est remplacé par ces deux add-ons
+  officiels. Raison en §3 de `P0-HTTPS.md` — Caddy était recommandé parce qu'il
+  sait aussi obtenir le certificat, ce dont DuckDNS se charge désormais, et un
+  add-on Caddy capable de DNS-01 demanderait une image personnalisée à
+  maintenir. Le bénéfice recherché — garder le 8123 en clair — est conservé.
+
+Il ne reste donc que de l'exécution sur Nova, décrite pas à pas.
