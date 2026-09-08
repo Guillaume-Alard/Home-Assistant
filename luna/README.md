@@ -85,6 +85,7 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le HTTPS local, sans nom de domaine : DuckDNS et deux add-ons officiels |
 | [`docs/P2-VOIX.md`](docs/P2-VOIX.md) | La phase voix : cinq décisions, contrats, écarts constatés, état de la recette |
 | [`docs/P3-IDENTITE.md`](docs/P3-IDENTITE.md) | L'identité : sept décisions, la formule de fusion, les contrats, les écarts |
+| [`docs/P4-HABITUDES-VEILLE.md`](docs/P4-HABITUDES-VEILLE.md) | **En attente de validation** — huit décisions, et une liste de ce que P4 ne fait pas |
 | [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova
@@ -113,9 +114,17 @@ est réellement exercé. **La CI ne consomme jamais de crédit.**
 
 ## Où en est le projet
 
-**P1, P2 et P3 sont livrées.** La suite, c'est P4 — apprentissage des habitudes
-et moteur de veille — et elle n'est pas cadrée : rien n'a été écrit qui
-l'anticipe.
+**P1, P2 et P3 sont livrées. P4 est cadrée et attend une validation** — voir
+[`docs/P4-HABITUDES-VEILLE.md`](docs/P4-HABITUDES-VEILLE.md).
+
+C'est la phase pour laquelle §1 a été écrit : une fois que Luna observe la
+maison et prend la parole, tout devient tentant. Le document tient donc une
+liste de ce que P4 **ne fait pas**, aussi longue que celle de ce qu'elle fait.
+La décision structurante : **la détection reste dans Home Assistant**, sous
+forme de capteurs déclaratifs. Luna ne calcule jamais « fenêtre ouverte et nuit
+et alarme non armée » — elle regarde le verdict, et n'apporte que ce que Home
+Assistant ne sait pas faire : ne pas harceler, choisir le moment, se souvenir
+d'un « ne plus me le dire ».
 
 Sur l'identité, le recadrage qui a rendu la phase faisable : le signal le plus
 fort n'est pas biométrique, c'est l'utilisateur Home Assistant authentifié, et
