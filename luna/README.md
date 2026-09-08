@@ -53,7 +53,8 @@ l'arbitre les refuserait de toute façon.
 |---|---|
 | [`docs/P1-HYPOTHESES.md`](docs/P1-HYPOTHESES.md) | Les sept contradictions du cahier des charges et leurs arbitrages, les trente hypothèses, et ce qui reste ouvert |
 | [`docs/P1-CONTRATS.md`](docs/P1-CONTRATS.md) | Couches, contrats WebSocket, échelle d'autonomie, schéma SQLite, écarts constatés, état de la recette |
-| [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le prérequis bloquant §4, à régler avant la voix |
+| [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le HTTPS local, sans nom de domaine : DuckDNS et deux add-ons officiels |
+| [`docs/P2-VOIX.md`](docs/P2-VOIX.md) | **En attente de validation** — les cinq décisions et les contrats de la phase voix |
 
 ## Installer sur Nova
 
@@ -78,9 +79,16 @@ faux serveur WebSocket, le client Claude contre des réponses enregistrées, la
 carte contre un faux `hass` qui rejoue le contrat §4. **La CI ne consomme jamais
 de crédit.**
 
-## Ce qui reste avant P2
+## Où en est le projet
 
-Plus aucune décision en attente — seulement de l'exécution sur Nova.
+**P1 est livrée.** **P2 est cadrée et attend une validation** — voir
+[`docs/P2-VOIX.md`](docs/P2-VOIX.md), qui tient en cinq décisions. La plus
+structurante : Luna devient un **agent de conversation** Home Assistant et ne
+porte ni STT ni TTS. Whisper et Piper restent les add-ons officiels, dans le
+pipeline Assist, comme le demande §7 — au prix d'un écart avec le schéma de §3,
+qui les accrochait sous l'add-on Luna.
+
+### En parallèle, sur Nova
 
 - **P0, le HTTPS local.** Sans lui, `getUserMedia` reste refusé sur le réseau de
   la maison et la voix n'a pas de micro. Pas de domaine en propre : la procédure
