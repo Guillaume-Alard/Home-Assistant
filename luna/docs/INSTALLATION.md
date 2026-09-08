@@ -46,22 +46,43 @@ préfères la ligne de commande et que tu comptes redéployer souvent.
 **Paramètres → Modules complémentaires → Boutique → Samba share → Installer.**
 Officiel, présent d'origine dans la boutique.
 
+Dans l'onglet **Configuration**, il suffit de mettre un mot de passe — laisse
+tout le reste par défaut :
+
 ```yaml
-workgroup: WORKGROUP
-username: nova
+username: homeassistant
 password: "un-mot-de-passe-a-toi"
-allow_hosts:
-  - 192.168.0.0/16
-  - 172.16.0.0/12
-  - 10.0.0.0/8
 ```
 
-Démarre-le, active **Démarrer au démarrage**. Nova apparaît alors dans le
-voisinage réseau, avec des partages `addons`, `config`, `share`, `ssl`. Copier
-un dossier devient un glisser-déposer.
+Démarre-le, et active **Démarrer au démarrage**.
 
 > Sur macOS : Finder → Aller → Se connecter au serveur → `smb://nova.local`.
 > Sur Windows : `\\nova.local` dans l'explorateur.
+> Identifiants : ceux que tu viens de mettre.
+
+### ⚠️ Le partage ne s'appelle pas `addons`
+
+C'est le piège qui coûte le plus de temps, parce que tous les tutoriels qui
+traînent en ligne sont périmés sur ce point. **L'add-on Samba a renommé ses
+partages.** Voici ce que tu vois vraiment :
+
+| Nom du partage | Ancien nom | Chemin dans HAOS | À quoi ça sert ici |
+|---|---|---|---|
+| **`local_apps`** | ~~`addons`~~ | `/addons` | **L'add-on Luna va là** |
+| **`config`** | — | `/config` | L'intégration et la carte vont là |
+| `app_configs` | ~~`addon_configs`~~ | `/addon_configs` | Rien pour nous |
+| `share` | — | `/share` | Les modèles de voix et de visage, plus tard |
+| `backup`, `media`, `ssl` | — | — | Rien pour nous |
+
+Donc : **si tu cherches un dossier `addons`, tu ne le trouveras pas. C'est
+`local_apps`.**
+
+Le chemin *à l'intérieur* de Home Assistant reste `/addons/luna/` — c'est là que
+la boutique ira chercher. Seul le nom du partage réseau a changé. Autrement dit :
+tu déposes dans `local_apps/luna/`, et Home Assistant lit `/addons/luna/`.
+
+**Tu ne vois aucun partage du tout ?** Alors Samba n'est pas installé ou pas
+démarré. Vérifie son journal dans l'onglet **Journal** de l'add-on.
 
 **b. Advanced SSH & Web Terminal — pour redéployer ensuite**
 
@@ -147,8 +168,9 @@ Trois artefacts à copier, quatre choses à laisser sur ton PC.
 
 ### 2.4 — Les trois copies, exactement
 
-Connecte-toi au partage Samba (§1.2). Tu vois des dossiers `addons`, `config`,
-`share`, `ssl`. Puis, **dans cet ordre** :
+Connecte-toi au partage Samba (§1.2). Tu vois `local_apps`, `config`,
+`app_configs`, `share`, `backup`, `media`, `ssl`. Seuls les deux premiers nous
+intéressent. Puis, **dans cet ordre** :
 
 ---
 
@@ -157,17 +179,18 @@ Connecte-toi au partage Samba (§1.2). Tu vois des dossiers `addons`, `config`,
 | | |
 |---|---|
 | **Depuis** | `luna/addon/` — le dossier entier |
-| **Vers** | le partage `addons`, dans un dossier que tu nommes **`luna`** |
-| **Résultat** | `addons/luna/config.yaml` doit exister |
+| **Vers** | le partage **`local_apps`** (c'est l'ancien `addons`), dans un dossier que tu nommes **`luna`** |
+| **Résultat** | `local_apps/luna/config.yaml` doit exister |
 
-⚠️ **Le piège.** Tu copies le dossier `addon` (singulier, sans « s ») et tu le
-renommes `luna`. Le plus simple : crée d'abord un dossier vide `luna` dans
-`addons`, puis copie **le contenu** de `luna/addon/` dedans.
+⚠️ **Deux pièges d'un coup.** Le partage s'appelle `local_apps`, pas `addons`
+(§1.2). Et tu copies le dossier `addon` (singulier, sans « s ») en le renommant
+`luna`. Le plus simple : crée d'abord un dossier vide `luna` dans `local_apps`,
+puis copie **le contenu** de `luna/addon/` dedans.
 
-Après la copie, `addons/luna/` doit contenir exactement ceci :
+Après la copie, `local_apps/luna/` doit contenir exactement ceci :
 
 ```
-addons/luna/
+local_apps/luna/
 ├── config.yaml          ← ce fichier doit être ICI, à la racine
 ├── Dockerfile
 ├── requirements.txt
@@ -180,9 +203,9 @@ addons/luna/
 └── tests/               ← inutile sur Nova, mais inoffensif. Tu peux le supprimer.
 ```
 
-Si `addons/luna/addon/config.yaml` existe au lieu de `addons/luna/config.yaml`,
-tu as copié un niveau de trop. C'est **la** cause du « Luna n'apparaît pas dans
-les add-ons locaux ».
+Si `local_apps/luna/addon/config.yaml` existe au lieu de
+`local_apps/luna/config.yaml`, tu as copié un niveau de trop. C'est **la** cause
+du « Luna n'apparaît pas dans les add-ons locaux ».
 
 ---
 
@@ -241,9 +264,9 @@ rien à faire sur Nova.
 Trois chemins doivent exister. Vérifie-les un par un dans le partage :
 
 ```
-addons/luna/config.yaml
-config/custom_components/luna/manifest.json
-config/www/luna-card.js
+local_apps/luna/config.yaml                    ← partage local_apps
+config/custom_components/luna/manifest.json    ← partage config
+config/www/luna-card.js                        ← partage config
 ```
 
 Si les trois sont là, la partie fastidieuse est finie.
@@ -411,9 +434,10 @@ c'est voulu.
 Par ordre de fréquence réelle.
 
 **« Luna » n'apparaît pas dans les add-ons locaux.**
-Dans neuf cas sur dix, c'est un niveau de dossier en trop. Le chemin exact doit
-être `addons/luna/config.yaml`, **pas** `addons/luna/addon/config.yaml` ni
-`addons/addon/config.yaml`. Va vérifier dans le partage avant toute autre chose.
+Deux causes, dans cet ordre. **Un** : tu as déposé dans le mauvais partage —
+c'est `local_apps` et non `addons`, qui n'existe plus (§1.2). **Deux** : un
+niveau de dossier en trop. Le chemin exact doit être
+`local_apps/luna/config.yaml`, **pas** `local_apps/luna/addon/config.yaml`. Va vérifier dans le partage avant toute autre chose.
 Ensuite seulement, **⋮ → Vérifier les mises à jour** — un simple rechargement de
 page ne suffit pas.
 
