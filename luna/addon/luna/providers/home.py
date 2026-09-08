@@ -423,18 +423,22 @@ class ClientMaison:
             )
         return entrees
 
-    async def journal_systeme(self) -> list[EnregistrementJournal]:
+    async def journal_systeme(self) -> list[EnregistrementJournal] | None:
         """`system_log/list` — demande des droits d'administrateur (H64).
 
-        Un refus rend une liste vide plutôt qu'une exception : la famille
-        « automatisations » s'éteint, les trois autres continuent, et
-        `luna/health` le dit franchement dans `sources`.
+        `None` veut dire « je n'ai pas pu lire », une liste vide veut dire
+        « rien à signaler ». Les confondre serait dire « tout va bien » à la
+        place de « je n'ai pas regardé », ce que §8 interdit — et une
+        installation en bonne santé a justement un journal vide.
+
+        Un refus ne lève pas : la famille « automatisations » s'éteint, les
+        trois autres continuent, et `luna/health` le dit dans `sources`.
         """
         try:
             brut = await self._envoyer({"type": "system_log/list"})
         except MaisonIndisponible as exc:
             log.info("Journal système indisponible : %s", exc.message)
-            return []
+            return None
         return [
             EnregistrementJournal(
                 name=e.get("name", ""),

@@ -98,8 +98,14 @@ class MaisonProvider(Protocol):
         """Les intégrations et leur état (`config_entries/get`)."""
         ...
 
-    async def journal_systeme(self) -> list[EnregistrementJournal]:
-        """`system_log/list`. Demande des droits d'administrateur (H64)."""
+    async def journal_systeme(self) -> list[EnregistrementJournal] | None:
+        """`system_log/list`. Demande des droits d'administrateur (H64).
+
+        `None` = je n'ai pas pu lire. Liste vide = rien à signaler. La
+        distinction n'est pas cosmétique : une installation saine a un journal
+        vide, et la confondre avec un refus d'accès ferait dire à Luna « tout
+        va bien » là où elle devrait dire « je n'ai pas regardé » (§8).
+        """
         ...
 
     async def config_loggia(self, url_path: str = "") -> dict[str, Any]:

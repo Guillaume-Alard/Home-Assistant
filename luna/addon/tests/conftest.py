@@ -138,7 +138,8 @@ class FauxMaison:
         return list(self.entrees)
 
     async def journal_systeme(self):
-        return list(self.journal)
+        """`None` = droits refusés, liste vide = rien à signaler."""
+        return None if self.journal is None else list(self.journal)
 
     async def config_loggia(self, url_path: str = ""):
         return dict(self.loggia)

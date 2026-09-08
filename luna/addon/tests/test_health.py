@@ -417,6 +417,40 @@ class TestAutomatisations:
 
         assert emetteur.evenements == []
 
+    async def test_un_journal_vide_veut_dire_rien_a_signaler(
+        self, montage, maison, horloge
+    ):
+        """§8 : « j'ai regardé, il n'y a rien » n'est pas « je n'ai pas pu ».
+
+        Une installation en bonne santé a justement un journal vide. Les
+        confondre ferait dire à Luna qu'elle n'a pas regardé alors qu'elle l'a
+        fait — et l'inverse, un jour où ça compterait.
+        """
+        gardienne, _, _ = montage()
+        await connecter(gardienne, horloge)
+        maison.journal = []
+
+        await gardienne.battre()
+        rapport = await gardienne.rapport()
+
+        assert rapport.sources["system_log"] is True
+
+    async def test_la_source_ne_change_pas_dun_battement_a_lautre(
+        self, montage, maison, horloge
+    ):
+        """Elle oscillait : `bool([]) or not True` un tour, l'inverse le
+        suivant. Un rapport qui change d'avis toutes les cinq minutes n'est
+        pas un rapport."""
+        gardienne, _, _ = montage()
+        await connecter(gardienne, horloge)
+        maison.journal = []
+
+        vues = []
+        for _ in range(3):
+            await gardienne.battre()
+            vues.append((await gardienne.rapport()).sources["system_log"])
+        assert vues == [True, True, True]
+
     async def test_le_journal_peut_etre_coupe(self, montage, maison, horloge, emetteur):
         gardienne, _, _ = montage(journal_systeme=False)
         await connecter(gardienne, horloge)
@@ -714,7 +748,7 @@ class TestRapport:
             EntreeConfig(entry_id="e_1", domain="mqtt", state="setup_error"),
             EntreeConfig(entry_id="e_2", domain="hue", state="loaded"),
         ]
-        maison.journal = []  # droits refusés : la liste revient vide
+        maison.journal = None  # droits refusés
         await gardienne.battre()
 
         rapport = await gardienne.rapport()

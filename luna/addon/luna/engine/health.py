@@ -301,9 +301,12 @@ class Gardienne:
 
     async def _verifier_journal(self, maintenant: datetime) -> None:
         enregistrements = await self._maison.journal_systeme()
-        self._sources["system_log"] = bool(enregistrements) or not self._sources.get(
-            "system_log", True
-        )
+        # `None` = pas les droits ; liste vide = rien à signaler. Une
+        # installation saine a un journal vide, et le rapport doit dire « j'ai
+        # regardé, il n'y a rien » — pas « je n'ai pas pu ».
+        self._sources["system_log"] = enregistrements is not None
+        if not enregistrements:
+            return
         for ligne in enregistrements:
             if not ligne.name.startswith(PREFIXES_JOURNAL) or ligne.level != "ERROR":
                 continue
