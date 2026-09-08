@@ -31,6 +31,22 @@ CLE_ENREGISTRE = f"{DOMAINE}_commandes_enregistrees"
 #: Ces événements ferment la souscription : après, plus rien n'arrive (§4).
 EVENEMENTS_TERMINAUX = ("done", "error")
 
+#: Ce que la carte joint à **toutes** ses commandes, sans exception.
+#:
+#: `luna-card.js` construit chaque message avec `client_id` et `device` — le
+#: second est l'identifiant d'appareil de C6, celui qui fait vivre l'identité par
+#: appareil et non globalement. Une commande qui ne les déclare pas voit son
+#: message rejeté par Home Assistant **avant** d'atteindre l'intégration, et la
+#: carte affiche « not a valid option at "device" ».
+#:
+#: Les déclarer ici plutôt qu'à chaque commande n'est pas qu'une économie de
+#: lignes : c'est ce qui empêche d'en oublier une. `tests/test_integration.py`
+#: vérifie que les 22 commandes portent bien l'enveloppe.
+ENVELOPPE_CARTE: dict = {
+    vol.Optional("client_id"): str,
+    vol.Optional("device"): str,
+}
+
 
 def enregistrer_commandes(hass: HomeAssistant) -> None:
     """Une seule fois par démarrage, même si l'entrée est rechargée."""
@@ -222,9 +238,7 @@ def _flux(op: str):
 # ── P1 ───────────────────────────────────────────────────────────────────
 
 
-@websocket_api.websocket_command(
-    {vol.Required("type"): "luna/info", vol.Optional("client_id"): str}
-)
+@websocket_api.websocket_command({**ENVELOPPE_CARTE, vol.Required("type"): "luna/info"})
 @websocket_api.async_response
 async def ws_info(hass, connection, msg) -> None:
     await _ponctuelle(hass, connection, msg, "info", {})
@@ -232,10 +246,10 @@ async def ws_info(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/chat",
         vol.Required("text"): str,
         vol.Optional("conversation_id"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -247,7 +261,11 @@ async def ws_chat(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): "luna/cancel", vol.Required("message_id"): str}
+    {
+        **ENVELOPPE_CARTE,
+        vol.Required("type"): "luna/cancel",
+        vol.Required("message_id"): str,
+    }
 )
 @websocket_api.async_response
 async def ws_cancel(hass, connection, msg) -> None:
@@ -256,10 +274,10 @@ async def ws_cancel(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/history",
         vol.Optional("conversation_id"): str,
         vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1, max=200)),
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -270,9 +288,7 @@ async def ws_history(hass, connection, msg) -> None:
     await _ponctuelle(hass, connection, msg, "history", charge)
 
 
-@websocket_api.websocket_command(
-    {vol.Required("type"): "luna/feed", vol.Optional("client_id"): str}
-)
+@websocket_api.websocket_command({**ENVELOPPE_CARTE, vol.Required("type"): "luna/feed"})
 @websocket_api.async_response
 async def ws_feed(hass, connection, msg) -> None:
     await _flux("feed")(hass, connection, msg, {})
@@ -280,10 +296,10 @@ async def ws_feed(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/proposal/decide",
         vol.Required("proposal_id"): str,
         vol.Required("decision"): vol.In(("accept", "reject")),
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -299,9 +315,9 @@ async def ws_proposal_decide(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/speak",
         vol.Required("text"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -368,11 +384,7 @@ def _voix_du_pipeline(hass: HomeAssistant) -> tuple[str | None, str | None, str 
 
 
 @websocket_api.websocket_command(
-    {
-        vol.Required("type"): "luna/identity",
-        vol.Optional("device"): str,
-        vol.Optional("client_id"): str,
-    }
+    {**ENVELOPPE_CARTE, vol.Required("type"): "luna/identity"}
 )
 @websocket_api.async_response
 async def ws_identity(hass, connection, msg) -> None:
@@ -381,10 +393,9 @@ async def ws_identity(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/identity/voice",
         vol.Required("audio"): str,
-        vol.Optional("device"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -396,11 +407,10 @@ async def ws_identity_voice(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/identity/confirm",
         vol.Required("profile"): str,
         vol.Required("accept"): bool,
-        vol.Optional("device"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -416,10 +426,9 @@ async def ws_identity_confirm(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/identity/enroll/start",
         vol.Required("profile"): str,
-        vol.Optional("device"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -431,12 +440,11 @@ async def ws_enroll_start(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/identity/enroll/sample",
         vol.Required("session"): str,
         vol.Required("index"): int,
         vol.Required("audio"): str,
-        vol.Optional("device"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -454,10 +462,9 @@ async def ws_enroll_sample(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/identity/enroll/finish",
         vol.Required("session"): str,
-        vol.Optional("device"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -469,9 +476,9 @@ async def ws_enroll_finish(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/identity/forget",
         vol.Required("profile"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -484,10 +491,10 @@ async def ws_identity_forget(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/alerts/feedback",
         vol.Required("suggestion_id"): str,
         vol.Required("action"): vol.In(("accepted", "rejected", "muted")),
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -503,9 +510,9 @@ async def ws_alerts_feedback(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/alerts/act",
         vol.Required("suggestion_id"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -523,9 +530,9 @@ async def ws_alerts_act(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/patterns",
         vol.Optional("profile"): str,
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -533,9 +540,7 @@ async def ws_patterns(hass, connection, msg) -> None:
     await _ponctuelle(hass, connection, msg, "patterns", {"profile": msg.get("profile")})
 
 
-@websocket_api.websocket_command(
-    {vol.Required("type"): "luna/facts", vol.Optional("client_id"): str}
-)
+@websocket_api.websocket_command({**ENVELOPPE_CARTE, vol.Required("type"): "luna/facts"})
 @websocket_api.async_response
 async def ws_facts(hass, connection, msg) -> None:
     """La file de relecture : ce que le modèle propose et que personne n'a
@@ -545,10 +550,10 @@ async def ws_facts(hass, connection, msg) -> None:
 
 @websocket_api.websocket_command(
     {
+        **ENVELOPPE_CARTE,
         vol.Required("type"): "luna/facts/decide",
         vol.Required("fact_id"): str,
         vol.Required("decision"): vol.In(("accept", "reject")),
-        vol.Optional("client_id"): str,
     }
 )
 @websocket_api.async_response
@@ -563,16 +568,14 @@ async def ws_facts_decide(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): "luna/suggestions", vol.Optional("client_id"): str}
+    {**ENVELOPPE_CARTE, vol.Required("type"): "luna/suggestions"}
 )
 @websocket_api.async_response
 async def ws_suggestions(hass, connection, msg) -> None:
     await _ponctuelle(hass, connection, msg, "suggestions", {})
 
 
-@websocket_api.websocket_command(
-    {vol.Required("type"): "luna/health", vol.Optional("client_id"): str}
-)
+@websocket_api.websocket_command({**ENVELOPPE_CARTE, vol.Required("type"): "luna/health"})
 @websocket_api.async_response
 async def ws_health(hass, connection, msg) -> None:
     """L'état de l'installation, vu par la gardienne (P5).
@@ -585,7 +588,11 @@ async def ws_health(hass, connection, msg) -> None:
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): "luna/identity/face", vol.Required("image"): str}
+    {
+        **ENVELOPPE_CARTE,
+        vol.Required("type"): "luna/identity/face",
+        vol.Required("image"): str,
+    }
 )
 @websocket_api.async_response
 async def ws_identity_face(hass, connection, msg) -> None:

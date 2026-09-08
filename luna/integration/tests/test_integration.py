@@ -300,6 +300,41 @@ class TestGardienne:
         # §8 : `false` veut dire « je n'ai pas pu », jamais « tout va bien ».
         assert resultat["sources"] == {"system_log": True, "lovelace": False}
 
+    def test_toutes_les_commandes_acceptent_lenveloppe_de_la_carte(self):
+        """La carte joint `client_id` et `device` à **toutes** ses requêtes.
+
+        `luna-card.js` construit chaque message ainsi, sans exception :
+
+            {...message, client_id: "loggia", device: this._idAppareil()}
+
+        Une commande dont le schéma ne déclare pas ces deux clés voit son
+        message rejeté par Home Assistant **avant** d'atteindre l'intégration,
+        avec « not a valid option at "device" ». Rien ne passe, et l'add-on
+        n'en sait rien.
+
+        Les deux suites laissaient passer ça : la carte est testée contre un
+        faux `hass` qui ne valide aucun schéma, et l'intégration recevait des
+        messages écrits à la main, sans enveloppe. Personne ne testait la
+        jointure — ce test-ci ne teste que ça.
+        """
+        from custom_components.luna import websocket
+
+        commandes = [
+            objet
+            for nom, objet in vars(websocket).items()
+            if nom.startswith("ws_") and hasattr(objet, "_ws_schema")
+        ]
+        assert len(commandes) >= 20, "les commandes ne sont plus trouvées"
+
+        manquantes = {}
+        for commande in commandes:
+            declarees = {str(cle) for cle in commande._ws_schema.schema}
+            if absentes := {"client_id", "device"} - declarees:
+                manquantes[commande._ws_command] = sorted(absentes)
+        assert not manquantes, (
+            f"ces commandes rejetteront tout ce que la carte envoie : {manquantes}"
+        )
+
     def test_aucune_commande_decriture_nest_exposee(self):
         """L'intégration est la seule porte de la carte vers l'add-on.
 
