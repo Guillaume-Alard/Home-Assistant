@@ -3,7 +3,7 @@
 Le schéma a grandi par ajouts successifs, jamais par destruction : P1 a posé
 conversations, messages et `action_log` ; P3 les empreintes et le journal
 d'identité ; P4 les faits, leurs observations, leurs relations, le journal
-immuable et les scores de suggestion (D7).
+immuable et les scores de suggestion (D7) ; P5 les incidents d'installation.
 
 `action_log` **reste** et est désormais recopié dans `events` : §9.1 impose le
 premier, §4 impose le second, les deux vivent ensemble. Rien à migrer.
@@ -29,6 +29,7 @@ from ..kernel.schemas import (
     EntreeJournal,
     EvenementJournal,
     Fait,
+    Incident,
     MessageEnregistre,
     OutilResume,
     ScoreSuggestion,
@@ -37,7 +38,7 @@ from .voiceprint import depaqueter, empaqueter
 
 log = logging.getLogger("luna.store")
 
-VERSION_SCHEMA = 3
+VERSION_SCHEMA = 4
 
 #: Au-delà, on ouvre une nouvelle conversation plutôt que de reprendre le fil.
 FENETRE_CONVERSATION = timedelta(hours=12)
@@ -173,6 +174,26 @@ CREATE TABLE IF NOT EXISTS suggestion_scores (
     muted_until TEXT,
     updated_at  TEXT NOT NULL
 );
+
+-- ── Gardienne de l'installation (P5) ────────────────────────────────────
+-- Une anomalie n'est pas un fait au sens de §4 : ce n'est pas une vérité
+-- durable sur la maisonnée, c'est un épisode. Elle a un début, une fin, et
+-- elle doit survivre à un redémarrage de l'add-on — sinon Luna dirait
+-- « depuis 2 minutes » d'une panne vieille de trois jours.
+CREATE TABLE IF NOT EXISTS health_incidents (
+    id        TEXT PRIMARY KEY,
+    cle       TEXT NOT NULL,
+    famille   TEXT NOT NULL,
+    sujet     TEXT NOT NULL,
+    ouvert_le TEXT NOT NULL,
+    ferme_le  TEXT,
+    details   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_cle ON health_incidents(cle, ouvert_le);
+-- Un seul incident ouvert par clé : c'est l'index qui l'applique, pas la
+-- discipline de l'appelant.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_incidents_ouvert
+    ON health_incidents(cle) WHERE ferme_le IS NULL;
 """
 
 
@@ -808,3 +829,70 @@ class MagasinSQLite:
             ),
         )
         await self._co.commit()
+
+    # ── Incidents d'installation (P5) ────────────────────────────────────
+
+    async def ouvrir_incident(self, incident: Incident) -> Incident:
+        """Ouvre l'incident, ou rend celui qui est déjà ouvert sous cette clé.
+
+        Le second cas est le plus important : après un redémarrage de l'add-on,
+        une panne toujours en cours doit garder sa date d'ouverture. C'est ce
+        qui permet de dire « depuis mardi » (E8).
+        """
+        if (courant := await self._incident_ouvert(incident.cle)) is not None:
+            return courant
+        await self._co.execute(
+            "INSERT INTO health_incidents (id, cle, famille, sujet, ouvert_le, "
+            "ferme_le, details) VALUES (?, ?, ?, ?, ?, NULL, ?)",
+            (
+                incident.id,
+                incident.cle,
+                incident.famille,
+                incident.sujet,
+                incident.ouvert_le.isoformat(),
+                json.dumps(incident.details, ensure_ascii=False),
+            ),
+        )
+        await self._co.commit()
+        log.info("Incident ouvert : %s", incident.cle)
+        return incident
+
+    async def fermer_incident(self, cle: str, quand: datetime) -> Incident | None:
+        incident = await self._incident_ouvert(cle)
+        if incident is None:
+            return None
+        await self._co.execute(
+            "UPDATE health_incidents SET ferme_le = ? WHERE id = ?",
+            (quand.isoformat(), incident.id),
+        )
+        await self._co.commit()
+        log.info("Incident refermé : %s", cle)
+        return incident.model_copy(update={"ferme_le": quand})
+
+    async def incidents_ouverts(self) -> list[Incident]:
+        curseur = await self._co.execute(
+            "SELECT * FROM health_incidents WHERE ferme_le IS NULL ORDER BY ouvert_le"
+        )
+        return [self._vers_incident(ligne) for ligne in await curseur.fetchall()]
+
+    async def _incident_ouvert(self, cle: str) -> Incident | None:
+        curseur = await self._co.execute(
+            "SELECT * FROM health_incidents WHERE cle = ? AND ferme_le IS NULL",
+            (cle,),
+        )
+        ligne = await curseur.fetchone()
+        return self._vers_incident(ligne) if ligne is not None else None
+
+    @staticmethod
+    def _vers_incident(ligne: aiosqlite.Row) -> Incident:
+        return Incident(
+            id=ligne["id"],
+            cle=ligne["cle"],
+            famille=ligne["famille"],
+            sujet=ligne["sujet"],
+            ouvert_le=datetime.fromisoformat(ligne["ouvert_le"]),
+            ferme_le=datetime.fromisoformat(ligne["ferme_le"])
+            if ligne["ferme_le"]
+            else None,
+            details=json.loads(ligne["details"]),
+        )

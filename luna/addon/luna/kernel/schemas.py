@@ -423,6 +423,72 @@ class ChangementEtat(Modele):
     ts: datetime
 
 
+# ── Gardienne de l'installation (P5) ─────────────────────────────────────
+
+
+class EntreeConfig(Modele):
+    """Une intégration, telle que `config_entries/get` la décrit.
+
+    ⚠️ `title` et `reason` sont écrits par l'intégration, pas par Luna : ce sont
+    des chaînes non fiables (H71). Elles peuvent finir sous les yeux du modèle,
+    jamais dans une décision.
+    """
+
+    entry_id: str
+    domain: str
+    title: str = ""
+    state: str = ""
+    reason: str | None = None
+    disabled_by: str | None = None
+
+
+class EnregistrementJournal(Modele):
+    """Une ligne de `system_log/list`. Contenu non fiable, comme ci-dessus."""
+
+    name: str
+    message: list[str] = Field(default_factory=list)
+    level: str = ""
+    source: list[Any] = Field(default_factory=list)
+    count: int = 1
+    first_occurred: float = 0.0
+
+    @property
+    def cle(self) -> str:
+        """De quoi reconnaître deux fois la même erreur, sans son horodatage."""
+        premier = self.message[0] if self.message else ""
+        return f"{self.name}|{premier[:120]}"
+
+
+class Incident(Modele):
+    """Une anomalie ouverte, ou refermée. §4 ne s'applique pas : ce n'est pas
+    un fait durable sur la maisonnée, c'est un épisode (E8, H75)."""
+
+    id: str
+    cle: str
+    famille: Literal["entite", "integration", "automatisation", "loggia"]
+    sujet: str
+    ouvert_le: datetime
+    ferme_le: datetime | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def ouvert(self) -> bool:
+        return self.ferme_le is None
+
+
+class SanteInstallation(Modele):
+    """Ce que rend `luna/health`. Voir docs/P5-GARDIENNE.md §C.1."""
+
+    checked_at: datetime
+    ha_version: str | None = None
+    entities: dict[str, Any] = Field(default_factory=dict)
+    integrations: list[EntreeConfig] = Field(default_factory=list)
+    incidents: list[dict[str, Any]] = Field(default_factory=list)
+    #: Ce que Luna a **pu** regarder. `false` veut dire « je n'ai pas pu »,
+    #: jamais « tout va bien » (§8 : jamais un silence).
+    sources: dict[str, bool] = Field(default_factory=dict)
+
+
 # ── Persistance ──────────────────────────────────────────────────────────
 
 

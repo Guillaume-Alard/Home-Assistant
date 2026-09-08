@@ -1,7 +1,12 @@
 # Luna — P5 : gardienne de l'installation. Hypothèses et contrats
 
-**Statut : en attente de validation.** Aucun code n'est écrit tant que ce
-document n'est pas tranché (§11 du cahier des charges).
+**Statut : validé (E1–E8) et implémenté.** Q1 : oui pour Loggia. Q3 : 30
+minutes. Q4 : la liste `ignorer` est livrée. Q2 (un panneau « Installation »
+dans le tiroir) reste ouverte, et n'est pas construite — les anomalies
+apparaissent dans le tiroir de veille, ce qui suffit à la sortie de §11.
+
+Les écarts entre ce qui était prévu ici et ce qui a été construit sont en
+**partie G**.
 
 Sortie testable attendue (§11) : **détection d'une entité cassée avec correctif
 proposé.**
@@ -376,7 +381,8 @@ proposé ».
 | 13 | `system_log` refusé → la famille s'éteint et `sources.system_log` vaut `false` | ✅ |
 | 14 | Un incident survit à un redémarrage : « depuis mardi », pas « depuis 2 minutes » | ✅ |
 | 15 | Une entité cassée sur Nova, un correctif proposé, et il est juste | ⏳ **sur Nova**, c'est la sortie de §11 |
-| 16 | `ruff`, `lint-imports`, `pytest` verts | ✅ |
+| 16 | `ruff`, `lint-imports`, `pytest` verts | ✅ 365 add-on, 45 intégration, 68 carte |
+| 17 | Une panne connue survit à un redémarrage **et continue d'être signalée** | ✅ `test_un_incident_survit_a_un_redemarrage` — voir G3 |
 
 Le point 10 est celui que je tiens le plus à écrire : c'est la première fois
 que Luna fait lire à un modèle des chaînes qu'elle n'a pas écrites.
@@ -384,6 +390,23 @@ que Luna fait lire à un modèle des chaînes qu'elle n'a pas écrites.
 ---
 
 # Partie F — Ce dont j'ai besoin de toi
+
+> ~~**Q1 — Luna a-t-elle le droit de lire la configuration de Loggia ?**~~
+> **Tranchée : oui.** Construit, en lecture stricte, une fois par jour depuis
+> l'entretien nocturne. `gardienne.loggia: false` l'éteint.
+
+> ~~**Q3 — Combien de temps avant qu'une entité compte comme cassée ?**~~
+> **Tranchée : 30 minutes**, réglable par `gardienne.minutes_avant_panne`.
+
+> ~~**Q4 — Y a-t-il des entités que Luna doit ignorer définitivement ?**~~
+> La liste `gardienne.ignorer` est livrée, vide. À remplir quand un appareil
+> hors ligne par choix se met à polluer le tiroir.
+
+> **Q2 — Un panneau « Installation » dans le tiroir ?** Toujours ouverte, et
+> pas construite : les anomalies arrivent dans le tiroir de veille, ce qui
+> suffit. On verra sur Nova si le manque se fait sentir.
+
+<details><summary>Les questions telles qu'elles étaient posées</summary>
 
 > **Q1 — Luna a-t-elle le droit de lire la configuration de Loggia ?**
 > C'est la famille d'anomalies qui apporte le plus (une carte qui pointe dans
@@ -411,3 +434,143 @@ que Luna fait lire à un modèle des chaînes qu'elle n'a pas écrites.
 
 Aucune de ces réponses ne bloque le code, sauf **Q1**, qui ajouterait une
 famille de détecteurs.
+
+</details>
+
+---
+
+# Partie G — Ce qui a bougé pendant l'écriture
+
+## G1. Le test d'invariant a attrapé sa première victime : moi
+
+H73 interdit à tout fichier de mentionner une commande d'écriture. Le premier
+échec du test n'était pas du code — c'était une docstring que je venais
+d'écrire, dans `providers/home.py` :
+
+```python
+"""La configuration brute d'un dashboard, **en lecture**.
+
+`lovelace/config/save` n'apparaît nulle part dans ce projet…
+"""
+```
+
+Elle disait la vérité et la rendait fausse en la disant. C'est exactement ce
+qu'on veut d'un test structurel : il ne comprend pas les intentions, il regarde
+les octets. La docstring nomme désormais la commande sans l'écrire.
+
+Le test va plus loin que H73 ne le demandait, et vérifie trois choses :
+
+| | |
+|---|---|
+| Aucune commande d'écriture dans le paquet | `lovelace/config/save`, `/delete`, `config_entries/update`, `/disable`, `config/automation/config` |
+| Les lectures de la gardienne sont une **liste fermée** | `COMMANDES_GARDIENNE` dans `providers/home.py`, et chacune doit être réellement utilisée |
+| L'add-on ne monte que `share:ro` | Lu dans `config.yaml`. Pas d'accès à `/config`, donc pas d'YAML écrit dans une configuration vivante |
+
+Le troisième est celui qui vieillira le mieux : le jour où quelqu'un ajoutera
+`config:rw` au manifeste pour se dépanner, le test le dira.
+
+## G2. Le correctif n'a demandé aucune ligne à l'arbitre
+
+C.3 prévoyait « rien dans `engine/arbiter.py` », et c'est tenu — pour de bon
+cette fois, contrairement à P4 (G2 de la phase précédente). L'alerte d'une
+intégration en erreur porte simplement une `ActionHA` dans son champ `actions`,
+et le bouton « Agir » de P4 s'en charge : `agir_hors_conversation`, registre,
+niveau 4, proposition, validation administrateur.
+
+La seule ligne ajoutée au registre :
+
+```python
+"homeassistant.reload_config_entry": Niveau.CONFIGURATION,
+```
+
+Et un test qui vérifie que `homeassistant.restart` reste au niveau 4 et n'est
+jamais proposé : une gardienne qui redémarre la maison pour réparer une pile
+est pire que la panne.
+
+## G3. H69 rendait une vraie panne invisible après un redémarrage
+
+Le défaut le plus intéressant de la phase, trouvé par un test que j'avais écrit
+pour vérifier autre chose (« un incident survit à un redémarrage »).
+
+H69 dit : « une entité jamais vue disponible depuis le démarrage n'est jamais
+signalée ». C'est juste, et ça protège d'une entité désactivée qui reviendrait
+à chaque redémarrage. Mais appliqué à la lettre :
+
+1. Un capteur tombe. Luna le signale. L'incident est ouvert en base.
+2. Luna redémarre. Au démarrage, le capteur est indisponible.
+3. Il entre donc dans « jamais vues », et **n'est plus jamais signalé**.
+
+Une vraie panne en cours disparaissait du tiroir pour toujours, précisément
+parce que Luna avait redémarré — le contraire de ce qu'on attend d'une
+gardienne.
+
+La correction tient en cinq lignes, et c'est la base qui tranche :
+
+```python
+for incident in await self._memoire.incidents_ouverts():
+    if incident.famille == "entite":
+        self._jamais_vues.discard(incident.sujet)
+        self._tombees[incident.sujet] = incident.ouvert_le
+```
+
+Un incident ouvert veut dire « Luna sait déjà que c'est cassé, et depuis
+quand ». Une entité désactivée n'a pas d'incident, elle reste donc ignorée :
+H69 garde son sens, elle cesse juste de manger les vraies pannes. Et l'alerte
+qui ressort dit « depuis 3 jours », pas « depuis 31 minutes ».
+
+## G4. Le modèle n'est jamais nécessaire — et c'est testé
+
+E6 disait « le modèle met en français ». En écrivant `_raconter`, l'ordre s'est
+imposé de lui-même : **le résumé de secours est calculé d'abord**, et le modèle
+ne fait que le remplacer s'il rend quelque chose d'exploitable.
+
+Une clé API épuisée, une panne réseau, le plafond quotidien de dix appels
+atteint, ou une réponse hors format : l'alerte sort quand même, en français
+correct, avec sa durée. `resume_de_secours` vit dans L0 et se teste sans rien.
+
+C'est la différence entre une gardienne et une fonctionnalité qui dépend d'un
+service tiers — et la seule façon acceptable de faire dépendre une surveillance
+d'une API payante.
+
+## G5. Un filtre de plus sur Loggia, pour ne pas signaler des cartes saines
+
+La lecture du dashboard collecte toute valeur sous les clés `entity`,
+`entity_id`, `entities`, `camera_image`, `badge`. Sans filtre, un titre comme
+« Version 2.1 du tableau » ressemblerait à une entité, et la gardienne
+signalerait une carte parfaitement saine.
+
+`_ressemble_a_une_entite` exige donc `domaine.objet` avec un domaine qui soit
+un identifiant Python valide. Un faux positif ici coûte plus cher qu'un faux
+négatif : mieux vaut rater une carte exotique que faire douter Guillaume d'un
+dashboard qui va bien.
+
+## G6. Deux ajouts au moteur de P4, et rien d'autre
+
+`MoteurVeille` a gagné exactement deux méthodes : `signaler(alerte)` et
+`lever(cle)`. Tout le reste — sourdine, score de §12, heures de silence,
+annonce vocale, tiroir de la carte — s'applique sans une ligne de plus, parce
+qu'une anomalie **est** une `Alerte` avec la même forme de clé.
+
+Concrètement, gratuitement : un capteur qui tombe toutes les semaines se met en
+sourdine trente jours sur *sa* clé ; une panne repérée à 3 h attend 7 h ; et la
+carte n'a pas changé d'un octet.
+
+## G7. Ce que P5 continue de ne pas faire
+
+La partie D est tenue intégralement. Les trois refus de E1 ne reposent sur
+aucune promesse :
+
+- **Aucune écriture dans la configuration** — test statique sur tout le paquet,
+  et sur le fichier de l'intégration côté Home Assistant.
+- **Aucun accès disque à `/config`** — test statique sur `config.yaml`.
+- **Aucun correctif appliqué seul** — un seul acte, en niveau 4, testé.
+
+Et les autres :
+
+- Aucune détection par le modèle : la gardienne n'a pas accès au cerveau pour
+  décider, seulement pour formuler.
+- Aucune action décidée par le modèle : `TestEntreeNonFiable` fait rejouer une
+  injection par un faux cerveau et vérifie qu'il n'en sort qu'une phrase.
+- Aucune anomalie dans `facts` : une panne n'est pas une habitude.
+- Aucune surveillance système de Nova, aucun redémarrage de Home Assistant,
+  aucune notification mobile.

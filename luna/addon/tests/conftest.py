@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from luna.engine.arbiter import Arbitre
+from luna.engine.health import Gardienne
 from luna.engine.identity import MoteurIdentite
 from luna.engine.orchestrator import Orchestrateur
 from luna.engine.veille import MoteurVeille
@@ -24,11 +25,14 @@ from luna.kernel.schemas import (
     ActionHA,
     ChangementEtat,
     ContexteRequete,
+    EnregistrementJournal,
+    EntreeConfig,
     EtatEntite,
     EvenementCerveau,
     Piece,
     Usage,
 )
+from luna.kernel.settings import Gardienne as ReglagesGardienne
 from luna.providers.store import MagasinSQLite
 
 
@@ -52,6 +56,19 @@ class FauxMaison:
             "device_tracker.tel_clara": ("Téléphone de Clara", "home", None),
         }
         self._pieces = {"sejour": "Séjour", "cuisine": "Cuisine"}
+        #: entity_id → (entry_id, plateforme). Trois lampes du même hub : de
+        #: quoi éprouver le regroupement de H68.
+        self.entrees_entites: dict[str, tuple[str, str]] = {
+            "light.salon_plafond": ("e_zigbee", "mqtt"),
+            "light.salon_lampadaire": ("e_zigbee", "mqtt"),
+            "light.cuisine": ("e_zigbee", "mqtt"),
+            "switch.cafetiere": ("e_zigbee", "mqtt"),
+            "climate.sejour": ("e_netatmo", "netatmo"),
+        }
+        self.entrees: list[EntreeConfig] = []
+        self.journal: list[EnregistrementJournal] = []
+        self.loggia: dict[str, Any] = {}
+        self.version_ha = "2026.2.3"
 
     async def pieces(self) -> list[Piece]:
         compte: dict[str, dict[str, int]] = {a: {} for a in self._pieces}
@@ -105,6 +122,27 @@ class FauxMaison:
             raise MaisonIndisponible()
         self.appels.append(action)
 
+    # ── Ce que P5 demande en plus (lecture seule) ────────────────────────
+
+    def integration_de(self, entity_id: str) -> tuple[str, str]:
+        return self.entrees_entites.get(entity_id, ("", ""))
+
+    def nom_entite(self, entity_id: str) -> str:
+        nom, _, _ = self._entites.get(entity_id, (entity_id, None, None))
+        return nom or entity_id
+
+    def entites_connues(self) -> set[str]:
+        return set(self._entites)
+
+    async def entrees_config(self):
+        return list(self.entrees)
+
+    async def journal_systeme(self):
+        return list(self.journal)
+
+    async def config_loggia(self, url_path: str = ""):
+        return dict(self.loggia)
+
     # ── Ce que P4 demande en plus ────────────────────────────────────────
 
     def nom_piece(self, entity_id: str) -> str | None:
@@ -137,12 +175,23 @@ class FauxCerveau:
         #: Ce que l'entretien nocturne recevra en retour (P4).
         self.faits: list[dict[str, str]] = []
         self.extraits: list[str] = []
+        #: Ce que la gardienne recevra en retour (P5). Vide = pas de
+        #: diagnostic, donc le résumé de secours.
+        self.diagnostic: str = ""
+        self.constats: list[str] = []
 
     async def extraire_faits(self, extraits: str) -> list[dict[str, str]]:
         self.extraits.append(extraits)
         if self.leve is not None:
             raise self.leve
         return list(self.faits)
+
+    async def diagnostiquer(self, anomalie: str) -> str:
+        """P5 : le modèle met en français, il ne décide de rien."""
+        self.constats.append(anomalie)
+        if self.leve is not None:
+            raise self.leve
+        return self.diagnostic
 
     async def repondre(
         self,
@@ -307,6 +356,26 @@ def veille_avec(
 def veille(memoire, maison, arbitre, emetteur) -> MoteurVeille:
     """Un moteur sans aucune règle : suffisant pour le relais et les routes."""
     return veille_avec([], memoire, maison, arbitre, emetteur)
+
+
+def gardienne_avec(
+    memoire, maison, cerveau, veille, reglages=None, horloge=None
+) -> Gardienne:
+    return Gardienne(
+        maison=maison,
+        memoire=memoire,
+        cerveau=cerveau,
+        reglages=reglages or ReglagesGardienne(),
+        signaler=veille.signaler,
+        effacer=veille.lever,
+        horloge=horloge,
+    )
+
+
+@pytest.fixture
+def gardienne(memoire, maison, veille) -> Gardienne:
+    """Une gardienne branchée sur le moteur de veille, comme à l'amorçage."""
+    return gardienne_avec(memoire, maison, FauxCerveau(), veille)
 
 
 @pytest.fixture

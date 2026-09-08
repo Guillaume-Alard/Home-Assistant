@@ -58,6 +58,7 @@ def enregistrer_commandes(hass: HomeAssistant) -> None:
         ws_suggestions,
         ws_facts,
         ws_facts_decide,
+        ws_health,
         ws_identity_face,
     ):
         websocket_api.async_register_command(hass, commande)
@@ -567,6 +568,20 @@ async def ws_facts_decide(hass, connection, msg) -> None:
 @websocket_api.async_response
 async def ws_suggestions(hass, connection, msg) -> None:
     await _ponctuelle(hass, connection, msg, "suggestions", {})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/health", vol.Optional("client_id"): str}
+)
+@websocket_api.async_response
+async def ws_health(hass, connection, msg) -> None:
+    """L'état de l'installation, vu par la gardienne (P5).
+
+    Lecture seule de bout en bout : l'add-on ne propose aucune opération qui
+    écrirait dans la configuration de Home Assistant, et un test statique
+    refuse toute ligne qui en nommerait une.
+    """
+    await _ponctuelle(hass, connection, msg, "health", {})
 
 
 @websocket_api.websocket_command(

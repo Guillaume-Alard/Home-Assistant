@@ -141,6 +141,24 @@ class FauxRelais:
                 ]
             },
             "facts_decide": {"status": "active"},
+            # ── Gardienne (P5) ───────────────────────────────────────────
+            "health": {
+                "checked_at": "2026-09-08T21:14:00+02:00",
+                "ha_version": "2026.2.3",
+                "entities": {"total": 312, "unavailable": 12, "grace": False},
+                "integrations": [
+                    {
+                        "entry_id": "01J",
+                        "domain": "mqtt",
+                        "title": "Zigbee2MQTT",
+                        "state": "setup_retry",
+                        "reason": "Connection refused",
+                        "disabled_by": None,
+                    }
+                ],
+                "incidents": [],
+                "sources": {"system_log": True, "lovelace": False},
+            },
         }
         self.erreurs: dict[str, dict[str, str]] = {
             "identity_face": {"code": "not_implemented", "message": "Phase 6."},

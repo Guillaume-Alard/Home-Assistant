@@ -6,7 +6,8 @@ empêche une classe entière de régressions que la revue humaine laisse passer 
   1. qu'un chemin de code atteigne `appeler_service` sans passer par l'arbitre ;
   2. qu'un service oublié reçoive autre chose que le niveau 3 ;
   3. qu'un outil déclaré à Claude ne soit routé nulle part ;
-  4. qu'un domaine hors périmètre v1 devienne joignable par un outil.
+  4. qu'un domaine hors périmètre v1 devienne joignable par un outil ;
+  5. que Luna écrive dans la configuration de Home Assistant (P5, E1).
 """
 
 from __future__ import annotations
@@ -189,3 +190,93 @@ def test_chaque_module_a_une_docstring(chemin: Path):
     """Une couche sans explication est une couche qu'on contournera."""
     arbre = ast.parse(chemin.read_text(encoding="utf-8"))
     assert ast.get_docstring(arbre), f"{chemin.name} n'a pas de docstring de module"
+
+
+#: P5, E1 — les commandes WebSocket qui **écrivent** dans la configuration de
+#: Home Assistant. Aucun fichier du projet n'a le droit de les mentionner.
+#:
+#: Ce test-là est le plus important de P5, et le seul de la liste qui ne
+#: protège pas d'une erreur d'inattention. Luna est administratrice de Home
+#: Assistant : elle passe par le Supervisor, dont l'utilisateur vit dans
+#: `GROUP_ID_ADMIN`. Rien du côté de Home Assistant ne l'empêcherait de
+#: réécrire Loggia ou de désactiver une intégration. La seule barrière est
+#: celle-ci, et §10 raconte ce qui arrive quand elle n'existe pas.
+COMMANDES_ECRITURE = (
+    "lovelace/config/save",
+    "lovelace/config/delete",
+    "config_entries/update",
+    "config_entries/disable",
+    "config/automation/config",
+)
+
+#: Les fichiers qui ont le droit de **nommer** ces commandes pour dire qu'elles
+#: sont interdites — ce document-ci, et lui seul.
+FICHIERS_TEMOINS = {"tests/test_invariants.py"}
+
+
+class TestGardienneNecritJamais:
+    """P5, E1 : la gardienne lit. Elle n'écrit pas, et ça se prouve."""
+
+    def test_aucune_commande_decriture_dans_le_paquet(self):
+        coupables: dict[str, list[str]] = {}
+        for chemin in _fichiers_python():
+            texte = chemin.read_text(encoding="utf-8")
+            trouvees = [c for c in COMMANDES_ECRITURE if c in texte]
+            if trouvees:
+                coupables[str(chemin.relative_to(PAQUET))] = trouvees
+        assert not coupables, (
+            "Luna est administratrice de Home Assistant : rien ne l'empêche "
+            f"d'écrire, sauf ce test. Écritures trouvées : {coupables}"
+        )
+
+    def test_les_lectures_de_la_gardienne_sont_toutes_declarees(self):
+        """Ce que la gardienne demande à Home Assistant est une liste fermée.
+
+        Sans ça, une lecture ajoutée un jour de fatigue passerait inaperçue —
+        et la frontière entre lire et écrire est exactement ce qui tient cette
+        phase debout.
+        """
+        from luna.providers.home import COMMANDES_GARDIENNE
+
+        assert all(
+            not c.endswith(("/save", "/delete", "/update", "/disable"))
+            for c in COMMANDES_GARDIENNE
+        )
+        texte = (PAQUET / "providers" / "home.py").read_text(encoding="utf-8")
+        for commande in COMMANDES_GARDIENNE:
+            assert texte.count(f'"{commande}"') >= 1, (
+                f"{commande} est déclarée mais n'est utilisée nulle part"
+            )
+
+    def test_laddon_na_pas_acces_en_ecriture_au_disque(self):
+        """`config.yaml` ne mappe que `share:ro`.
+
+        C'est le second refus de E1 : pas d'accès à `/config`, donc pas
+        d'YAML écrit par un modèle dans une configuration vivante.
+        """
+        manifeste = (PAQUET.parent / "config.yaml").read_text(encoding="utf-8")
+        cartes = [
+            ligne.strip().lstrip("- ").strip()
+            for ligne in manifeste.splitlines()
+            if ligne.strip().startswith("- ") and ":" in ligne and "/" not in ligne
+        ]
+        montages = [
+            c
+            for c in cartes
+            if c.split(":")[0] in {"share", "config", "ssl", "addons", "backup", "media"}
+        ]
+        assert montages == ["share:ro"], (
+            f"L'add-on ne doit monter que « share:ro ». Trouvé : {montages}"
+        )
+
+
+class TestNiveauDuCorrectif:
+    """P5, E7 : le seul acte réparateur de la phase est en niveau 4."""
+
+    def test_recharger_une_integration_demande_une_validation(self):
+        assert niveau_de("homeassistant", "reload_config_entry") == Niveau.CONFIGURATION
+
+    def test_redemarrer_home_assistant_reste_en_niveau_quatre(self):
+        """Une gardienne qui redémarre la maison pour réparer une pile est pire
+        que la panne."""
+        assert niveau_de("homeassistant", "restart") == Niveau.CONFIGURATION

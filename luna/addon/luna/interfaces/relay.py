@@ -22,6 +22,7 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
+from ..engine.health import Gardienne
 from ..engine.identity import MoteurIdentite
 from ..engine.orchestrator import Orchestrateur
 from ..engine.veille import MoteurVeille
@@ -62,6 +63,7 @@ class Relais:
         resoudre_contexte: ResolveurContexte,
         identite: MoteurIdentite,
         veille: MoteurVeille,
+        gardienne: Gardienne,
     ) -> None:
         self._orchestrateur = orchestrateur
         self._bus = bus
@@ -69,6 +71,7 @@ class Relais:
         self._resoudre_contexte = resoudre_contexte
         self._identite = identite
         self._veille = veille
+        self._gardienne = gardienne
         self._connexions: set[Connexion] = set()
         bus.abonner(MaisonConnectee, self._sur_maison)
 
@@ -101,6 +104,7 @@ class Relais:
             self.diffuser,
             self._identite,
             self._veille,
+            self._gardienne,
         )
         self._connexions.add(connexion)
         log.info("Relais : intégration connectée (%s)", requete.remote)
@@ -122,6 +126,7 @@ class Connexion:
         diffuser_a_tous: Callable[[Any], Awaitable[None]],
         identite: MoteurIdentite,
         veille: MoteurVeille,
+        gardienne: Gardienne,
     ) -> None:
         self._ws = ws
         self._orchestrateur = orchestrateur
@@ -129,6 +134,7 @@ class Connexion:
         self._diffuser_a_tous = diffuser_a_tous
         self._identite = identite
         self._veille = veille
+        self._gardienne = gardienne
         self._verrou = asyncio.Lock()
         self._flux: dict[int, asyncio.Task[None]] = {}
         self._abonnes_feed: set[int] = set()
@@ -307,6 +313,9 @@ class Connexion:
                     str(charge.get("suggestion_id") or ""), contexte=contexte
                 ),
             )
+        elif op == "health":
+            rapport = await self._gardienne.rapport()
+            await self._resultat(identifiant, rapport.model_dump(mode="json"))
         elif op == "facts":
             await self._resultat(
                 identifiant,

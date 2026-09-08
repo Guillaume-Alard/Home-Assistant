@@ -11,7 +11,7 @@ version: "0.1.0"
 slug: luna
 description: >-
   Le cerveau de Luna — orchestrateur, API Claude, contrôle de Home Assistant.
-  Phases 1 à 4 : chat, voix, identité, habitudes et veille.
+  Phases 1 à 5 : chat, voix, identité, habitudes, veille et gardienne.
 url: https://github.com/Alardware/luna
 arch:
   - amd64
@@ -66,6 +66,20 @@ options:
       - critical
     silence: true
 
+  # ── Gardienne de l'installation (P5) ────────────────────────────────
+  #
+  # Elle **lit** l'état de Home Assistant : entités indisponibles,
+  # intégrations en erreur, journal des automatisations, cartes de Loggia
+  # qui pointent dans le vide. Elle n'écrit rien — et ça ne se règle pas
+  # ici, c'est vérifié statiquement (tests/test_invariants.py).
+  gardienne:
+    active: true
+    minutes_avant_panne: 30
+    ignorer: []
+    loggia: true
+    loggia_url_path: ""
+    journal_systeme: true
+
 schema:
   anthropic_api_key: password
   modele: str
@@ -107,3 +121,11 @@ schema:
     niveaux:
       - list(info|warning|critical)
     silence: bool?
+  gardienne:
+    active: bool
+    minutes_avant_panne: int(5,1440)
+    ignorer:
+      - str
+    loggia: bool
+    loggia_url_path: str?
+    journal_systeme: bool

@@ -114,6 +114,35 @@ class Annonce(BaseModel):
     silence: bool = True
 
 
+class Gardienne(BaseModel):
+    """La surveillance de l'installation (P5).
+
+    Allumée par défaut, contrairement à l'annonce vocale : elle ne fait que
+    lire, et ce qu'elle trouve arrive dans le tiroir de veille comme le reste.
+    Ce qu'elle ne fait **jamais**, c'est écrire dans la configuration de Home
+    Assistant — et ça ne se règle pas ici, c'est vérifié statiquement (E1, H73).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    active: bool = True
+    #: H66 — durée d'indisponibilité continue avant qu'une entité compte comme
+    #: cassée. En dessous, c'est un hoquet.
+    minutes_avant_panne: int = 30
+    #: Les entités hors ligne par choix : un vieux capteur, une prise
+    #: débranchée pour l'hiver. Sans cette liste elles polluent le tiroir pour
+    #: toujours, et c'est comme ça qu'on cesse de le regarder.
+    ignorer: list[str] = Field(default_factory=list)
+    #: Lire la configuration de Loggia pour trouver les cartes qui pointent
+    #: dans le vide. Lecture stricte, une fois par jour, rien n'en sort.
+    loggia: bool = True
+    #: Le dashboard à relire. Vide = celui par défaut.
+    loggia_url_path: str = ""
+    #: Lire `system_log` pour les automatisations en erreur. Demande des droits
+    #: d'administrateur ; si Luna ne les a pas, la famille s'éteint et le dit.
+    journal_systeme: bool = True
+
+
 class Reglages(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -140,6 +169,7 @@ class Reglages(BaseModel):
     entretien_actif: bool = True
     observateurs: Observateurs = Field(default_factory=Observateurs)
     annonce: Annonce = Field(default_factory=Annonce)
+    gardienne: Gardienne = Field(default_factory=Gardienne)
 
     # Non exposés dans les options : déduits de l'environnement.
     url_ha: str = URL_HA_SUPERVISOR

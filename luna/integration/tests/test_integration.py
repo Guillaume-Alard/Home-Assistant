@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from conftest import SECRET
 from homeassistant.config_entries import ConfigEntryState
@@ -283,6 +284,35 @@ class TestVeille:
             {"type": "luna/facts/decide", "fact_id": "f_2", "decision": "peut-etre"}
         )
         assert (await client.receive_json())["success"] is False
+
+
+class TestGardienne:
+    """P5 : la commande est en lecture, et elle dit ce qu'elle a pu regarder."""
+
+    async def test_luna_health(self, hass, entree, hass_ws_client):
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id({"type": "luna/health"})
+        reponse = await client.receive_json()
+
+        assert reponse["success"] is True
+        resultat = reponse["result"]
+        assert resultat["integrations"][0]["state"] == "setup_retry"
+        # §8 : `false` veut dire « je n'ai pas pu », jamais « tout va bien ».
+        assert resultat["sources"] == {"system_log": True, "lovelace": False}
+
+    def test_aucune_commande_decriture_nest_exposee(self):
+        """L'intégration est la seule porte de la carte vers l'add-on.
+
+        Rien de ce qu'elle enregistre ne peut écrire dans la configuration de
+        Home Assistant — c'est le pendant, côté nerf, du refus de P5, E1.
+
+        Synchrone à dessein : il lit un fichier et ne touche pas à `hass`.
+        """
+        from custom_components.luna import websocket
+
+        source = Path(websocket.__file__).read_text(encoding="utf-8")
+        for interdite in ("lovelace/config/save", "config_entries/update"):
+            assert interdite not in source
 
 
 class TestModeDegrade:

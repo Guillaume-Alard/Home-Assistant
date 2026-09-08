@@ -15,6 +15,7 @@ import signal
 from aiohttp import web
 
 from ..engine.arbiter import Arbitre
+from ..engine.health import Gardienne
 from ..engine.identity import MoteurIdentite
 from ..engine.nightly import EntretienNocturne
 from ..engine.observers import ObservateurCoucher, ObservateurSequences
@@ -23,7 +24,7 @@ from ..engine.scheduler import Ordonnanceur
 from ..engine.veille import MoteurVeille
 from ..kernel.bus import Bus
 from ..kernel.identity import INCONNU
-from ..kernel.schemas import ChangementEtat, ContexteRequete
+from ..kernel.schemas import ChangementEtat, ContexteRequete, MaisonConnectee
 from ..kernel.settings import Reglages, charger
 from ..providers.claude import CerveauClaude
 from ..providers.home import ClientMaison
@@ -92,6 +93,20 @@ class Luna:
                 piece_de=self.maison.nom_piece,
             ),
         ]
+        # ── Gardienne de l'installation (P5) ─────────────────────────────
+        # Elle ne parle jamais directement aux cartes : elle passe par le
+        # moteur de veille, donc par la même sourdine, le même score et les
+        # mêmes heures de silence qu'une alerte de capteur (E3).
+        self.gardienne = Gardienne(
+            maison=self.maison,
+            memoire=self.memoire,
+            cerveau=self.cerveau,
+            reglages=reglages.gardienne,
+            signaler=self.veille.signaler,
+            effacer=self.veille.lever,
+        )
+        self.bus.abonner(MaisonConnectee, self.gardienne.sur_connexion)
+
         self.entretien = EntretienNocturne(
             cerveau=self.cerveau,
             memoire=self.memoire,
@@ -103,6 +118,7 @@ class Luna:
             entretien=self.entretien,
             memoire=self.memoire,
             heure=reglages.moment_entretien(),
+            gardienne=self.gardienne,
         )
         # H63 : les observateurs et la veille réagissent au bus. Rien
         # n'interroge la maison en boucle.
@@ -115,6 +131,7 @@ class Luna:
             self._contexte,
             self.identite,
             self.veille,
+            self.gardienne,
         )
         self.app = construire_app(
             orchestrateur=self.orchestrateur,
@@ -142,6 +159,7 @@ class Luna:
         c'est elle qui porte la promesse de §5.
         """
         await self.veille.sur_changement(evenement)
+        await self.gardienne.sur_changement(evenement)
         for observateur in self.observateurs:
             try:
                 await observateur.sur_changement(evenement)
@@ -198,6 +216,13 @@ class Luna:
             )
         else:
             log.info("Veille : aucune règle déclarée — rien à surveiller.")
+        if self.reglages.gardienne.active:
+            log.info(
+                "Gardienne : seuil %s min, Loggia %s, journal système %s",
+                self.reglages.gardienne.minutes_avant_panne,
+                "oui" if self.reglages.gardienne.loggia else "non",
+                "oui" if self.reglages.gardienne.journal_systeme else "non",
+            )
         if self.reglages.annonce.enceinte:
             log.info(
                 "Annonce vocale : %s (%s), niveaux %s",

@@ -34,15 +34,18 @@ CONTEXTE = {
 class Banc:
     """Un add-on complet derrière un vrai serveur HTTP, sans Claude ni HA."""
 
-    def __init__(self, cerveau, maison, memoire, arbitre, bus, identite, veille) -> None:
+    def __init__(
+        self, cerveau, maison, memoire, arbitre, bus, identite, veille, gardienne
+    ) -> None:
         self.cerveau = cerveau
         self.maison = maison
         self.bus = bus
         self.identite = identite
         self.veille = veille
+        self.gardienne = gardienne
         self.orchestrateur = orchestrateur_avec(cerveau, maison, memoire, arbitre)
         self.relais = Relais(
-            self.orchestrateur, bus, SECRET, self._contexte, identite, veille
+            self.orchestrateur, bus, SECRET, self._contexte, identite, veille, gardienne
         )
         self.app = construire_app(
             orchestrateur=self.orchestrateur,
@@ -70,8 +73,8 @@ class Banc:
 
 
 @pytest.fixture
-async def banc(maison, memoire, arbitre, bus, identite, veille):
-    b = Banc(FauxCerveau(), maison, memoire, arbitre, bus, identite, veille)
+async def banc(maison, memoire, arbitre, bus, identite, veille, gardienne):
+    b = Banc(FauxCerveau(), maison, memoire, arbitre, bus, identite, veille, gardienne)
     coureur = web.AppRunner(b.app, shutdown_timeout=1.0)
     await coureur.setup()
     site = web.TCPSite(coureur, "127.0.0.1", 0)

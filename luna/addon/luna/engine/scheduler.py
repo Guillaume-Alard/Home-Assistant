@@ -1,9 +1,13 @@
 """L2 — l'ordonnanceur : trois rendez-vous, et pas un de plus.
 
-* **L'entretien nocturne**, une fois par jour à l'heure dite (D3).
+* **L'entretien nocturne**, une fois par jour à l'heure dite (D3), suivi de la
+  relecture de Loggia (P5).
 * **L'expiration des relectures**, dans la foulée (H59).
 * **Le réexamen des alertes différées**, toutes les cinq minutes : c'est lui
   qui sort à 7 h l'ampoule oubliée à 3 h (H58).
+* **Le tour de la gardienne**, au même battement : les entités tombées depuis
+  assez longtemps, les intégrations en erreur, le journal des automatisations
+  (P5). Un battement de cinq minutes suffit pour un seuil de trente.
 
 Une horloge, pas une scrutation. H63 interdit d'interroger la maison en boucle ;
 regarder l'heure ne coûte rien et ne réveille personne. Ce battement ne parle
@@ -24,6 +28,7 @@ from datetime import date, datetime, timedelta
 
 from ..kernel.contracts import MemoireProvider
 from ..kernel.veille import EXPIRATION_RELECTURE
+from .health import Gardienne
 from .nightly import EntretienNocturne
 from .veille import MoteurVeille
 
@@ -42,12 +47,14 @@ class Ordonnanceur:
         entretien: EntretienNocturne,
         memoire: MemoireProvider,
         heure: tuple[int, int],
+        gardienne: Gardienne | None = None,
         horloge: Callable[[], datetime] | None = None,
         battement: timedelta = BATTEMENT,
     ) -> None:
         self._veille = veille
         self._entretien = entretien
         self._memoire = memoire
+        self._gardienne = gardienne
         self._heure, self._minute = heure
         self._maintenant = horloge or (lambda: datetime.now().astimezone())
         self._battement = battement
@@ -88,6 +95,14 @@ class Ordonnanceur:
         except Exception:
             log.exception("Réexamen des alertes")
 
+        # Chaque famille est isolée : une gardienne qui trébuche ne doit pas
+        # emporter l'entretien nocturne, ni l'inverse.
+        if self._gardienne is not None:
+            try:
+                await self._gardienne.battre()
+            except Exception:
+                log.exception("Tour de la gardienne")
+
         if not self._est_l_heure(maintenant):
             return
         self._dernier_jour = maintenant.date()
@@ -96,6 +111,11 @@ class Ordonnanceur:
             await self._entretien.passer(maintenant)
         except Exception:
             log.exception("Entretien nocturne")
+        if self._gardienne is not None:
+            try:
+                await self._gardienne.relire_loggia()
+            except Exception:
+                log.exception("Relecture de Loggia")
 
     def _rendez_vous(self, jour: datetime) -> datetime:
         return jour.replace(

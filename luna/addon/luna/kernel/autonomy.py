@@ -62,6 +62,10 @@ REGISTRE: dict[str, Niveau] = {
     "automation.turn_on": Niveau.CONFIGURATION,
     "automation.turn_off": Niveau.CONFIGURATION,
     "automation.reload": Niveau.CONFIGURATION,
+    # Le seul acte réparateur de la gardienne (P5, E7). Niveau 4 : proposition,
+    # et validation par un administrateur. Une gardienne qui redémarre une
+    # intégration toute seule est exactement la dérive que §10 décrit.
+    "homeassistant.reload_config_entry": Niveau.CONFIGURATION,
     "lovelace.save_config": Niveau.CONFIGURATION,
     "homeassistant.restart": Niveau.CONFIGURATION,
     # ── 5 — HORS PÉRIMÈTRE v1 (§9, F3) ───────────────────────────────────

@@ -27,6 +27,8 @@ from ..kernel.errors import MaisonIndisponible
 from ..kernel.schemas import (
     ActionHA,
     ChangementEtat,
+    EnregistrementJournal,
+    EntreeConfig,
     EtatEntite,
     MaisonConnectee,
     Piece,
@@ -64,6 +66,10 @@ class ClientMaison:
         self._etats: dict[str, dict[str, Any]] = {}
         self._pieces: dict[str, str] = {}  # area_id → nom
         self._piece_entite: dict[str, str] = {}  # entity_id → area_id
+        # (entry_id, plateforme) par entité — de quoi regrouper les pannes par
+        # intégration plutôt que par appareil (P5, H68).
+        self._entree_entite: dict[str, tuple[str, str]] = {}
+        self._noms: dict[str, str] = {}
 
     # ── Cycle de vie ─────────────────────────────────────────────────────
 
@@ -278,10 +284,19 @@ class ClientMaison:
 
         entites = await self._envoyer({"type": "config/entity_registry/list"})
         self._piece_entite = {}
+        self._entree_entite = {}
+        self._noms = {}
         for entree in entites or []:
+            entity_id = entree["entity_id"]
             area = entree.get("area_id") or piece_appareil.get(entree.get("device_id"))
             if area:
-                self._piece_entite[entree["entity_id"]] = area
+                self._piece_entite[entity_id] = area
+            self._entree_entite[entity_id] = (
+                entree.get("config_entry_id") or "",
+                entree.get("platform") or "",
+            )
+            if nom := (entree.get("name") or entree.get("original_name")):
+                self._noms[entity_id] = nom
 
     # ── Lecture (niveau 1, libre) ────────────────────────────────────────
 
@@ -372,6 +387,84 @@ class ClientMaison:
 
     # ── Écriture — RÉSERVÉ À L'ARBITRE (§9.2) ────────────────────────────
 
+    # ── Gardienne de l'installation (P5) — lecture seule ─────────────────
+
+    def integration_de(self, entity_id: str) -> tuple[str, str]:
+        return self._entree_entite.get(entity_id, ("", ""))
+
+    def nom_entite(self, entity_id: str) -> str:
+        if nom := self._noms.get(entity_id):
+            return nom
+        brut = self._etats.get(entity_id) or {}
+        return str((brut.get("attributes") or {}).get(_ATTR_NOM) or entity_id)
+
+    def entites_connues(self) -> set[str]:
+        """Tout ce que Home Assistant connaît, disponible ou non.
+
+        Sert à repérer les cartes de Loggia qui pointent dans le vide : une
+        entité *indisponible* est en panne, une entité *inconnue* a été
+        supprimée. Les deux ne se réparent pas de la même façon.
+        """
+        return set(self._etats) | set(self._entree_entite)
+
+    async def entrees_config(self) -> list[EntreeConfig]:
+        brut = await self._envoyer({"type": "config_entries/get"})
+        entrees = []
+        for e in brut or []:
+            entrees.append(
+                EntreeConfig(
+                    entry_id=e.get("entry_id", ""),
+                    domain=e.get("domain", ""),
+                    title=e.get("title") or "",
+                    state=e.get("state") or "",
+                    reason=e.get("reason"),
+                    disabled_by=e.get("disabled_by"),
+                )
+            )
+        return entrees
+
+    async def journal_systeme(self) -> list[EnregistrementJournal]:
+        """`system_log/list` — demande des droits d'administrateur (H64).
+
+        Un refus rend une liste vide plutôt qu'une exception : la famille
+        « automatisations » s'éteint, les trois autres continuent, et
+        `luna/health` le dit franchement dans `sources`.
+        """
+        try:
+            brut = await self._envoyer({"type": "system_log/list"})
+        except MaisonIndisponible as exc:
+            log.info("Journal système indisponible : %s", exc.message)
+            return []
+        return [
+            EnregistrementJournal(
+                name=e.get("name", ""),
+                message=list(e.get("message") or []),
+                level=e.get("level", ""),
+                source=list(e.get("source") or []),
+                count=int(e.get("count") or 1),
+                first_occurred=float(e.get("first_occurred") or 0.0),
+            )
+            for e in brut or []
+            if isinstance(e, dict)
+        ]
+
+    async def config_loggia(self, url_path: str = "") -> dict[str, Any]:
+        """La configuration brute d'un dashboard, **en lecture**.
+
+        Il n'existe pas de méthode jumelle qui écrirait : la commande Lovelace
+        d'enregistrement n'apparaît nulle part dans ce projet, et un test
+        statique refuse toute ligne qui la nommerait (E1, H73). Le test m'a
+        d'ailleurs attrapé sur cette docstring — c'est bon signe.
+        """
+        charge: dict[str, Any] = {"type": "lovelace/config"}
+        if url_path:
+            charge["url_path"] = url_path
+        try:
+            return await self._envoyer(charge) or {}
+        except MaisonIndisponible as exc:
+            log.info("Configuration Loggia illisible : %s", exc.message)
+            return {}
+
     async def appeler_service(self, action: ActionHA) -> None:
         """⚠️ Ne doit être appelé que par `engine/arbiter.py`.
 
@@ -387,6 +480,17 @@ class ClientMaison:
         if action.data:
             charge["service_data"] = action.data
         await self._envoyer(charge)
+
+
+#: Ce que la gardienne a le droit de demander à Home Assistant. La liste est
+#: **exhaustive et en lecture seule** : c'est la moitié structurelle du refus de
+#: E1. Aucune commande d'écriture n'a de place ici, et `tests/test_invariants.py`
+#: vérifie qu'aucun fichier du projet n'en mentionne une.
+COMMANDES_GARDIENNE = (
+    "config_entries/get",
+    "system_log/list",
+    "lovelace/config",
+)
 
 
 async def _fermer_ws(ws: aiohttp.ClientWebSocketResponse) -> None:

@@ -65,6 +65,10 @@ Emetteur = Callable[[EvenementCarte], Awaitable[None]]
 #: doit pouvoir emprunter des droits d'administrateur. Le profil `maison` n'est
 #: celui de personne, et n'a donc que ce que la politique accorde à tout le
 #: monde (§9, `kernel/permissions.py`).
+#: Une alerte venue de la gardienne n'a pas de règle derrière elle. Les défauts
+#: font l'affaire : silence respecté, annonce décidée par le niveau.
+_REGLE_EXTERNE = RegleVeille(entite="", message="")
+
 CONTEXTE_VEILLE = ContexteRequete(
     ha_user_id=None,
     ha_user_name=None,
@@ -115,6 +119,9 @@ class MoteurVeille:
         self._differees: dict[str, datetime] = {}
         #: Dernière émission par clé, pour H57.
         self._derniere: dict[str, datetime] = {}
+        #: Les anomalies de P5 retenues par les heures de silence. Comme pour
+        #: un capteur : différées, jamais perdues.
+        self._differees_externes: dict[str, Alerte] = {}
 
     @property
     def entites_surveillees(self) -> list[str]:
@@ -149,6 +156,8 @@ class MoteurVeille:
         """Rejoue les alertes différées. Appelé par l'ordonnanceur."""
         for entite in list(self._differees):
             await self._essayer(entite)
+        for alerte in list(self._differees_externes.values()):
+            await self.signaler(alerte)
 
     # ── Cycle d'une alerte ───────────────────────────────────────────────
 
@@ -464,6 +473,57 @@ class MoteurVeille:
                 }
             )
         return sorted(sorties, key=lambda p: p["confidence"], reverse=True)  # type: ignore[arg-type,return-value]
+
+    # ── Alertes venues d'ailleurs (P5) ───────────────────────────────────
+
+    async def signaler(self, alerte: Alerte) -> None:
+        """Une alerte qui ne vient d'aucun capteur.
+
+        C'est tout ce que la gardienne de P5 a demandé au moteur de P4 : une
+        porte d'entrée. Le reste — sourdine, score, heures de silence, annonce
+        vocale — s'applique sans une ligne de plus, parce que c'est la même
+        `Alerte` et la même clé de suggestion.
+
+        Les heures de silence sont respectées comme pour une règle ordinaire :
+        personne ne répare un Zigbee à 3 h du matin. Une anomalie retenue la
+        nuit est **différée**, pas perdue — le prochain battement la reprendra.
+        """
+        maintenant = self._maintenant()
+        if alerte.key in self._actives:
+            return
+
+        score = await self._score(alerte.key)
+        if not score.remonte(maintenant):
+            return
+        if not peut_parler(alerte.level, maintenant):
+            self._differees_externes[alerte.key] = alerte
+            return
+        if not peut_repeter(self._derniere.get(alerte.key), maintenant):
+            return
+
+        self._differees_externes.pop(alerte.key, None)
+        self._actives[alerte.key] = alerte
+        self._derniere[alerte.key] = maintenant
+        await self._memoire.enregistrer_evenement(
+            EvenementJournal(
+                id=nouvel_id("e"),
+                ts=maintenant,
+                kind="alert",
+                entity_id=alerte.entity_id,
+                payload={"cle": alerte.key, "titre": alerte.title, "source": "gardienne"},
+            )
+        )
+        await self._emettre(EvtAlerte(alert=alerte))
+        log.info("Alerte : %s (%s)", alerte.title, alerte.key)
+        await self._annoncer(_REGLE_EXTERNE, alerte, maintenant)
+
+    async def lever(self, cle: str) -> None:
+        """La condition a cessé : l'anomalie quitte le tiroir."""
+        self._differees_externes.pop(cle, None)
+        alerte = self._actives.pop(cle, None)
+        if alerte is not None:
+            await self._emettre(EvtAlerteEffacee(alert_id=alerte.id))
+            log.info("Alerte levée : %s", alerte.title)
 
     # ── File de relecture (D2) ───────────────────────────────────────────
 

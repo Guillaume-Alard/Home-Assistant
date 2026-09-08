@@ -15,12 +15,15 @@ from typing import Any, Protocol
 from .schemas import (
     ActionHA,
     EmpreinteVocale,
+    EnregistrementJournal,
+    EntreeConfig,
     EntreeIdentite,
     EntreeJournal,
     EtatEntite,
     EvenementCerveau,
     EvenementJournal,
     Fait,
+    Incident,
     MessageEnregistre,
     Piece,
     ResultatOutil,
@@ -52,6 +55,18 @@ class CerveauProvider(Protocol):
         """
         ...
 
+    async def diagnostiquer(self, anomalie: str) -> str:
+        """[P5] Une anomalie structurée → une phrase que Guillaume peut lire.
+
+        **Du texte, et rien que du texte** (H71). Le modèle lit ici des chaînes
+        que Luna n'a pas écrites — noms d'appareils, messages d'exception,
+        titres de cartes. Une phrase injectée dans l'une d'elles peut au pire
+        produire une phrase bizarre dans le tiroir ; elle ne peut pas produire
+        un appel de service, parce que la sortie n'est jamais autre chose qu'un
+        texte affiché.
+        """
+        ...
+
 
 class MaisonProvider(Protocol):
     """Home Assistant. Lecture libre ; écriture réservée à l'arbitre."""
@@ -72,6 +87,33 @@ class MaisonProvider(Protocol):
     async def appeler_service(self, action: ActionHA) -> None:
         """⚠️ Réservé à l'arbitre. Vérifié par tests/test_invariants.py."""
         ...
+
+    # ── Gardienne de l'installation (P5) — lecture seule ─────────────────
+    #
+    # Aucune de ces méthodes n'écrit quoi que ce soit. C'est la moitié
+    # structurelle du refus de E1 : le contrat ne propose même pas d'écrire
+    # dans la configuration de Home Assistant.
+
+    async def entrees_config(self) -> list[EntreeConfig]:
+        """Les intégrations et leur état (`config_entries/get`)."""
+        ...
+
+    async def journal_systeme(self) -> list[EnregistrementJournal]:
+        """`system_log/list`. Demande des droits d'administrateur (H64)."""
+        ...
+
+    async def config_loggia(self, url_path: str = "") -> dict[str, Any]:
+        """La configuration brute d'un dashboard (`lovelace/config`)."""
+        ...
+
+    def integration_de(self, entity_id: str) -> tuple[str, str]:
+        """`(entry_id, domaine)` de l'entité, depuis le registre. `("", "")` si
+        elle n'appartient à aucune entrée de configuration."""
+        ...
+
+    def nom_entite(self, entity_id: str) -> str: ...
+
+    def entites_connues(self) -> set[str]: ...
 
 
 class EmpreinteProvider(Protocol):
@@ -177,3 +219,17 @@ class MemoireProvider(Protocol):
     async def score_suggestion(self, cle: str) -> ScoreSuggestion | None: ...
 
     async def enregistrer_score(self, score: ScoreSuggestion) -> None: ...
+
+    # ── Gardienne (P5) ───────────────────────────────────────────────────
+
+    async def ouvrir_incident(self, incident: Incident) -> Incident:
+        """Ouvre l'incident, ou rend celui qui est déjà ouvert sous cette clé.
+
+        C'est ce qui permet de dire « depuis mardi » plutôt que « depuis le
+        dernier redémarrage de l'add-on » (E8).
+        """
+        ...
+
+    async def fermer_incident(self, cle: str, quand: datetime) -> Incident | None: ...
+
+    async def incidents_ouverts(self) -> list[Incident]: ...
