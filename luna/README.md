@@ -97,6 +97,7 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P4-HABITUDES-VEILLE.md`](docs/P4-HABITUDES-VEILLE.md) | Habitudes et veille : huit décisions, la décroissance des faits, les écarts constatés, la liste de ce que P4 ne fait pas |
 | [`docs/P4-CAPTEURS.md`](docs/P4-CAPTEURS.md) | **À coller dans `configuration.yaml`** — les capteurs sans lesquels la veille n'a rien à regarder |
 | [`docs/P5-GARDIENNE.md`](docs/P5-GARDIENNE.md) | La gardienne de l'installation, définie par ses refus : huit décisions, treize hypothèses, les écarts constatés |
+| [`docs/P6-VISAGE.md`](docs/P6-VISAGE.md) | **En attente de validation** — le visage comme troisième signal, et ce que ça vaut vraiment |
 | [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova
@@ -125,7 +126,27 @@ est réellement exercé. **La CI ne consomme jamais de crédit.**
 
 ## Où en est le projet
 
-**P1 à P5 sont livrées. Il reste P6, la reconnaissance faciale.**
+**P1 à P5 sont livrées. P6 est cadrée et attend une validation** — voir
+[`docs/P6-VISAGE.md`](docs/P6-VISAGE.md).
+
+Le cadrage de P6 commence par une question que les autres n'avaient pas à se
+poser : **est-ce que ça vaut le coup ?** Le signal d'identité le plus fort n'est
+pas biométrique, c'est l'utilisateur Home Assistant authentifié — livré depuis
+P1. La voix ne sert que sur l'iPad partagé du couloir, et le visage sert au même
+endroit : il fait gagner **un tapotement** sur le panneau « qui parle ? » que P3
+a déjà construit. C'est la seule phase dont l'absence ne manquerait à personne,
+et la seconde bloquée sur P0 comme la voix.
+
+Si elle se fait, ce sera la plus petite : `EmpreinteProvider`, la table
+d'empreintes, la fusion multi-signaux, le parcours d'inscription, l'oubli et la
+barrière réseau existent tous depuis P3. Restent un provider ONNX, une table, un
+facteur dans une formule — `bio = 1 − (1−voix)(1−visage)`, où un désaccord fait
+tomber la marge et déclenche la question de P3 sans qu'on code quoi que ce soit
+pour ça — et la capture d'une image dans la carte.
+
+Une question bloque, et elle n'est pas technique : une empreinte vocale se donne
+en parlant, un visage se capture dès qu'un objectif s'ouvre. Il faut que toute
+la maison soit d'accord.
 
 P5 part d'un fait vérifié dans le code de Home Assistant : **Luna est déjà
 administratrice**. L'add-on passe par le Supervisor, dont l'utilisateur vit dans
