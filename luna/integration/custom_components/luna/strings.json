@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Luna",
+        "description": "Où joindre l'add-on Luna, et avec quel secret. Le secret est celui saisi dans les options de l'add-on.",
+        "data": {
+          "hote": "Hôte de l'add-on",
+          "port": "Port du relais",
+          "secret": "Secret du relais"
+        },
+        "data_description": {
+          "hote": "Sur HAOS, l'add-on local répond à « local-luna ». Change-le si Nova le résout autrement.",
+          "port": "8099 par défaut. Il n'est pas publié sur le réseau local.",
+          "secret": "Doit être identique à l'option « relay_secret » de l'add-on."
+        }
+      }
+    },
+    "error": {
+      "injoignable": "Je ne joins pas l'add-on. Vérifie qu'il tourne, que l'hôte et le port sont bons, et que le secret est le même des deux côtés.",
+      "inconnu": "Erreur inattendue. Regarde les journaux de Home Assistant."
+    },
+    "abort": {
+      "already_configured": "Luna est déjà configurée. Un seul cerveau suffit."
+    }
+  }
+}

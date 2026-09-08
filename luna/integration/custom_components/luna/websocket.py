@@ -1,0 +1,279 @@
+"""Les commandes `luna/*` exposées à la carte Loggia.
+
+Contrat : luna/docs/P1-CONTRATS.md §4.
+
+**Le point important est le contexte.** Il est construit ici, à partir de
+`connection.user` — l'utilisateur Home Assistant réellement authentifié derrière
+la connexion WebSocket. La carte ne le fournit pas et ne peut pas l'influencer :
+c'est ce qui empêche un client de se déclarer administrateur. L'add-on résout
+ensuite le profil Luna à partir de ce nom (décision A6).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import voluptuous as vol
+from homeassistant.components import websocket_api
+from homeassistant.core import HomeAssistant, callback
+
+from .client import ClientRelais, ErreurLuna
+from .const import DOMAINE
+
+_LOGGER = logging.getLogger(__name__)
+
+CLE_ENREGISTRE = f"{DOMAINE}_commandes_enregistrees"
+
+#: Ces événements ferment la souscription : après, plus rien n'arrive (§4).
+EVENEMENTS_TERMINAUX = ("done", "error")
+
+
+def enregistrer_commandes(hass: HomeAssistant) -> None:
+    """Une seule fois par démarrage, même si l'entrée est rechargée."""
+    if hass.data.get(CLE_ENREGISTRE):
+        return
+    hass.data[CLE_ENREGISTRE] = True
+    for commande in (
+        ws_info,
+        ws_chat,
+        ws_cancel,
+        ws_history,
+        ws_feed,
+        ws_proposal_decide,
+        ws_identity,
+        ws_alerts_feedback,
+        ws_patterns,
+        ws_suggestions,
+        ws_identity_face,
+    ):
+        websocket_api.async_register_command(hass, commande)
+
+
+@callback
+def _contexte(
+    connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> dict[str, Any]:
+    utilisateur = connection.user
+    return {
+        "ha_user_id": utilisateur.id,
+        "ha_user_name": utilisateur.name,
+        "is_admin": utilisateur.is_admin,
+        # Le profil est résolu par l'add-on à partir du nom (A6) ; ce qu'on
+        # envoie ici n'est qu'une valeur de repli, jamais une affirmation.
+        "profile": "unknown",
+        "client_id": msg.get("client_id") or "loggia",
+        # En P1 la biométrie n'existe pas, donc `local` ne sert à rien encore.
+        # Il deviendra réel en P3 (§6 : « La biométrie n'est active que sur le
+        # réseau local »).
+        "local": True,
+    }
+
+
+def _client(hass: HomeAssistant) -> ClientRelais:
+    from . import client_actif
+
+    return client_actif(hass)
+
+
+async def _ponctuelle(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+    op: str,
+    charge: dict[str, Any],
+) -> None:
+    """Relaie une opération ponctuelle, en traduisant les pannes en messages."""
+    try:
+        resultat = await _client(hass).demander(op, charge, _contexte(connection, msg))
+    except ErreurLuna as err:
+        connection.send_error(msg["id"], err.code, err.message)
+        return
+    except Exception as err:  # jamais d'échec silencieux (§8)
+        _LOGGER.exception("Luna : %s a échoué", op)
+        connection.send_error(msg["id"], "internal", str(err))
+        return
+    connection.send_result(msg["id"], resultat)
+
+
+def _flux(op: str):
+    """Fabrique un gestionnaire de souscription pour `chat` et `feed`."""
+
+    async def gestionnaire(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+        charge: dict[str, Any],
+    ) -> None:
+        identifiant = msg["id"]
+
+        @callback
+        def sur_evenement(trame: dict[str, Any]) -> None:
+            if erreur := trame.get("error"):
+                connection.send_message(
+                    websocket_api.event_message(
+                        identifiant,
+                        {
+                            "event": "error",
+                            "code": erreur.get("code", "internal"),
+                            "message": erreur.get("message", ""),
+                        },
+                    )
+                )
+                return
+            charge_evt = {c: v for c, v in trame.items() if c != "id"}
+            connection.send_message(websocket_api.event_message(identifiant, charge_evt))
+            if charge_evt.get("event") in EVENEMENTS_TERMINAUX:
+                _fermer(identifiant)
+
+        @callback
+        def _fermer(cle: int) -> None:
+            if arreter := connection.subscriptions.pop(cle, None):
+                arreter()
+
+        try:
+            arreter = await _client(hass).souscrire(
+                op, charge, _contexte(connection, msg), sur_evenement
+            )
+        except ErreurLuna as err:
+            connection.send_error(identifiant, err.code, err.message)
+            return
+
+        connection.subscriptions[identifiant] = arreter
+        connection.send_result(identifiant)
+
+    return gestionnaire
+
+
+# ── P1 ───────────────────────────────────────────────────────────────────
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/info", vol.Optional("client_id"): str}
+)
+@websocket_api.async_response
+async def ws_info(hass, connection, msg) -> None:
+    await _ponctuelle(hass, connection, msg, "info", {})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/chat",
+        vol.Required("text"): str,
+        vol.Optional("conversation_id"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_chat(hass, connection, msg) -> None:
+    charge = {"text": msg["text"]}
+    if identifiant := msg.get("conversation_id"):
+        charge["conversation_id"] = identifiant
+    await _flux("chat")(hass, connection, msg, charge)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/cancel", vol.Required("message_id"): str}
+)
+@websocket_api.async_response
+async def ws_cancel(hass, connection, msg) -> None:
+    await _ponctuelle(hass, connection, msg, "cancel", {"message_id": msg["message_id"]})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/history",
+        vol.Optional("conversation_id"): str,
+        vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1, max=200)),
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_history(hass, connection, msg) -> None:
+    charge: dict[str, Any] = {"limit": msg["limit"]}
+    if identifiant := msg.get("conversation_id"):
+        charge["conversation_id"] = identifiant
+    await _ponctuelle(hass, connection, msg, "history", charge)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/feed", vol.Optional("client_id"): str}
+)
+@websocket_api.async_response
+async def ws_feed(hass, connection, msg) -> None:
+    await _flux("feed")(hass, connection, msg, {})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/proposal/decide",
+        vol.Required("proposal_id"): str,
+        vol.Required("decision"): vol.In(("accept", "reject")),
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_proposal_decide(hass, connection, msg) -> None:
+    await _ponctuelle(
+        hass,
+        connection,
+        msg,
+        "decide",
+        {"proposal_id": msg["proposal_id"], "decision": msg["decision"]},
+    )
+
+
+# ── Documentées en P1, vivantes plus tard (§12) ──────────────────────────
+# Elles répondent `not_implemented`, jamais un silence ni un 404 : la carte
+# grise le bouton correspondant au lieu de le cacher (§8).
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/identity", vol.Optional("client_id"): str}
+)
+@websocket_api.async_response
+async def ws_identity(hass, connection, msg) -> None:
+    await _ponctuelle(hass, connection, msg, "identity", {})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/alerts/feedback",
+        vol.Required("suggestion_id"): str,
+        vol.Required("action"): vol.In(("accepted", "rejected", "muted")),
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_alerts_feedback(hass, connection, msg) -> None:
+    await _ponctuelle(
+        hass,
+        connection,
+        msg,
+        "alerts_feedback",
+        {"suggestion_id": msg["suggestion_id"], "action": msg["action"]},
+    )
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/patterns", vol.Optional("profile"): str}
+)
+@websocket_api.async_response
+async def ws_patterns(hass, connection, msg) -> None:
+    await _ponctuelle(hass, connection, msg, "patterns", {"profile": msg.get("profile")})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/suggestions", vol.Optional("client_id"): str}
+)
+@websocket_api.async_response
+async def ws_suggestions(hass, connection, msg) -> None:
+    await _ponctuelle(hass, connection, msg, "suggestions", {})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "luna/identity/face", vol.Required("image"): str}
+)
+@websocket_api.async_response
+async def ws_identity_face(hass, connection, msg) -> None:
+    await _ponctuelle(hass, connection, msg, "identity_face", {"image": msg["image"]})

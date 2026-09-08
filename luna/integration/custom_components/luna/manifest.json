@@ -1,0 +1,12 @@
+{
+  "domain": "luna",
+  "name": "Luna",
+  "codeowners": ["@guillaume-alard"],
+  "config_flow": true,
+  "documentation": "https://github.com/Alardware/luna",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/Alardware/luna/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

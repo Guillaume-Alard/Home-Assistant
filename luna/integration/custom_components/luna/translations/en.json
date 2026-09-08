@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Luna",
+        "description": "Where to reach the Luna add-on, and with which secret.",
+        "data": {
+          "hote": "Add-on host",
+          "port": "Relay port",
+          "secret": "Relay secret"
+        },
+        "data_description": {
+          "hote": "On HAOS the local add-on answers at \"local-luna\".",
+          "port": "8099 by default. Not published on the LAN.",
+          "secret": "Must match the add-on option \"relay_secret\"."
+        }
+      }
+    },
+    "error": {
+      "injoignable": "Cannot reach the add-on. Check it is running and that the secret matches.",
+      "inconnu": "Unexpected error. Check the Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "Luna is already configured."
+    }
+  }
+}
