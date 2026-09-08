@@ -98,6 +98,7 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P4-CAPTEURS.md`](docs/P4-CAPTEURS.md) | **À coller dans `configuration.yaml`** — les capteurs sans lesquels la veille n'a rien à regarder |
 | [`docs/P5-GARDIENNE.md`](docs/P5-GARDIENNE.md) | La gardienne de l'installation, définie par ses refus : huit décisions, treize hypothèses, les écarts constatés |
 | [`docs/P6-VISAGE.md`](docs/P6-VISAGE.md) | **En attente de validation** — le visage comme troisième signal, et ce que ça vaut vraiment |
+| [`docs/VISAGE-MODELES.md`](docs/VISAGE-MODELES.md) | **À faire sur Orion** — récupérer les deux modèles de visage et vérifier, sur de vraies photos, que P6 est faisable avant de la construire |
 | [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova

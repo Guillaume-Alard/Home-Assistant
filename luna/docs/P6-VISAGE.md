@@ -5,6 +5,12 @@ document n'est pas tranché (§11 du cahier des charges).
 
 Sortie testable attendue (§11) : **un troisième signal d'identité.**
 
+> **Avant de valider quoi que ce soit** : [`VISAGE-MODELES.md`](VISAGE-MODELES.md)
+> te permet de vérifier sur Orion, avec de vraies photos de ton couloir, que la
+> reconnaissance de visage marchera chez toi — ou qu'elle ne marchera pas. Le
+> script fait tourner le chemin exact de la production et rend un chiffre. Si
+> ce chiffre est mauvais, il n'y a rien à valider.
+
 ---
 
 ## 0. Ce que le cahier des charges a déjà tranché
@@ -89,13 +95,21 @@ La caméra ne s'allume **que si les cinq conditions sont réunies** :
 |---|---|---|
 | 1 | L'appareil est déclaré **partagé** dans les options | Sur un téléphone, la session Home Assistant sait déjà. Une caméra n'y apporterait rien du tout |
 | 2 | L'identité de l'appareil est **inconnue ou périmée** | Si Luna sait déjà qui est là (P3, `expires_at`), elle n'a rien à regarder |
-| 3 | Un **geste délibéré** vient d'avoir lieu : toucher la carte, presser le micro | Jamais au chargement de la page, jamais sur une minuterie, jamais « quand quelqu'un approche » |
+| 3 | Un **geste délibéré** vient d'avoir lieu : toucher la carte, presser le micro | Jamais au chargement de la page, jamais sur une minuterie, jamais « quand quelqu'un approche ». **Ni à la sortie de veille** — voir la note ci-dessous |
 | 4 | On est sur le **réseau local** | §6, et la barrière de P3 est déjà écrite |
 | 5 | Le contexte est **sécurisé** (HTTPS) | `getUserMedia` n'a pas d'autre option |
 
 Une seule image, en 480 × 480 environ, prise puis relâchée. Le navigateur
 allume son propre témoin de caméra, et la carte en affiche un aussi : personne
 ne doit se demander si l'objectif est actif.
+
+> **L'iPad est fixé au mur, à l'entrée du couloir** (réponse à Q3). Une
+> tablette murale est presque toujours en affichage permanent, et elle sort de
+> veille quand quelqu'un passe. La condition 3 se durcit donc : la caméra ne
+> s'ouvre **jamais** à la sortie de veille, ni au retour de l'économiseur
+> d'écran, ni au rechargement de la page. Seulement sur un contact avec la
+> carte ou le micro. Sans cette précision, un iPad mural devient une caméra qui
+> s'allume quand on passe — exactement ce que §10 refuse.
 
 ## V2. La frame ne traverse jamais le relais Nabu Casa — et rien ne reste
 
@@ -226,7 +240,22 @@ Ce qui protège les autres :
 Reste une question qui n'est pas technique et que je ne peux pas trancher :
 est-ce que tout le monde chez toi est d'accord ? Voir Q1.
 
-## V7. Deux modèles ONNX, pas d'OpenCV, pas de GPU
+## V7. Deux modèles ONNX, pas de GPU
+
+> ⚠️ **Cette décision a été corrigée**, en écrivant
+> [`VISAGE-MODELES.md`](VISAGE-MODELES.md) §1. Le titre disait « pas
+> d'OpenCV » ; c'était une erreur. L'alignement fait bien vingt lignes de
+> `numpy`, mais j'avais oublié la **décodification du détecteur** : YuNet est
+> un détecteur à ancres, dont la sortie brute demande des *priors* et une
+> suppression de non-maxima — cent à deux cents lignes fragiles, où chacune
+> est un endroit où produire des vecteurs plausibles mais faux.
+>
+> `opencv-python-headless` fournit `FaceDetectorYN` et `FaceRecognizerSF`, qui
+> font détection, alignement et vecteur en trois appels : ~45 Mo contre ~200
+> lignes de vision par ordinateur écrites à la main. Pour une phase dont la
+> valeur tient en un tapotement, 45 Mo est moins cher. Le reste de V7 —
+> lesquels modèles, la dégradation sans modèle, le nom qui voyage avec chaque
+> empreinte — est inchangé.
 
 §13 écarte YOLOv8 et dlib comme « impossibles sur N95 sans GPU ». Ce qui est
 écarté, c'est cette famille-là — pas la vision, puisque §11 planifie P6. Ce qui
@@ -281,7 +310,7 @@ est éteint.
 | H80 | Un visage non reconnu ne laisse **aucune trace** : ni fichier, ni ligne, ni compteur. | Une galerie d'inconnus est l'extension la plus tentante et la plus nocive. |
 | H81 | Les empreintes de visage vivent dans `face_prints`, colonne pour colonne comme `voice_prints`, avec le nom du modèle. Schéma **v5**, par simple ajout. | Changer de modèle doit invalider les anciennes, pas produire des ressemblances fausses. |
 | H82 | YuNet (~0,3 Mo) et MobileFaceNet/SFace tiennent sur le CPU du N95, sous la seconde pour une image. **Attendu, pas mesuré.** | À vérifier sur Nova. Si c'est faux, la capture devient trop lente pour être agréable, et la phase perd son seul intérêt — le gain d'un tapotement. |
-| H83 | `onnxruntime` et `numpy` suffisent. Pas d'`opencv-python`, pas de PyTorch, pas de dlib. | Soixante mégaoctets pour une transformation de vingt lignes, sur une machine dont §2 dit que le CPU est le facteur limitant. |
+| H83 | ~~`onnxruntime` et `numpy` suffisent.~~ **Corrigée :** `opencv-python-headless` (~45 Mo) porte la détection, l'alignement et le vecteur ; `onnxruntime` reste pour la voix. Toujours pas de PyTorch, pas de dlib, pas de YOLO, aucune inférence GPU. | Voir `VISAGE-MODELES.md` §1. Écrire la décodification du détecteur à la main coûterait deux cents lignes dont le mode de défaillance est un vecteur faux qui ne se voit pas. |
 | H84 | La fusion devient `bio = 1 − (1−voix)(1−visage)`, puis la pondération de présence de P3, inchangée. | Avec `visage = 0` on retrouve exactement P3 : les tests existants restent valides tels quels. |
 | H85 | Un désaccord voix/visage fait tomber la marge sous 0,15 et déclenche la question de P3. Aucun cas particulier n'est écrit pour ça. | Si c'est faux, Luna trancherait au hasard entre deux personnes — le pire comportement possible. |
 | H86 | L'inscription réutilise `identity/enroll/{start,sample,finish}` avec une modalité, et rend des **consignes** au lieu de phrases. Trois images. | Un second parcours parallèle doublerait la surface pour rien. |
@@ -472,13 +501,21 @@ tapotement gagné est un tapotement perdu.
 > dernier, après avoir laissé P4 et P5 tourner quelques semaines sur de vraies
 > données. Mais elle est dans §11, et si tu la veux je la fais.
 
-> **Q3 — Où est l'iPad, et que voit sa caméra ?** « Le couloir » suffit pour la
-> conception, mais pas pour décider si c'est raisonnable. Une caméra qui donne
-> sur une porte de chambre n'est pas une caméra qui donne sur un mur.
+> ~~**Q3 — Où est l'iPad, et que voit sa caméra ?**~~ **Répondu : fixé au mur, à
+> l'entrée du couloir.** Trois conséquences, détaillées dans
+> [`VISAGE-MODELES.md`](VISAGE-MODELES.md) §7 :
+> **(a)** distance et hauteur constantes — la meilleure configuration possible
+> pour de la reconnaissance 2D ;
+> **(b)** une tablette à hauteur d'adulte cadre mal un enfant, et **le visage
+> risque de ne pas fonctionner pour Liam** — à tester avant de construire, pas
+> après ;
+> **(c)** la condition 3 de V1 se durcit : jamais à la sortie de veille.
 
-> **Q4 — Veux-tu que je te donne les deux modèles à récupérer sur Orion ?** Je
-> peux te livrer la procédure exacte — d'où les prendre, comment vérifier qu'ils
-> chargent, où les déposer — comme pour la voix. Ça ne coûte rien de l'écrire
-> maintenant, même si tu décides de ne pas construire P6 tout de suite.
+> ~~**Q4 — Veux-tu la procédure pour les modèles ?**~~ **Écrite :**
+> [`docs/VISAGE-MODELES.md`](VISAGE-MODELES.md). Elle contient un script qui
+> fait tourner **le chemin exact de la production** sur de vraies photos de ton
+> couloir, et rend un chiffre : l'écart entre la pire ressemblance d'une même
+> personne et la meilleure ressemblance entre deux personnes. C'est lui qui dit
+> si P6 est faisable chez toi — **avant** que j'écrive une ligne.
 
-**Q1 bloque**, les autres non.
+**Q1 bloque toujours**, et Q2 attend ton avis.
