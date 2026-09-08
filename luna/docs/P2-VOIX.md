@@ -1,7 +1,8 @@
 # Luna — P2 : voix. Hypothèses et contrats
 
-**Statut : en attente de validation.** Aucun code n'est écrit tant que ce
-document n'est pas tranché (§11 du cahier des charges).
+**Statut : validé le 8 septembre 2026, puis implémenté.** B1 à B5 acceptés.
+Les écarts constatés pendant l'écriture sont en **partie F**, en fin de page ;
+le reste du document décrit ce qui tourne.
 
 Sortie testable attendue (§11) : **piloter une lumière à l'oral.**
 
@@ -293,9 +294,55 @@ main sur Nova, comme la vérification du cache de prompt en P1.
 > add-ons de reconnaissance vocale installés ? Si oui, lesquels : je m'y branche
 > au lieu d'en créer un deuxième.
 
-> **Q3 — La tablette murale.** A-t-elle un micro, et fonctionne-t-il ? C'est
-> l'appareil pour lequel P0 a été écrite ; si son micro est mort côté matériel,
-> autant le savoir avant d'optimiser pour lui.
+> ~~**Q3 — La tablette murale.**~~ ✅ **Répondu : c'est un iPad.** Le micro
+> existe donc, et deux contraintes iOS ont été traitées dans le code plutôt que
+> découvertes sur place :
+>
+> 1. **Le déblocage audio.** iOS refuse tout `play()` qui n'a pas été précédé
+>    d'un `play()` déclenché par un vrai geste. La carte amorce donc son lecteur
+>    avec un silence de 44 octets **au premier appui sur le micro**. Sans ça,
+>    Luna serait muette sur iPad — et seulement sur iPad.
+> 2. **La fréquence d'échantillonnage.** iOS ne laisse pas choisir celle du
+>    `AudioContext` : elle vaut 44,1 ou 48 kHz. Le rééchantillonnage vers
+>    16 kHz n'est donc pas une optimisation, c'est une obligation. Il se fait
+>    dans un `AudioWorklet`, hors du fil principal.
+>
+> S'y ajoute le détail qui se voit tout de suite à l'usage : un appui maintenu
+> sur iPad ouvre le menu contextuel et fait perdre le `pointerup`, donc la fin
+> de l'enregistrement. Le bouton micro est en `touch-action: none`,
+> `-webkit-touch-callout: none`, et annule `contextmenu`.
 
-Ces trois réponses ne bloquent pas l'écriture du code : elles ne changent que
-des options. Dis-moi si tu valides B1 à B5, et je code P2.
+---
+
+# Partie F — Écarts entre ce contrat et ce qui tourne
+
+Six points ont bougé pendant l'implémentation. Aucun ne change une décision ;
+tous viennent d'une contrainte rencontrée en écrivant le code.
+
+| # | Ce que disait le contrat | Ce qui a été fait | Pourquoi |
+|---|---|---|---|
+| 1 | L'événement `message` du feed porte `{id, text, ts, speak}` | Il porte aussi **`role`** et `conversation_id` | Sans le rôle, la carte ne sait pas s'il faut une bulle utilisateur ou une bulle Luna. Un tour de parole en produit deux. |
+| 2 | Seuls les `message` sont diffusés | Les **propositions** le sont aussi | On ne clique pas dans un haut-parleur. Une proposition née d'un tour vocal serait restée invisible et aurait expiré en cinq minutes sans que personne ne puisse l'accepter. |
+| 3 | Rien de précisé sur qui décide de diffuser | Un drapeau **`diffuser`** dans la charge du relais, posé par l'agent | La provenance est un fait de transport : l'orchestrateur ne sait pas si l'échange vient d'une carte ou d'Assist, le relais si. Mettre ça dans le contexte aurait mélangé identité et transport. |
+| 4 | Rien sur *quand* la carte parle | Une option **`speak`** : `voix` (défaut), `toujours`, `jamais` | Personne ne veut être lu à voix haute parce qu'il a tapé une question. Le défaut ne lit que ce qui a été demandé de vive voix ; les deux autres modes sont une ligne de configuration, pas une modification de code. |
+| 5 | `card/pcm-worklet.js` était prévu comme nouveau fichier | Le worklet vit **dans `luna-card.js`**, chargé par un `Blob` de même origine | §8 exige **un seul fichier**. Un Blob suffit, et la promesse est tenue à la lettre. |
+| 6 | Rien sur la concurrence appui/relâchement | Le démarrage et l'arrêt de l'écoute sont **sérialisés** | Un appui bref relâché avant que la capture soit prête coupait un démarrage en cours ; celui-ci échouait et fermait la transcription que l'arrêt attendait. L'enregistrement mourait sans un mot. Sur iPad, où l'on tapote, ce n'est pas un cas rare. Trouvé par les tests. |
+
+---
+
+# Partie G — Recette de P2, état
+
+| # | Vérification | État |
+|---|---|---|
+| 1 | Add-ons faster-whisper et piper, pipeline « Luna » | ⏳ à faire sur Nova |
+| 2 | Appuyer, parler, relâcher → la lumière s'allume, la réponse est lue | ✅ chemin testé de bout en bout (capture réelle, worklet réel, PCM réel) |
+| 3 | Depuis le bouton Assist de l'app Companion | ✅ l'agent est testé dans une vraie instance HA ; le passage par l'app reste à faire sur Nova |
+| 4 | Le tour de parole apparaît dans le fil de la carte | ✅ testé (diffusion du relais) |
+| 5 | « ferme les volets » à l'oral → même refus qu'à l'écrit | ✅ testé — la voix ne donne aucun droit supplémentaire |
+| 6 | Interruption | ✅ `luna/cancel` et Échap, inchangés depuis P1 |
+| 7 | Latence STT sous 3 s | ⏳ **à mesurer sur Nova** — aucun test ne peut le faire ici |
+| 8 | Micro refusé ou page non sécurisée → message explicite | ✅ testé, les deux cas |
+| 9 | `ruff`, `lint-imports`, `pytest` verts | ✅ 219 tests |
+
+Restent deux réponses qui ne changent que des options : **Q1** (quelle voix
+française) et **Q2** (un pipeline Assist existe-t-il déjà sur Nova).

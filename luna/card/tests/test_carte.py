@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, expect, sync_playwright
 
-BANC = (Path(__file__).parent / "banc.html").resolve().as_uri()
+RACINE = Path(__file__).resolve().parent.parent
 
 #: Court : un test de carte qui échoue doit le dire tout de suite, pas au bout
 #: de cinq secondes d'attente multipliées par le nombre d'assertions.
@@ -45,10 +48,17 @@ def navigateur():
     with sync_playwright() as p:
         chemin = _chromium()
         try:
+            # Micro synthétique : `getUserMedia` répond sans demander la
+            # permission et sans matériel. On teste ainsi le vrai chemin —
+            # AudioWorklet compris — plutôt qu'une doublure.
+            args = [
+                "--use-fake-device-for-media-stream",
+                "--use-fake-ui-for-media-stream",
+            ]
             nav = (
-                p.chromium.launch(executable_path=chemin)
+                p.chromium.launch(executable_path=chemin, args=args)
                 if chemin
-                else p.chromium.launch()
+                else p.chromium.launch(args=args)
             )
         except PlaywrightError as err:
             pytest.skip(f"Chromium indisponible : {err}")
@@ -56,14 +66,32 @@ def navigateur():
         nav.close()
 
 
+@pytest.fixture(scope="session")
+def banc():
+    """Le banc est servi en HTTP, pas ouvert en `file://`.
+
+    Un `file://` est bien un contexte sécurisé, mais son origine opaque
+    interdit de charger un `AudioWorklet` depuis un Blob — ce que la carte fait
+    pour tenir la promesse « un seul fichier » de §8. En HTTP local on teste le
+    chemin réel, celui de `/local/luna-card.js`.
+    """
+    gestionnaire = partial(SimpleHTTPRequestHandler, directory=str(RACINE))
+    serveur = ThreadingHTTPServer(("127.0.0.1", 0), gestionnaire)
+    threading.Thread(target=serveur.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{serveur.server_address[1]}/tests/banc.html"
+    finally:
+        serveur.shutdown()
+
+
 @pytest.fixture
-def page(navigateur):
-    contexte = navigateur.new_context()
+def page(navigateur, banc):
+    contexte = navigateur.new_context(permissions=["microphone"])
     page = contexte.new_page()
     erreurs: list[str] = []
     page.on("pageerror", lambda e: erreurs.append(str(e)))
     page.set_default_timeout(DELAI)
-    page.goto(BANC)
+    page.goto(banc)
     yield page
     assert not erreurs, f"erreurs JavaScript : {erreurs}"
     contexte.close()
@@ -86,6 +114,15 @@ def emettre(page: Page, cle: str, evenement: dict) -> None:
 
 def journal(page: Page) -> dict:
     return page.evaluate("() => window.__luna.journal")
+
+
+def attendre_transcription(page: Page) -> None:
+    """Attend que la carte soit vraiment en train d'attendre le texte.
+
+    Émettre `stt-end` avant ce moment est ignoré en silence — et le test
+    devient intermittent au lieu d'échouer franchement.
+    """
+    page.wait_for_function("() => window.__carte._attenteStt !== null", timeout=DELAI)
 
 
 class TestMontage:
@@ -124,10 +161,6 @@ class TestMontage:
           catch (e) { return e.message; }
         }""")
         assert "≥ 400" in erreur
-
-    def test_le_micro_est_grise_en_phase_1(self, page):
-        monter(page)
-        expect(dans_carte(page, ".micro")).to_be_disabled()
 
     def test_le_tiroir_dit_ce_quil_ne_fait_pas_encore(self, page):
         """§8 : jamais d'échec silencieux, y compris pour une phase future."""
@@ -371,28 +404,323 @@ class TestFuites:
 
 
 class TestMicro:
-    def test_contexte_non_securise(self, page):
-        """§8, littéralement : « le contexte non-HTTPS produit un message
-        d'erreur explicite et actionnable »."""
+    """§8 : « le refus de permission micro et le contexte non-HTTPS produisent
+    un message d'erreur explicite et actionnable »."""
+
+    def test_actif_quand_la_voix_est_prete(self, page):
         monter(page)
-        page.evaluate("""() => {
-          Object.defineProperty(window, 'isSecureContext',
-            { value: false, configurable: true });
-          const c = window.__carte;
-          c.shadowRoot.querySelector('.micro').disabled = false;
-        }""")
-        dans_carte(page, ".micro").click()
+        expect(dans_carte(page, ".micro")).to_be_enabled()
+        assert "Maintenir" in dans_carte(page, ".micro").get_attribute("title")
+
+    def test_grise_tant_que_la_voix_nest_pas_la(self, page):
+        monter(
+            page,
+            info={
+                "version": "0.1.0",
+                "addon": "online",
+                "capabilities": ["chat"],
+                "profile": {
+                    "id": "guillaume",
+                    "display_name": "Guillaume",
+                    "confidence": 1.0,
+                    "signals": {},
+                },
+                "phases": {
+                    "voice": False,
+                    "identity": False,
+                    "veille": False,
+                    "guardian": False,
+                },
+            },
+        )
+        expect(dans_carte(page, ".micro")).to_be_disabled()
+        assert "phase 2" in dans_carte(page, ".micro").get_attribute("title")
+
+    def test_contexte_non_securise(self, page):
+        monter(page)
+        page.evaluate(
+            """() => {
+              Object.defineProperty(window, 'isSecureContext',
+                { value: false, configurable: true });
+              const c = window.__carte;
+              c.shadowRoot.querySelector('.micro').disabled = false;
+              c._demarrerEcoute();
+            }"""
+        )
         expect(dans_carte(page, ".bulle.erreur")).to_contain_text("HTTPS")
         expect(dans_carte(page, ".bulle.erreur")).to_contain_text("phase 0")
 
-    def test_phase_voix(self, page):
+    def test_permission_refusee(self, page):
         monter(page)
         page.evaluate(
-            "() => { window.__carte.shadowRoot"
-            ".querySelector('.micro').disabled = false; }"
+            """() => {
+              navigator.mediaDevices.getUserMedia = () => {
+                const e = new Error('refusé');
+                e.name = 'NotAllowedError';
+                return Promise.reject(e);
+              };
+            }"""
         )
         dans_carte(page, ".micro").click()
-        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("phase 2")
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("Autorise")
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("réglages")
+
+
+class TestAppuiPourParler:
+    """Le vrai chemin : capture, rééchantillonnage, pipeline, transcription."""
+
+    @staticmethod
+    def _appuyer(page):
+        micro = dans_carte(page, ".micro")
+        micro.dispatch_event("pointerdown")
+        page.wait_for_function(
+            "() => window.__luna.fluxOuvert('pipeline')", timeout=DELAI
+        )
+
+    @staticmethod
+    def _relacher(page, attendre=True):
+        dans_carte(page, ".micro").dispatch_event("pointerup")
+        if attendre:
+            attendre_transcription(page)
+
+    def test_lappui_ouvre_le_pipeline_en_stt_seul(self, page):
+        monter(page)
+        self._appuyer(page)
+
+        assert dans_carte(page, ".carte").get_attribute("data-orbe") == "listening"
+        demande = next(
+            m
+            for m in journal(page)["souscriptions"]
+            if m["type"] == "assist_pipeline/run"
+        )
+        assert demande["start_stage"] == "stt"
+        assert demande["end_stage"] == "stt"
+        assert demande["input"]["sample_rate"] == 16000
+        self._relacher(page)
+
+    def test_le_pcm_part_prefixe_du_canal_binaire(self, page):
+        """Le micro synthétique de Chromium émet un vrai signal : les trames
+        doivent sortir en 16 bits, préfixées de l'octet donné par `run-start`."""
+        monter(page)
+        self._appuyer(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "run-start", "data": {"runner_data": {"stt_binary_handler_id": 7}}},
+        )
+        page.wait_for_function(
+            "() => window.__luna.journal.binaire.length > 0", timeout=DELAI
+        )
+        trames = page.evaluate("() => window.__luna.journal.binaire")
+        assert trames[0][0] == 7, "chaque trame porte l'octet de canal"
+        # 1024 échantillons de 16 bits, plus l'octet de canal.
+        assert len(trames[0]) == 1 + 1024 * 2
+        self._relacher(page)
+
+    def test_le_debut_de_phrase_nest_pas_perdu(self, page):
+        """Le pipeline met un instant à donner le canal binaire ; ce qui a été
+        capté avant doit être conservé, pas jeté."""
+        monter(page)
+        self._appuyer(page)
+        page.wait_for_timeout(300)  # on parle avant que run-start n'arrive
+        avant = page.evaluate("() => window.__luna.journal.binaire.length")
+        assert avant == 0
+
+        emettre(
+            page,
+            "pipeline",
+            {"type": "run-start", "data": {"runner_data": {"stt_binary_handler_id": 3}}},
+        )
+        page.wait_for_function(
+            "() => window.__luna.journal.binaire.length > 0", timeout=DELAI
+        )
+        assert page.evaluate("() => window.__luna.journal.binaire.length") > 0
+        self._relacher(page)
+
+    def test_un_appui_bref_ne_casse_rien(self, page):
+        """Relâcher avant que la capture soit prête ne doit pas tuer
+        l'enregistrement en silence : sur iPad, on tapote."""
+        micro = dans_carte(page, ".micro")
+        monter(page)
+        micro.dispatch_event("pointerdown")
+        micro.dispatch_event("pointerup")  # sans attendre que ce soit prêt
+        attendre_transcription(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "stt-end", "data": {"stt_output": {"text": "bonsoir"}}},
+        )
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')", timeout=DELAI)
+        expect(dans_carte(page, ".bulle.moi")).to_contain_text("bonsoir")
+
+    def test_le_relachement_ferme_le_flux_audio(self, page):
+        monter(page)
+        self._appuyer(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "run-start", "data": {"runner_data": {"stt_binary_handler_id": 5}}},
+        )
+        page.wait_for_function(
+            "() => window.__luna.journal.binaire.length > 0", timeout=DELAI
+        )
+        self._relacher(page, attendre=False)
+        page.wait_for_function(
+            "() => window.__luna.journal.binaire.some(t => t.length === 1)",
+            timeout=DELAI,
+        )
+        fin = [
+            t for t in page.evaluate("() => window.__luna.journal.binaire") if len(t) == 1
+        ]
+        assert fin[-1] == [5], "une trame réduite au canal dit « j'ai fini »"
+
+    def test_la_transcription_part_dans_luna_chat(self, page):
+        monter(page)
+        self._appuyer(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "run-start", "data": {"runner_data": {"stt_binary_handler_id": 1}}},
+        )
+        self._relacher(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "stt-end", "data": {"stt_output": {"text": "allume le salon"}}},
+        )
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')", timeout=DELAI)
+        demande = next(
+            m for m in journal(page)["souscriptions"] if m["type"] == "luna/chat"
+        )
+        assert demande["text"] == "allume le salon"
+        expect(dans_carte(page, ".bulle.moi")).to_contain_text("allume le salon")
+
+    def test_une_transcription_vide_le_dit(self, page):
+        monter(page)
+        self._appuyer(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "run-start", "data": {"runner_data": {"stt_binary_handler_id": 1}}},
+        )
+        self._relacher(page)
+        emettre(
+            page, "pipeline", {"type": "stt-end", "data": {"stt_output": {"text": ""}}}
+        )
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("rien compris")
+        assert dans_carte(page, ".carte").get_attribute("data-orbe") == "idle"
+
+    def test_une_erreur_de_pipeline_le_dit(self, page):
+        monter(page)
+        self._appuyer(page)
+        self._relacher(page)
+        emettre(
+            page,
+            "pipeline",
+            {"type": "error", "data": {"message": "Aucun moteur de transcription."}},
+        )
+        expect(dans_carte(page, ".bulle.erreur")).to_contain_text("Aucun moteur")
+
+
+class TestLecture:
+    """B3 — la carte parle par `luna/speak`."""
+
+    @staticmethod
+    def _echange_vocal(page):
+        micro = dans_carte(page, ".micro")
+        micro.dispatch_event("pointerdown")
+        page.wait_for_function("() => window.__luna.fluxOuvert('pipeline')")
+        emettre(
+            page,
+            "pipeline",
+            {"type": "run-start", "data": {"runner_data": {"stt_binary_handler_id": 1}}},
+        )
+        micro.dispatch_event("pointerup")
+        emettre(
+            page,
+            "pipeline",
+            {"type": "stt-end", "data": {"stt_output": {"text": "salut"}}},
+        )
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')")
+        emettre(
+            page,
+            "chat",
+            {"event": "accepted", "message_id": "m_1", "conversation_id": "c_1"},
+        )
+        emettre(
+            page,
+            "chat",
+            {
+                "event": "done",
+                "message_id": "m_1",
+                "text": "Bonjour Guillaume.",
+                "usage": {},
+            },
+        )
+
+    def test_une_reponse_a_la_voix_est_lue(self, page):
+        monter(page)
+        self._echange_vocal(page)
+        page.wait_for_function(
+            "() => window.__luna.journal.envoyes.some(m => m.type === 'luna/speak')",
+            timeout=DELAI,
+        )
+        demande = next(m for m in journal(page)["envoyes"] if m["type"] == "luna/speak")
+        assert demande["text"] == "Bonjour Guillaume."
+
+    def test_une_reponse_a_lecrit_nest_pas_lue(self, page):
+        """Personne ne veut être lu à haute voix parce qu'il a tapé."""
+        monter(page)
+        dans_carte(page, "textarea").fill("salut")
+        dans_carte(page, ".envoi").click()
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')")
+        emettre(
+            page,
+            "chat",
+            {"event": "done", "message_id": "m_1", "text": "Bonjour.", "usage": {}},
+        )
+        page.wait_for_timeout(300)
+        assert not any(m["type"] == "luna/speak" for m in journal(page)["envoyes"])
+
+    def test_mode_toujours(self, page):
+        monter(page, config={"height": 620, "speak": "toujours"})
+        dans_carte(page, "textarea").fill("salut")
+        dans_carte(page, ".envoi").click()
+        page.wait_for_function("() => window.__luna.fluxOuvert('chat')")
+        emettre(
+            page,
+            "chat",
+            {"event": "done", "message_id": "m_1", "text": "Bonjour.", "usage": {}},
+        )
+        page.wait_for_function(
+            "() => window.__luna.journal.envoyes.some(m => m.type === 'luna/speak')",
+            timeout=DELAI,
+        )
+
+    def test_mode_jamais(self, page):
+        monter(page, config={"height": 620, "speak": "jamais"})
+        self._echange_vocal(page)
+        page.wait_for_timeout(300)
+        assert not any(m["type"] == "luna/speak" for m in journal(page)["envoyes"])
+
+    def test_configuration_invalide(self, page):
+        erreur = page.evaluate(
+            """() => {
+              const c = document.createElement('luna-card');
+              try { c.setConfig({ speak: 'parfois' }); return null; }
+              catch (e) { return e.message; }
+            }"""
+        )
+        assert "speak" in erreur
+
+    def test_laudio_est_debloque_pendant_le_geste(self, page):
+        """Sur iPad, un `play()` hors geste est refusé : le lecteur doit être
+        amorcé au premier appui, sinon Luna reste muette."""
+        monter(page)
+        assert page.evaluate("() => window.__carte._lecteur") is None
+        dans_carte(page, ".micro").dispatch_event("pointerdown")
+        assert page.evaluate("() => Boolean(window.__carte._lecteur)") is True
+        dans_carte(page, ".micro").dispatch_event("pointerup")
 
 
 def _code_seul() -> str:

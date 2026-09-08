@@ -34,7 +34,7 @@ from .websocket import enregistrer_commandes
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATEFORMES = [Platform.BINARY_SENSOR]
+PLATEFORMES = [Platform.BINARY_SENSOR, Platform.CONVERSATION]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

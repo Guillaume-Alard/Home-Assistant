@@ -15,7 +15,7 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.components import websocket_api
+from homeassistant.components import assist_pipeline, tts, websocket_api
 from homeassistant.core import HomeAssistant, callback
 
 from .client import ClientRelais, ErreurLuna
@@ -41,6 +41,7 @@ def enregistrer_commandes(hass: HomeAssistant) -> None:
         ws_history,
         ws_feed,
         ws_proposal_decide,
+        ws_speak,
         ws_identity,
         ws_alerts_feedback,
         ws_patterns,
@@ -221,6 +222,71 @@ async def ws_proposal_decide(hass, connection, msg) -> None:
         "decide",
         {"proposal_id": msg["proposal_id"], "decision": msg["decision"]},
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "luna/speak",
+        vol.Required("text"): str,
+        vol.Optional("client_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_speak(hass, connection, msg) -> None:
+    """Synthétise une réponse et rend une URL de **même origine**.
+
+    Décision B3 : c'est ici que se fait le travail, en Python, plutôt que dans
+    la carte. Elle n'a donc ni `fetch()` à faire (§3) ni jeton à manipuler —
+    elle pose l'URL dans un élément audio et c'est tout.
+
+    La voix est celle du pipeline Assist préféré : Luna parle pareil qu'on
+    l'écoute dans Loggia ou depuis un satellite.
+    """
+    moteur, langue, voix = _voix_du_pipeline(hass)
+    if not moteur:
+        connection.send_error(
+            msg["id"],
+            "tts_unavailable",
+            "Aucune voix n'est configurée dans Home Assistant. "
+            "Installe l'add-on Piper et ajoute-le à un pipeline Assist.",
+        )
+        return
+
+    texte = msg["text"].strip()
+    if not texte:
+        connection.send_error(msg["id"], "internal", "Rien à dire.")
+        return
+
+    try:
+        flux = tts.async_create_stream(
+            hass,
+            moteur,
+            language=langue,
+            options={"voice": voix} if voix else None,
+        )
+        flux.async_set_message(texte)
+    except Exception as err:  # jamais d'échec silencieux (§8)
+        _LOGGER.exception("Luna : synthèse impossible")
+        connection.send_error(msg["id"], "tts_unavailable", str(err))
+        return
+
+    connection.send_result(msg["id"], {"url": flux.url, "engine": moteur})
+
+
+@callback
+def _voix_du_pipeline(hass: HomeAssistant) -> tuple[str | None, str | None, str | None]:
+    """Moteur, langue et voix du pipeline Assist préféré.
+
+    Si aucun pipeline n'est configuré, on retombe sur le moteur TTS par défaut
+    de Home Assistant — mieux vaut une voix générique que pas de voix.
+    """
+    try:
+        pipeline = assist_pipeline.async_get_pipeline(hass)
+    except Exception:  # noqa: BLE001 — aucun pipeline configuré, ce n'est pas grave
+        pipeline = None
+    if pipeline is not None and pipeline.tts_engine:
+        return pipeline.tts_engine, pipeline.tts_language, pipeline.tts_voice
+    return tts.async_resolve_engine(hass, None), None, None
 
 
 # ── Documentées en P1, vivantes plus tard (§12) ──────────────────────────

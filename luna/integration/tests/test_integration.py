@@ -224,3 +224,163 @@ class TestModeDegrade:
         assert reponse["success"] is False
         assert reponse["error"]["code"] == "addon_offline"
         assert "add-on" in reponse["error"]["message"]
+
+
+class TestAgentDeConversation:
+    """B1 — la deuxième porte d'entrée vers le même cerveau."""
+
+    async def test_lentite_existe(self, hass, entree):
+        etat = hass.states.get("conversation.luna")
+        assert etat is not None
+
+    async def test_un_tour_de_parole(self, hass, entree, faux_relais):
+        from homeassistant.components import conversation
+        from homeassistant.core import Context
+
+        resultat = await conversation.async_converse(
+            hass,
+            "allume le salon",
+            None,
+            Context(),
+            language="fr",
+            agent_id="conversation.luna",
+        )
+        assert resultat.response.speech["plain"]["speech"] == "Bonjour."
+
+        envoi = faux_relais.dernier("chat")
+        assert envoi["payload"]["text"] == "allume le salon"
+
+    async def test_la_provenance_et_la_diffusion_sont_posees(
+        self, hass, entree, faux_relais
+    ):
+        """`source: voix` change la longueur de la réponse ; `diffuser` fait
+        rejoindre le fil des cartes ouvertes (§7)."""
+        from homeassistant.components import conversation
+        from homeassistant.core import Context
+
+        await conversation.async_converse(
+            hass, "salut", None, Context(), language="fr", agent_id="conversation.luna"
+        )
+        envoi = faux_relais.dernier("chat")
+        assert envoi["context"]["source"] == "voix"
+        assert envoi["payload"]["diffuser"] is True
+        # L'identité arrive en P3 : un satellite n'est pas plus qu'un invité.
+        assert envoi["context"]["profile"] == "unknown"
+        assert envoi["context"]["is_admin"] is False
+
+    async def test_les_deltas_sont_recolles(self, hass, entree, faux_relais):
+        from homeassistant.components import conversation
+        from homeassistant.core import Context
+
+        faux_relais.evenements_chat = [
+            {"event": "accepted", "message_id": "m_1", "conversation_id": "c_1"},
+            {"event": "delta", "message_id": "m_1", "text": "J'allume "},
+            {"event": "delta", "message_id": "m_1", "text": "le salon."},
+            {
+                "event": "done",
+                "message_id": "m_1",
+                "text": "J'allume le salon.",
+                "usage": {},
+            },
+        ]
+        resultat = await conversation.async_converse(
+            hass,
+            "allume",
+            None,
+            Context(),
+            language="fr",
+            agent_id="conversation.luna",
+        )
+        assert resultat.response.speech["plain"]["speech"] == "J'allume le salon."
+
+    async def test_une_erreur_se_dit_a_voix_haute(self, hass, entree, faux_relais):
+        """§8 vaut aussi au micro : un silence serait le pire des retours."""
+        from homeassistant.components import conversation
+        from homeassistant.core import Context
+
+        faux_relais.evenements_chat = [
+            {"event": "accepted", "message_id": "m_1", "conversation_id": "c_1"},
+            {
+                "event": "error",
+                "message_id": "m_1",
+                "code": "claude_no_credit",
+                "message": "Le crédit de la clé API Anthropic est épuisé.",
+            },
+        ]
+        resultat = await conversation.async_converse(
+            hass,
+            "salut",
+            None,
+            Context(),
+            language="fr",
+            agent_id="conversation.luna",
+        )
+        assert "crédit" in resultat.response.speech["plain"]["speech"]
+
+    async def test_le_relais_absent_ne_laisse_pas_muet(self, hass, entree):
+        from homeassistant.components import conversation
+        from homeassistant.core import Context
+
+        from custom_components.luna.const import DOMAINE as D
+
+        await hass.data[D][entree.entry_id].fermer()
+        resultat = await conversation.async_converse(
+            hass,
+            "salut",
+            None,
+            Context(),
+            language="fr",
+            agent_id="conversation.luna",
+        )
+        assert "hors ligne" in resultat.response.speech["plain"]["speech"].lower()
+
+
+class TestSynthese:
+    """B3 — la carte parle par `luna/speak`, sans fetch ni jeton."""
+
+    async def test_url_de_meme_origine(self, hass, entree, hass_ws_client):
+        from unittest.mock import MagicMock, patch
+
+        flux = MagicMock()
+        flux.url = "/api/tts_proxy/abc.mp3"
+        flux.async_set_message = MagicMock()
+
+        with (
+            patch(
+                "custom_components.luna.websocket._voix_du_pipeline",
+                return_value=("tts.piper", "fr", "fr_FR-siwis-medium"),
+            ),
+            patch(
+                "custom_components.luna.websocket.tts.async_create_stream",
+                return_value=flux,
+            ) as creer,
+        ):
+            client = await hass_ws_client(hass)
+            await client.send_json_auto_id(
+                {"type": "luna/speak", "text": "J'allume le salon."}
+            )
+            reponse = await client.receive_json()
+
+        assert reponse["success"] is True
+        assert reponse["result"]["url"].startswith("/api/")
+        assert "://" not in reponse["result"]["url"], "l'URL doit être relative"
+        flux.async_set_message.assert_called_once_with("J'allume le salon.")
+        # La voix est celle du pipeline : Luna parle pareil partout.
+        assert creer.call_args.kwargs["options"] == {"voice": "fr_FR-siwis-medium"}
+
+    async def test_sans_moteur_le_message_est_actionnable(
+        self, hass, entree, hass_ws_client
+    ):
+        from unittest.mock import patch
+
+        with patch(
+            "custom_components.luna.websocket._voix_du_pipeline",
+            return_value=(None, None, None),
+        ):
+            client = await hass_ws_client(hass)
+            await client.send_json_auto_id({"type": "luna/speak", "text": "coucou"})
+            reponse = await client.receive_json()
+
+        assert reponse["success"] is False
+        assert reponse["error"]["code"] == "tts_unavailable"
+        assert "Piper" in reponse["error"]["message"]

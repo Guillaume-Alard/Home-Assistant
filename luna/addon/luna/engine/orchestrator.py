@@ -268,9 +268,9 @@ class Orchestrateur:
                 confidence=1.0 if contexte and contexte.ha_user_id else 0.0,
                 signals={"ha_user": 1.0 if contexte and contexte.ha_user_id else 0.0},
             ).model_dump(mode="json"),
-            # P2 à P6. La carte grise ce qui est à false plutôt que de le cacher.
+            # P3 à P6. La carte grise ce qui est à false plutôt que de le cacher.
             "phases": {
-                "voice": False,
+                "voice": True,
                 "identity": False,
                 "veille": False,
                 "guardian": False,
@@ -293,9 +293,14 @@ class Orchestrateur:
         """Le second bloc système. Court, parce qu'il n'est jamais mis en cache."""
         nom = NOMS_PROFILS.get(contexte.profile, contexte.profile)
         lieu = "réseau local" if contexte.local else "accès distant"
+        voie = (
+            "Demande reçue à la voix : ta réponse sera lue à voix haute."
+            if contexte.source == "voix"
+            else "Demande reçue à l'écrit."
+        )
         return (
             f"Contexte : {date_francaise(self._maintenant())}. "
-            f"Tu parles à {nom}. Client : {contexte.client_id} ({lieu})."
+            f"Tu parles à {nom}. Client : {contexte.client_id} ({lieu}). {voie}"
         )
 
     async def _historique_pour_cerveau(

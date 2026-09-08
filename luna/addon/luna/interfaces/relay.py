@@ -14,7 +14,8 @@ import asyncio
 import contextlib
 import hmac
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -22,7 +23,14 @@ from aiohttp import WSMsgType, web
 from ..engine.orchestrator import Orchestrateur
 from ..kernel.bus import Bus
 from ..kernel.errors import LunaError, PasEncoreImplemente
-from ..kernel.schemas import ContexteRequete, EvtStatut, MaisonConnectee
+from ..kernel.ids import nouvel_id
+from ..kernel.schemas import (
+    ContexteRequete,
+    EvtMessage,
+    EvtStatut,
+    MaisonConnectee,
+    MessageDiffuse,
+)
 
 log = logging.getLogger("luna.relais")
 
@@ -58,13 +66,17 @@ class Relais:
         self._connexions: set[Connexion] = set()
         bus.abonner(MaisonConnectee, self._sur_maison)
 
+    async def diffuser(self, evenement: Any) -> None:
+        """Pousse un événement à toutes les cartes abonnées au feed."""
+        for connexion in list(self._connexions):
+            await connexion.diffuser(evenement)
+
     async def _sur_maison(self, evenement: MaisonConnectee) -> None:
         statut = EvtStatut(
             addon="online" if evenement.connectee else "degraded",
             detail=None if evenement.connectee else "Home Assistant injoignable",
         )
-        for connexion in list(self._connexions):
-            await connexion.diffuser(statut)
+        await self.diffuser(statut)
 
     async def handler(self, requete: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=30)
@@ -76,7 +88,9 @@ class Relais:
             await ws.close(code=FERMETURE_NON_AUTORISE)
             return ws
 
-        connexion = Connexion(ws, self._orchestrateur, self._resoudre_profil)
+        connexion = Connexion(
+            ws, self._orchestrateur, self._resoudre_profil, self.diffuser
+        )
         self._connexions.add(connexion)
         log.info("Relais : intégration connectée (%s)", requete.remote)
         try:
@@ -94,10 +108,12 @@ class Connexion:
         ws: web.WebSocketResponse,
         orchestrateur: Orchestrateur,
         resoudre_profil: ResolveurProfil,
+        diffuser_a_tous: Callable[[Any], Awaitable[None]],
     ) -> None:
         self._ws = ws
         self._orchestrateur = orchestrateur
         self._resoudre_profil = resoudre_profil
+        self._diffuser_a_tous = diffuser_a_tous
         self._verrou = asyncio.Lock()
         self._flux: dict[int, asyncio.Task[None]] = {}
         self._abonnes_feed: set[int] = set()
@@ -219,9 +235,15 @@ class Connexion:
     async def _converser(
         self, identifiant: int, charge: dict[str, Any], contexte: ContexteRequete
     ) -> None:
+        texte = str(charge.get("text") or "")
+        # Un échange né hors d'une carte — l'agent de conversation d'Assist —
+        # doit rejoindre le fil des cartes ouvertes. §7 : « à l'écrit et à
+        # l'oral, indifféremment ». C'est le transport qui sait d'où ça vient,
+        # pas l'orchestrateur : la décision se prend donc ici.
+        diffuser = bool(charge.get("diffuser"))
         try:
             flux = self._orchestrateur.converser(
-                str(charge.get("text") or ""),
+                texte,
                 contexte=contexte,
                 conversation_id=charge.get("conversation_id"),
             )
@@ -229,10 +251,44 @@ class Connexion:
                 await self._envoyer(
                     {"id": identifiant, **evenement.model_dump(mode="json")}
                 )
+                if diffuser:
+                    await self._diffuser_tour(evenement, texte)
         except asyncio.CancelledError:
             raise
         finally:
             self._flux.pop(identifiant, None)
+
+    async def _diffuser_tour(self, evenement: Any, question: str) -> None:
+        """Traduit un échange d'Assist en messages pour les cartes ouvertes."""
+        genre = getattr(evenement, "event", None)
+        if genre == "proposal":
+            # Une proposition née d'un tour vocal doit pouvoir être acceptée :
+            # on ne clique pas dans un haut-parleur. Sans ça elle expirerait en
+            # cinq minutes sans que personne n'ait pu la voir.
+            await self._diffuser_a_tous(evenement)
+            return
+        if genre == "accepted":
+            role, texte, identifiant = "user", question, nouvel_id("m")
+        elif genre == "done":
+            role, texte, identifiant = "luna", evenement.text, evenement.message_id
+        else:
+            return
+        if not texte.strip():
+            return
+        await self._diffuser_a_tous(
+            EvtMessage(
+                message=MessageDiffuse(
+                    id=identifiant,
+                    role=role,  # type: ignore[arg-type]
+                    text=texte,
+                    ts=datetime.now().astimezone(),
+                    conversation_id=getattr(evenement, "conversation_id", "")
+                    or getattr(evenement, "message_id", ""),
+                    # Home Assistant a déjà parlé : la carte ne doit pas répéter.
+                    speak=False,
+                )
+            )
+        )
 
     async def _arreter(self, identifiant: int) -> None:
         self._abonnes_feed.discard(identifiant)

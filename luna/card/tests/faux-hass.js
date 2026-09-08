@@ -6,7 +6,12 @@
  * respecte, ce qui est déjà couvert ailleurs.
  */
 window.creerFauxHass = (options = {}) => {
-  const journal = { envoyes: [], souscriptions: [], desabonnements: 0 };
+  const journal = {
+    envoyes: [],
+    souscriptions: [],
+    desabonnements: 0,
+    binaire: [],
+  };
 
   const info = options.info ?? {
     version: "0.1.0",
@@ -18,7 +23,7 @@ window.creerFauxHass = (options = {}) => {
       confidence: 1.0,
       signals: { ha_user: 1.0 },
     },
-    phases: { voice: false, identity: false, veille: false, guardian: false },
+    phases: { voice: true, identity: false, veille: false, guardian: false },
   };
 
   const historique = options.historique ?? {
@@ -27,7 +32,11 @@ window.creerFauxHass = (options = {}) => {
     has_more: false,
   };
 
-  const flux = { chat: null, feed: null };
+  const flux = { chat: null, feed: null, pipeline: null };
+
+  // Un WAV vide : la lecture aboutit vraiment, au lieu d'un 404 sur file://.
+  const AUDIO =
+    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
 
   const hass = {
     states: {
@@ -49,6 +58,9 @@ window.creerFauxHass = (options = {}) => {
             return Promise.resolve(
               options.decision ?? { executed: true, results: [] },
             );
+          case "luna/speak":
+            if (options.echecSpeak) return Promise.reject(options.echecSpeak);
+            return Promise.resolve({ url: AUDIO, engine: "tts.piper" });
           case "luna/alerts/feedback":
             return Promise.reject({
               code: "not_implemented",
@@ -58,12 +70,26 @@ window.creerFauxHass = (options = {}) => {
             return Promise.reject({ code: "internal", message: "inconnu" });
         }
       },
+      // La carte écrit les trames PCM directement sur la socket, préfixées de
+      // l'octet de canal donné par `run-start` — comme le fait le dialogue
+      // vocal de Home Assistant.
+      socket: {
+        readyState: 1,
+        send(donnees) {
+          journal.binaire.push(Array.from(new Uint8Array(donnees)));
+        },
+      },
       subscribeMessage(rappel, message) {
         journal.souscriptions.push(message);
         if (message.type === "luna/chat" && options.echecChat) {
           return Promise.reject(options.echecChat);
         }
-        const cle = message.type === "luna/chat" ? "chat" : "feed";
+        const cle =
+          message.type === "luna/chat"
+            ? "chat"
+            : message.type === "assist_pipeline/run"
+              ? "pipeline"
+              : "feed";
         flux[cle] = rappel;
         return Promise.resolve(() => {
           journal.desabonnements += 1;

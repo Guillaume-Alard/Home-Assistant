@@ -3,7 +3,8 @@
 Assistante domestique de Guillaume Alard. Elle vit **dans** Home Assistant, sur
 Nova. Reconstruction complète, elle remplace « Sentinelle ».
 
-**Phase 1 livrée** : piloter la maison par écrit depuis la carte Loggia.
+**Phases 1 et 2 livrées** : piloter la maison par écrit **et à la voix**, depuis
+la carte Loggia ou depuis n'importe quel appareil qui parle à Assist.
 
 ## Trois artefacts
 
@@ -12,6 +13,11 @@ Nova. Reconstruction complète, elle remplace « Sentinelle ».
 | [`addon/`](addon/) | **Le cerveau** — orchestrateur, API Claude, arbitre d'autonomie, SQLite | Conteneur HAOS sur Nova |
 | [`integration/`](integration/) | **Le nerf** — enregistre les commandes `luna/*`, relaie, expose `binary_sensor.luna_en_ligne` | Processus Python de Home Assistant |
 | [`card/`](card/) | **Le visage** — `luna-card.js`, un seul fichier, aucun build | Navigateur, dans Loggia |
+
+La voix n'ajoute pas un second cerveau : elle ajoute **une deuxième porte**.
+Luna est un agent de conversation Home Assistant, et ne porte ni transcription
+ni synthèse — Whisper et Piper restent les add-ons officiels, dans le pipeline
+Assist (§7 : « voie principale : pipeline Assist de HA »).
 
 Le cahier des charges n'en prévoyait que deux. Le troisième, l'intégration, est
 structurellement nécessaire : une carte Lovelace ne peut parler qu'à Home
@@ -36,6 +42,22 @@ Les points ⑦ et ⑧ sont l'invariant de sécurité (§9.2 du cahier des charge
 **aucun chemin de code n'atteint ⑧ sans passer par ⑦**, et un test statique
 échoue si un fichier autre que l'arbitre mentionne seulement l'écriture.
 
+## Deux portes, un cerveau
+
+```
+ carte Loggia ──┐                            ┌── Whisper (add-on officiel)
+                ├─► intégration ─► add-on ◄──┤
+ Assist ────────┘     (le nerf)   (le cerveau)└── Piper  (add-on officiel)
+   ▲                                    │
+   └── app Companion, iPad mural,        └─► Home Assistant
+       satellite ESP32 plus tard
+```
+
+Le micro de la carte passe par le pipeline Assist en transcription seule, puis
+le texte repart par le même chemin qu'une phrase tapée. Un tour de parole traité
+par un satellite rejoint le fil de la carte restée ouverte : à l'écrit et à
+l'oral, c'est la même conversation.
+
 ## Ce que Luna sait faire, et ce qu'elle refuse
 
 Elle lit l'état de la maison, allume et éteint les lumières et les
@@ -54,7 +76,8 @@ l'arbitre les refuserait de toute façon.
 | [`docs/P1-HYPOTHESES.md`](docs/P1-HYPOTHESES.md) | Les sept contradictions du cahier des charges et leurs arbitrages, les trente hypothèses, et ce qui reste ouvert |
 | [`docs/P1-CONTRATS.md`](docs/P1-CONTRATS.md) | Couches, contrats WebSocket, échelle d'autonomie, schéma SQLite, écarts constatés, état de la recette |
 | [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le HTTPS local, sans nom de domaine : DuckDNS et deux add-ons officiels |
-| [`docs/P2-VOIX.md`](docs/P2-VOIX.md) | **En attente de validation** — les cinq décisions et les contrats de la phase voix |
+| [`docs/P2-VOIX.md`](docs/P2-VOIX.md) | La phase voix : cinq décisions, contrats, écarts constatés, état de la recette |
+| [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md) | *Side-quest* — entraîner une voix Piper sur Orion, et ce que ça demande vraiment |
 
 ## Installer sur Nova
 
@@ -69,26 +92,28 @@ Lovelace.
 ## Vérifier
 
 ```bash
-cd addon        && pytest -q && lint-imports    # 151 tests, 4 contrats de couches
-cd integration  && pytest -q                    # 17 tests, vraie instance HA
-cd card         && pytest -q                    # 23 tests, vrai Chromium
+cd addon        && pytest -q && lint-imports    # 156 tests, 4 contrats de couches
+cd integration  && pytest -q                    # 25 tests, vraie instance HA
+cd card         && pytest -q                    # 38 tests, vrai Chromium
 ```
 
-191 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
-faux serveur WebSocket, le client Claude contre des réponses enregistrées, la
-carte contre un faux `hass` qui rejoue le contrat §4. **La CI ne consomme jamais
-de crédit.**
+219 tests, aucun appel réseau réel : le client Home Assistant tourne contre un
+faux serveur WebSocket, le client Claude contre des réponses enregistrées, et la
+carte contre un faux `hass` qui rejoue le contrat §4 — mais avec un **vrai**
+`AudioWorklet` et un micro synthétique de Chromium, donc le chemin de capture
+est réellement exercé. **La CI ne consomme jamais de crédit.**
 
 ## Où en est le projet
 
-**P1 est livrée.** **P2 est cadrée et attend une validation** — voir
-[`docs/P2-VOIX.md`](docs/P2-VOIX.md), qui tient en cinq décisions. La plus
-structurante : Luna devient un **agent de conversation** Home Assistant et ne
-porte ni STT ni TTS. Whisper et Piper restent les add-ons officiels, dans le
-pipeline Assist, comme le demande §7 — au prix d'un écart avec le schéma de §3,
-qui les accrochait sous l'add-on Luna.
+**P1 et P2 sont livrées.** La suite, c'est P3 — l'identité — et elle n'est pas
+cadrée : rien n'a été écrit qui l'anticipe.
 
-### En parallèle, sur Nova
+### Ce qui reste à faire sur Nova, et que le code ne peut pas faire
+
+- **Installer les add-ons faster-whisper et piper**, et créer un pipeline Assist
+  dont Luna est l'agent de conversation.
+- **Mesurer la latence de transcription** : §7 annonce 1 à 3 s sur le N95, et
+  aucun test ne peut le vérifier d'ici.
 
 - **P0, le HTTPS local.** Sans lui, `getUserMedia` reste refusé sur le réseau de
   la maison et la voix n'a pas de micro. Pas de domaine en propre : la procédure
@@ -96,10 +121,14 @@ qui les accrochait sous l'add-on Luna.
   sept étapes chiffrées dans [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md).
   La première, vider l'URL interne dans l'app Companion, débloque le micro en
   deux minutes en attendant le reste.
-- **Vérifier que le cache de prompt prend** sur Nova
+- **Vérifier que le cache de prompt prend**
   (`cache_read_input_tokens > 0` au second échange). C'est le levier de coût
   numéro un, et le seul point de la recette qu'aucun test ne peut couvrir sans
   dépenser des crédits.
+- **Choisir une voix française** dans l'add-on Piper. C'est une question
+  d'oreille : `rhasspy.github.io/piper-samples`. En remplacer une par une voix
+  entraînée sur mesure est une side-quest à part —
+  [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md).
 
 ## Licence et parenté
 

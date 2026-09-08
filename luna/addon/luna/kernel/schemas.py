@@ -38,6 +38,9 @@ class ContexteRequete(Modele):
     profile: str = "unknown"
     client_id: str = "inconnu"
     local: bool = True
+    #: D'où vient la demande. Change la **longueur** de la réponse, jamais les
+    #: droits : le niveau d'une action reste décidé par le registre de L0 (§9.2).
+    source: Literal["texte", "voix"] = "texte"
 
 
 class ProfilActif(Modele):
@@ -167,6 +170,27 @@ class EvtStatut(Modele):
     detail: str | None = None
 
 
+class MessageDiffuse(Modele):
+    """Un message poussé aux cartes ouvertes, sans qu'elles l'aient demandé."""
+
+    id: str
+    role: Literal["user", "luna"]
+    text: str
+    ts: datetime
+    conversation_id: str
+    #: La carte doit-elle le lire à voix haute ? Non pour un tour déjà parlé
+    #: par un satellite : Home Assistant s'en est chargé.
+    speak: bool = False
+
+
+class EvtMessage(Modele):
+    """§7 : « à l'écrit et à l'oral, indifféremment ». C'est par là qu'un tour
+    de parole traité hors de la carte rejoint le même fil."""
+
+    event: Literal["message"] = "message"
+    message: MessageDiffuse
+
+
 class EvtIdentite(Modele):
     """[P3] Documenté maintenant, jamais émis avant la phase 3."""
 
@@ -189,6 +213,7 @@ EvenementCarte = (
     | EvtTermine
     | EvtErreur
     | EvtStatut
+    | EvtMessage
     | EvtIdentite
     | EvtAlerte
 )

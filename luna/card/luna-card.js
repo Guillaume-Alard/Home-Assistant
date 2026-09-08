@@ -30,6 +30,67 @@ const HEURE = new Intl.DateTimeFormat("fr-FR", {
   minute: "2-digit",
 });
 
+/**
+ * Un WAV vide de 44 octets.
+ *
+ * iOS n'autorise la lecture d'un élément audio que si un `play()` a déjà eu
+ * lieu **pendant un vrai geste utilisateur**. On amorce donc le lecteur avec ce
+ * silence au premier appui, pour pouvoir parler plus tard sans geste — quand
+ * Luna répond, par exemple.
+ */
+const SILENCE =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
+
+/** Ce qu'attend le pipeline Assist : 16 kHz, mono, PCM 16 bits. */
+const TAUX_CIBLE = 16000;
+
+/** Combien d'échantillons par trame envoyée — 1024 à 16 kHz, soit 64 ms. */
+const TRAME = 1024;
+
+/**
+ * Le rééchantillonneur, exécuté dans un `AudioWorklet`.
+ *
+ * Il vit ici en texte plutôt que dans un second fichier : §8 exige **un seul
+ * fichier**, et un `Blob` de même origine suffit à le charger. Sur iOS on ne
+ * choisit pas la fréquence du `AudioContext` — elle vaut 44,1 ou 48 kHz — donc
+ * le rééchantillonnage n'est pas une optimisation, c'est une obligation.
+ */
+const WORKLET = `
+class LunaPcm extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._pas = sampleRate / ${TAUX_CIBLE};
+    this._reste = 0;
+    this._dernier = 0;
+    this._sortie = new Int16Array(${TRAME});
+    this._n = 0;
+  }
+  process(entrees) {
+    const canal = entrees[0] && entrees[0][0];
+    if (!canal || canal.length === 0) return true;
+    let i = this._reste;
+    while (i < canal.length) {
+      const j = i | 0;
+      const f = i - j;
+      const a = j === 0 && this._reste < 0 ? this._dernier : canal[j];
+      const b = j + 1 < canal.length ? canal[j + 1] : a;
+      let v = a + (b - a) * f;
+      if (v > 1) v = 1; else if (v < -1) v = -1;
+      this._sortie[this._n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
+      if (this._n === this._sortie.length) {
+        this.port.postMessage(this._sortie.slice());
+        this._n = 0;
+      }
+      i += this._pas;
+    }
+    this._reste = i - canal.length;
+    this._dernier = canal[canal.length - 1];
+    return true;
+  }
+}
+registerProcessor("luna-pcm", LunaPcm);
+`;
+
 /** Messages d'erreur fabriqués par la carte, jamais reçus du serveur (§8). */
 const ERREURS_LOCALES = {
   insecure_context:
@@ -39,8 +100,12 @@ const ERREURS_LOCALES = {
   mic_denied:
     "L'accès au micro a été refusé. Autorise-le pour Home Assistant dans " +
     "les réglages de ton téléphone, puis recharge la page.",
-  voice_phase:
-    "La voix arrive en phase 2. Pour l'instant, écris-moi.",
+  voice_phase: "La voix arrive en phase 2. Pour l'instant, écris-moi.",
+  mic_failed:
+    "Je n'ai pas réussi à démarrer le micro. Recharge la page ; si ça " +
+    "recommence, regarde la console du navigateur.",
+  stt_failed:
+    "Je n'ai rien compris. Réessaie en parlant un peu plus près du micro.",
 };
 
 const STYLES = `
@@ -139,6 +204,7 @@ const STYLES = `
   .carte[data-orbe="thinking"] .noyau { animation: pulse 1.1s ease-in-out infinite; }
   .carte[data-orbe="speaking"] .noyau { animation: parle 0.55s ease-in-out infinite; }
   .carte[data-orbe="listening"] .halo { animation: ecoute 1.3s ease-out infinite; }
+  .carte[data-orbe="listening"] .micro { background: var(--luna-accent); color: #fff; }
   .carte[data-orbe="alert"] .noyau { fill: var(--luna-alerte); }
   .carte[data-orbe="alert"] .halo { fill: var(--luna-alerte); animation: pulse 1.8s infinite; }
 
@@ -266,6 +332,11 @@ const STYLES = `
   textarea:focus { outline: none; border-color: var(--luna-accent); }
   textarea:disabled { opacity: 0.5; }
   .rond {
+    /* Appui maintenu sur iPad : ni sélection, ni menu, ni défilement. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
     width: 40px; height: 40px; padding: 0;
     display: grid; place-items: center;
     border-radius: 50%;
@@ -381,6 +452,20 @@ class LunaCard extends HTMLElement {
     this._phases = { voice: false, identity: false, veille: false, guardian: false };
     this._enLigne = null;
     this._colle = true;
+
+    // Voix (P2)
+    this._ecoute = false;
+    this._parVoix = false;
+    this._lecteur = null;
+    this._contexteAudio = null;
+    this._fluxMicro = null;
+    this._noeud = null;
+    this._sourceAudio = null;
+    this._handler = null;
+    this._tampon = [];
+    this._attenteStt = null;
+    this._desabonnerStt = null;
+    this._demarrage = null;
   }
 
   // ── Contrat Lovelace ───────────────────────────────────────────────
@@ -390,16 +475,24 @@ class LunaCard extends HTMLElement {
     if (!Number.isFinite(hauteur) || hauteur < 400) {
       throw new Error("luna-card : « height » doit être un nombre ≥ 400.");
     }
+    const parler = config.speak ?? "voix";
+    if (!["voix", "toujours", "jamais"].includes(parler)) {
+      throw new Error('luna-card : « speak » vaut "voix", "toujours" ou "jamais".');
+    }
     this._config = {
       height: hauteur,
       drawers: { veille: true, ...(config.drawers || {}) },
       greeting: config.greeting !== false,
+      // « voix » : Luna ne lit à voix haute que ce qu'on lui a demandé de vive
+      // voix. C'est le moins surprenant : personne ne veut être lu à haute voix
+      // parce qu'il a tapé une question.
+      speak: parler,
     };
     if (this._monte) this._appliquerConfig();
   }
 
   static getStubConfig() {
-    return { height: 620, drawers: { veille: true }, greeting: true };
+    return { height: 620, drawers: { veille: true }, greeting: true, speak: "voix" };
   }
 
   getCardSize() {
@@ -442,6 +535,9 @@ class LunaCard extends HTMLElement {
   disconnectedCallback() {
     this._monte = false;
     this._pret = false;
+    this._ecoute = false;
+    this._couperCapture();
+    this._fermerTranscription();
     this._fermerFlux();
     if (this._desabonnerFeed) {
       this._desabonnerFeed();
@@ -477,7 +573,7 @@ class LunaCard extends HTMLElement {
     });
 
     this._q(".envoi").addEventListener("click", () => this._envoyer());
-    this._q(".micro").addEventListener("click", () => this._micro());
+    this._brancherMicro();
     this._q(".cloche").addEventListener("click", () => this._basculerTiroir());
     this._q(".fermer").addEventListener("click", () => this._basculerTiroir(false));
   }
@@ -570,13 +666,14 @@ class LunaCard extends HTMLElement {
 
   // ── Envoi d'un message ─────────────────────────────────────────────
 
-  async _envoyer() {
+  async _envoyer(parVoix = false) {
     const saisie = this._q("textarea");
     const texte = saisie.value.trim();
     if (!texte || this._messageEnCours || this._enLigne === false) return;
 
     saisie.value = "";
     saisie.style.height = "auto";
+    this._parVoix = parVoix;
     this._bulle("moi", texte, new Date());
     this._orbe("thinking");
     this._sousTitre("Luna réfléchit…");
@@ -624,6 +721,7 @@ class LunaCard extends HTMLElement {
 
       case "done":
         this._terminer();
+        if (this._doitParler()) this._parler(evt.text);
         break;
 
       case "error":
@@ -845,7 +943,14 @@ class LunaCard extends HTMLElement {
     this._phases = info.phases || this._phases;
     this._appliquerProfil(info.profile);
     this._rendreAlertes();
-    this._q(".micro").disabled = true; // la voix arrive en phase 2
+    const micro = this._q(".micro");
+    const pret = Boolean(this._phases.voice) && window.isSecureContext;
+    micro.disabled = !pret;
+    micro.title = pret
+      ? "Maintenir pour parler"
+      : this._phases.voice
+        ? "Micro indisponible : la page n'est pas en HTTPS"
+        : "La voix arrive en phase 2";
     if (info.addon === "degraded") {
       this._bandeau("Luna ne joint pas Home Assistant. Elle répond, mais n'agit pas.");
     }
@@ -889,6 +994,11 @@ class LunaCard extends HTMLElement {
     this._q("textarea").disabled = true;
     this._q(".envoi").disabled = true;
     this._q(".micro").disabled = true;
+    if (this._ecoute) {
+      this._ecoute = false;
+      this._couperCapture();
+      this._fermerTranscription();
+    }
     this._orbe("idle");
     this._sousTitre("Hors ligne");
   }
@@ -919,23 +1029,259 @@ class LunaCard extends HTMLElement {
     else if (!premier) this._enLigneRetrouvee();
   }
 
-  // ── Micro (phase 2) ────────────────────────────────────────────────
+  // ── Micro — appui pour parler (§8) ─────────────────────────────────
+
+  _brancherMicro() {
+    const micro = this._q(".micro");
+    micro.addEventListener("pointerdown", (evt) => {
+      evt.preventDefault();
+      this._debloquerAudio();
+      this._demarrerEcoute();
+    });
+    for (const fin of ["pointerup", "pointercancel", "pointerleave"]) {
+      micro.addEventListener(fin, () => this._arreterEcoute());
+    }
+    // Sur iOS, un appui maintenu ouvre le menu contextuel : il ferait perdre
+    // le `pointerup`, donc la fin de l'enregistrement.
+    micro.addEventListener("contextmenu", (evt) => evt.preventDefault());
+  }
 
   /**
-   * La voix arrive en P2. D'ici là le bouton existe mais explique — §8 :
-   * « le refus de permission micro et le contexte non-HTTPS produisent un
-   * message d'erreur explicite et actionnable ».
+   * Amorce le lecteur audio **pendant** un geste utilisateur.
+   *
+   * Sans ça, sur iPad, la réponse de Luna serait muette : iOS refuse tout
+   * `play()` qui n'a pas été précédé d'un `play()` déclenché par un vrai geste.
    */
-  _micro() {
-    if (!window.isSecureContext) {
+  _debloquerAudio() {
+    if (this._lecteur) return;
+    const lecteur = new Audio();
+    lecteur.preload = "auto";
+    lecteur.src = SILENCE;
+    lecteur.play().catch(() => {
+      /* Le navigateur refuse : on réessaiera au prochain geste. */
+    });
+    this._lecteur = lecteur;
+  }
+
+  /**
+   * Démarre l'écoute, et retient sa propre promesse.
+   *
+   * Un appui bref peut être relâché avant que la capture soit prête. Sans
+   * sérialisation, l'arrêt coupe alors un démarrage encore en cours, celui-ci
+   * échoue, et ferme la transcription que l'arrêt attendait — l'enregistrement
+   * meurt sans un mot. Sur iPad, où l'on tapote, ce n'est pas un cas rare.
+   */
+  _demarrerEcoute() {
+    this._demarrage = this._faireDemarrer().finally(() => {
+      this._demarrage = null;
+    });
+    return this._demarrage;
+  }
+
+  async _faireDemarrer() {
+    if (this._ecoute || this._messageEnCours || this._enLigne === false) return;
+    if (!this._phases.voice) {
+      this._erreur(ERREURS_LOCALES.voice_phase);
+      return;
+    }
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       this._erreur(ERREURS_LOCALES.insecure_context);
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      this._erreur(ERREURS_LOCALES.insecure_context);
+
+    this._ecoute = true;
+    this._handler = null;
+    this._tampon = [];
+    this._orbe("listening");
+    this._sousTitre("Je t'écoute…");
+
+    try {
+      this._fluxMicro = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (err) {
+      this._echecEcoute(
+        err && err.name === "NotAllowedError"
+          ? ERREURS_LOCALES.mic_denied
+          : ERREURS_LOCALES.mic_failed,
+      );
       return;
     }
-    this._erreur(ERREURS_LOCALES.voice_phase);
+
+    try {
+      await this._ouvrirTranscription();
+      await this._brancherCapture();
+    } catch (err) {
+      this._echecEcoute(this._messageErreur(err) || ERREURS_LOCALES.mic_failed);
+    }
+  }
+
+  async _ouvrirTranscription() {
+    this._attenteStt = null;
+    this._desabonnerStt = await this._hass.connection.subscribeMessage(
+      (evt) => this._surPipeline(evt),
+      {
+        type: "assist_pipeline/run",
+        start_stage: "stt",
+        end_stage: "stt",
+        input: { sample_rate: TAUX_CIBLE },
+      },
+    );
+  }
+
+  _surPipeline(evt) {
+    if (evt.type === "run-start") {
+      this._handler = evt.data?.runner_data?.stt_binary_handler_id ?? null;
+      this._viderTampon();
+    } else if (evt.type === "stt-end") {
+      this._attenteStt?.ok(evt.data?.stt_output?.text ?? "");
+      this._attenteStt = null;
+    } else if (evt.type === "error") {
+      this._attenteStt?.ko(new Error(evt.data?.message || "Le pipeline a échoué."));
+      this._attenteStt = null;
+    }
+  }
+
+  async _brancherCapture() {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    this._contexteAudio = new AudioCtx();
+    // iOS démarre le contexte suspendu tant qu'aucun geste ne l'a réveillé.
+    if (this._contexteAudio.state === "suspended") {
+      await this._contexteAudio.resume();
+    }
+    // Le worklet vit dans ce fichier (§8 : un seul fichier) : un Blob de même
+    // origine suffit à le charger.
+    const url = URL.createObjectURL(
+      new Blob([WORKLET], { type: "application/javascript" }),
+    );
+    try {
+      await this._contexteAudio.audioWorklet.addModule(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    this._sourceAudio = this._contexteAudio.createMediaStreamSource(
+      this._fluxMicro,
+    );
+    this._noeud = new AudioWorkletNode(this._contexteAudio, "luna-pcm");
+    this._noeud.port.onmessage = (evt) => this._envoyerPcm(evt.data);
+    this._sourceAudio.connect(this._noeud);
+  }
+
+  _envoyerPcm(echantillons) {
+    const socket = this._hass?.connection?.socket;
+    if (this._handler === null || !socket) {
+      // Le pipeline n'a pas encore dit sur quel canal binaire écrire : on garde
+      // le début de la phrase plutôt que de le perdre.
+      this._tampon.push(echantillons);
+      return;
+    }
+    const trame = new Uint8Array(1 + echantillons.byteLength);
+    trame[0] = this._handler;
+    trame.set(new Uint8Array(echantillons.buffer), 1);
+    socket.send(trame);
+  }
+
+  _viderTampon() {
+    const attendus = this._tampon;
+    this._tampon = [];
+    for (const trame of attendus) this._envoyerPcm(trame);
+  }
+
+  async _arreterEcoute() {
+    // On ne coupe jamais un démarrage à moitié fait (voir `_demarrerEcoute`).
+    if (this._demarrage) await this._demarrage.catch(() => {});
+    if (!this._ecoute) return;
+    this._ecoute = false;
+    this._couperCapture();
+
+    const socket = this._hass?.connection?.socket;
+    if (this._handler !== null && socket) {
+      // Trame réduite à l'octet de canal : « j'ai fini de parler ».
+      socket.send(new Uint8Array([this._handler]));
+    }
+
+    this._orbe("thinking");
+    this._sousTitre("Je transcris…");
+
+    let texte = "";
+    try {
+      texte = await new Promise((ok, ko) => {
+        this._attenteStt = { ok, ko };
+        setTimeout(() => ko(new Error("La transcription n'est pas revenue.")), 20000);
+      });
+    } catch (err) {
+      this._fermerTranscription();
+      this._echecEcoute(this._messageErreur(err));
+      return;
+    }
+    this._fermerTranscription();
+
+    if (!texte.trim()) {
+      this._echecEcoute(ERREURS_LOCALES.stt_failed);
+      return;
+    }
+    this._q("textarea").value = texte;
+    await this._envoyer(true);
+  }
+
+  _couperCapture() {
+    this._noeud?.port && (this._noeud.port.onmessage = null);
+    this._noeud?.disconnect();
+    this._sourceAudio?.disconnect();
+    this._fluxMicro?.getTracks().forEach((piste) => piste.stop());
+    this._contexteAudio?.close().catch(() => {});
+    this._noeud = null;
+    this._sourceAudio = null;
+    this._fluxMicro = null;
+    this._contexteAudio = null;
+  }
+
+  _fermerTranscription() {
+    this._attenteStt = null;
+    if (this._desabonnerStt) {
+      this._desabonnerStt();
+      this._desabonnerStt = null;
+    }
+  }
+
+  _echecEcoute(message) {
+    this._ecoute = false;
+    this._couperCapture();
+    this._fermerTranscription();
+    this._orbe("idle");
+    this._sousTitre("Prête");
+    this._erreur(message);
+  }
+
+  // ── Lecture de la réponse ──────────────────────────────────────────
+
+  _doitParler() {
+    if (this._config.speak === "jamais" || !this._phases.voice) return false;
+    if (this._config.speak === "toujours") return true;
+    return this._parVoix;
+  }
+
+  async _parler(texte) {
+    if (!texte.trim()) return;
+    let url;
+    try {
+      ({ url } = await this._appel({ type: "luna/speak", text: texte }));
+    } catch (err) {
+      this._erreur(this._messageErreur(err));
+      return;
+    }
+    const lecteur = this._lecteur || (this._lecteur = new Audio());
+    lecteur.src = url;
+    lecteur.onended = () => this._orbe(this._alertes.size ? "alert" : "idle");
+    this._orbe("speaking");
+    this._sousTitre("Luna parle…");
+    try {
+      await lecteur.play();
+    } catch {
+      // Refus de lecture automatique : le texte est déjà dans le fil, on ne
+      // fabrique pas une erreur pour ça.
+      this._orbe("idle");
+    }
   }
 
   // ── Erreurs ────────────────────────────────────────────────────────

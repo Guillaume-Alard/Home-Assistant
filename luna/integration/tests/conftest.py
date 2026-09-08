@@ -29,6 +29,19 @@ def activer_integrations_perso(enable_custom_integrations):
     return
 
 
+@pytest.fixture(autouse=True)
+async def socle(hass):
+    """Le composant `homeassistant` doit exister avant `conversation`.
+
+    Dans une vraie installation il est toujours là ; dans le harnais, il faut le
+    demander — sinon `conversation` échoue sur `exposed_entities`, et Luna avec
+    lui puisqu'elle en dépend depuis P2.
+    """
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, "homeassistant", {})
+
+
 class FauxRelais:
     """Le contrat §5 : trames {id, op, payload, context}, réponses et flux."""
 

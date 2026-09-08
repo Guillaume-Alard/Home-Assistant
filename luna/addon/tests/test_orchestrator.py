@@ -71,7 +71,41 @@ class TestEchangeSimple:
         texte = cerveau.appels[0]["contexte"]
         assert "Guillaume" in texte
         assert "réseau local" in texte
-        assert len(texte) < 200, "il n'est jamais mis en cache : il doit rester court"
+        assert len(texte) < 260, "il n'est jamais mis en cache : il doit rester court"
+
+    async def test_la_provenance_est_dite_au_cerveau(
+        self, maison, memoire, arbitre, contexte
+    ):
+        """Elle change la longueur de la réponse, jamais les droits (§9.2)."""
+        cerveau = FauxCerveau()
+        orchestrateur = orchestrateur_avec(cerveau, maison, memoire, arbitre)
+
+        await collecter(orchestrateur.converser("salut", contexte=contexte))
+        assert "à l'écrit" in cerveau.appels[0]["contexte"]
+
+        a_la_voix = contexte.model_copy(update={"source": "voix"})
+        await collecter(orchestrateur.converser("salut", contexte=a_la_voix))
+        assert "à la voix" in cerveau.appels[1]["contexte"]
+        assert "voix haute" in cerveau.appels[1]["contexte"]
+
+    async def test_la_voix_ne_donne_aucun_droit_supplementaire(
+        self, maison, memoire, arbitre, contexte
+    ):
+        """Un profil sans scope reste sans scope, qu'il parle ou qu'il tape."""
+        cerveau = FauxCerveau(
+            [
+                (
+                    "outil",
+                    "commander_lumiere",
+                    {"cible": "Cuisine", "action": "allumer", "luminosite": None},
+                )
+            ]
+        )
+        orchestrateur = orchestrateur_avec(cerveau, maison, memoire, arbitre)
+        inconnu = contexte.model_copy(update={"profile": "unknown", "source": "voix"})
+        evenements = await collecter(orchestrateur.converser("allume", contexte=inconnu))
+        assert maison.appels == []
+        assert any(type(e).__name__ == "EvtProposition" for e in evenements)
 
 
 class TestOutils:
@@ -224,7 +258,7 @@ class TestInfo:
         assert info["profile"]["display_name"] == "Guillaume"
         assert info["profile"]["signals"] == {"ha_user": 1.0}
         assert info["phases"] == {
-            "voice": False,
+            "voice": True,
             "identity": False,
             "veille": False,
             "guardian": False,

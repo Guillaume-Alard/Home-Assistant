@@ -213,6 +213,94 @@ class TestFluxDeConversation:
         await ws.close()
 
 
+class TestDiffusion:
+    """§7 : « à l'écrit et à l'oral, indifféremment ».
+
+    Un tour de parole né hors de la carte — l'agent de conversation d'Assist —
+    doit rejoindre le fil des cartes ouvertes. Sans ça, deux fils parallèles
+    qui s'ignorent.
+    """
+
+    async def test_un_tour_dassist_arrive_dans_le_feed_des_cartes(self, banc):
+        banc.cerveau.scenario = [("texte", "J'allume le salon.")]
+        carte = await _ouvrir(banc)
+        assert (await _demander(carte, 1, "feed"))["event"] == "status"
+
+        assist = await _ouvrir(banc)
+        await assist.send_json(
+            {
+                "id": 2,
+                "op": "chat",
+                "payload": {"text": "allume le salon", "diffuser": True},
+                "context": {**CONTEXTE, "source": "voix", "client_id": "assist"},
+            }
+        )
+
+        recus = []
+        for _ in range(2):
+            trame = await asyncio.wait_for(carte.receive_json(), 5)
+            recus.append(trame["message"])
+        assert [m["role"] for m in recus] == ["user", "luna"]
+        assert recus[0]["text"] == "allume le salon"
+        assert recus[1]["text"] == "J'allume le salon."
+        # Home Assistant a déjà parlé : la carte ne doit pas répéter.
+        assert all(m["speak"] is False for m in recus)
+        await carte.close()
+        await assist.close()
+
+    async def test_une_proposition_vocale_est_diffusee(self, banc):
+        """On ne clique pas dans un haut-parleur : la proposition doit arriver
+        là où quelqu'un peut l'accepter."""
+        banc.cerveau.scenario = [
+            ("texte", "Je te propose 20 degrés."),
+            (
+                "outil",
+                "regler_thermostat",
+                {"cible": "Séjour", "temperature": 20, "raison": "Il fait frais."},
+            ),
+        ]
+        carte = await _ouvrir(banc)
+        await _demander(carte, 1, "feed")
+
+        assist = await _ouvrir(banc)
+        await assist.send_json(
+            {
+                "id": 2,
+                "op": "chat",
+                "payload": {"text": "mets 20 degrés", "diffuser": True},
+                "context": {**CONTEXTE, "source": "voix", "client_id": "assist"},
+            }
+        )
+
+        vus = []
+        for _ in range(3):
+            vus.append(await asyncio.wait_for(carte.receive_json(), 5))
+        genres = [t["event"] for t in vus]
+        assert genres == ["message", "proposal", "message"]
+        proposition = next(t for t in vus if t["event"] == "proposal")["proposal"]
+        assert proposition["level"] == 3
+        assert proposition["why"] == "Il fait frais."
+        await carte.close()
+        await assist.close()
+
+    async def test_sans_diffuser_rien_ne_sort(self, banc):
+        """Un échange né dans la carte ne doit pas revenir en double par le feed."""
+        carte = await _ouvrir(banc)
+        await _demander(carte, 1, "feed")
+
+        await carte.send_json(
+            {"id": 2, "op": "chat", "payload": {"text": "salut"}, "context": CONTEXTE}
+        )
+        vus = []
+        while True:
+            trame = await asyncio.wait_for(carte.receive_json(), 5)
+            vus.append(trame)
+            if trame.get("event") in ("done", "error"):
+                break
+        assert all(t["id"] == 2 for t in vus), "aucun événement sur le feed"
+        await carte.close()
+
+
 class TestFeed:
     async def test_statut_initial_puis_changement(self, banc):
         ws = await _ouvrir(banc)

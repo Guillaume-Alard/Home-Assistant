@@ -1,8 +1,15 @@
 {
   "domain": "luna",
   "name": "Luna",
-  "codeowners": ["@guillaume-alard"],
+  "codeowners": [
+    "@guillaume-alard"
+  ],
   "config_flow": true,
+  "dependencies": [
+    "assist_pipeline",
+    "conversation",
+    "tts"
+  ],
   "documentation": "https://github.com/Alardware/luna",
   "integration_type": "service",
   "iot_class": "local_push",
