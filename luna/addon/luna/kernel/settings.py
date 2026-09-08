@@ -65,9 +65,40 @@ class RegleVeille(BaseModel):
     #: heure de coucher, et sa raison la cite. Sans habitude assez sûre, pas de
     #: rappel : c'est ce que veut dire « pertinent » dans §11.
     fait: str = ""
-    #: Ce que proposera le bouton « Agir ». Chaque acte repasse par l'arbitre,
-    #: avec son niveau : un `cover.close_cover` déclaré ici sera refusé (D8).
-    actions: list[ActionHA] = Field(default_factory=list)
+
+    # ── Ce que proposera le bouton « Agir » ──────────────────────────────
+    #
+    # Deux chaînes plutôt qu'une liste d'actes structurés, et ce n'est pas un
+    # appauvrissement gratuit : le schéma d'options d'un add-on Home Assistant
+    # ne connaît que des types simples — `str`, `bool`, `int`, `list(a|b)`,
+    # `match(...)`. Il n'a **pas de type `dict`**, et aucun add-on officiel n'en
+    # utilise. Une liste d'actes avec leurs `target` et `data` libres était donc
+    # inexprimable : le Superviseur rejetait le fichier entier, et l'add-on
+    # n'apparaissait tout simplement pas dans la boutique.
+    #
+    # Une règle de veille n'a de toute façon jamais qu'un correctif évident —
+    # « éteins cette lampe » — et le décrire en deux champs se relit mieux qu'un
+    # bloc imbriqué. Les actes plus riches (recharger une intégration, en P5)
+    # sont construits en code, pas déclarés ici.
+    #
+    #: `light.turn_off`. Vide = pas de bouton « Agir » sur cette alerte.
+    action_service: str = ""
+    #: `light.sejour`. L'entité sur laquelle agir.
+    action_cible: str = ""
+
+    @property
+    def actes(self) -> list[ActionHA]:
+        """Le correctif de la règle, sous la forme que l'arbitre attend.
+
+        Rend une liste — vide ou d'un seul élément — pour que le moteur traite
+        de la même façon une alerte de capteur et une anomalie d'installation,
+        qui peut en porter plusieurs.
+        """
+        if not self.action_service or "." not in self.action_service:
+            return []
+        domaine, service = self.action_service.split(".", 1)
+        cible = {"entity_id": self.action_cible} if self.action_cible else {}
+        return [ActionHA(domain=domaine, service=service, target=cible)]
 
 
 class Observateurs(BaseModel):

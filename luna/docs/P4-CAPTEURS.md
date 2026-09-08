@@ -113,12 +113,16 @@ veille:
     niveau: info
     message: "Une lumière est restée allumée."
     raison: "Tout le monde est couché et il reste de la lumière."
-    actions:
-      - domain: light
-        service: turn_off
-        target:
-          entity_id: light.sejour
+    action_service: light.turn_off
+    action_cible: light.sejour
 ```
+
+> Le correctif se déclare en **deux chaînes**, `action_service` et
+> `action_cible`. Le schéma d'options d'un add-on Home Assistant ne connaît que
+> des types simples — `str`, `bool`, `int`, `list(a|b)` — et **pas de `dict`** :
+> une liste d'actes avec leurs cibles libres y est inexprimable, et un fichier
+> qui en contient est rejeté en bloc. Une règle n'a de toute façon jamais qu'un
+> correctif évident.
 
 Ici le bouton **Agir** fait vraiment quelque chose : éteindre une lampe est du
 niveau 2, Luna a le droit. Elle passe quand même par l'arbitre, comme pour une

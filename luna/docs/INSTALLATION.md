@@ -435,10 +435,22 @@ c'est voulu.
 Par ordre de fréquence réelle.
 
 **« Luna » n'apparaît pas dans les add-ons locaux.**
-Deux causes, dans cet ordre. **Un** : tu as déposé dans le mauvais partage —
-c'est `local_apps` et non `addons`, qui n'existe plus (§1.2). **Deux** : un
-niveau de dossier en trop. Le chemin exact doit être
-`local_apps/luna/config.yaml`, **pas** `local_apps/luna/addon/config.yaml`. Va vérifier dans le partage avant toute autre chose.
+**Lis d'abord le journal du Superviseur** — il dit exactement pourquoi, et
+c'est la seule source de vérité : **Paramètres → Système → Journaux**, puis le
+menu déroulant en haut à droite → **Supervisor**. Cherche `luna`. S'il y a un
+problème de fichier, il est nommé là, en clair.
+
+Ensuite, les trois causes, dans l'ordre de fréquence :
+
+1. **Le mauvais partage.** C'est `local_apps`, pas `addons`, qui n'existe plus
+   (§1.2).
+2. **Un niveau de dossier en trop.** Le chemin doit être
+   `local_apps/luna/config.yaml`, **pas** `local_apps/luna/addon/config.yaml`.
+3. **Un `config.yaml` que le Superviseur refuse.** Il ignore alors l'add-on
+   **en silence** : rien dans la boutique, rien à l'écran. Le journal du
+   Superviseur est le seul endroit qui le dise. Le schéma d'options n'accepte
+   que des types simples — `str`, `bool`, `int`, `float`, `port`, `password`,
+   `list(a|b)`, `match(regex)` — et notamment **pas `dict`**. Va vérifier dans le partage avant toute autre chose.
 Ensuite seulement, **⋮ → Vérifier les mises à jour** — un simple rechargement de
 page ne suffit pas.
 

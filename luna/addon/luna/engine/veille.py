@@ -209,7 +209,7 @@ class MoteurVeille:
             why=justification,
             entity_id=entite,
             ts=maintenant,
-            actions=list(regle.actions),
+            actions=regle.actes,
         )
         self._actives[cle] = alerte
         self._derniere[cle] = maintenant

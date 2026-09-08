@@ -320,13 +320,8 @@ class TestAgir:
         déclaration qui est refusée, pas son absence.
         """
         regle = regle_ouvrant(
-            actions=[
-                ActionHA(
-                    domain="cover",
-                    service="close_cover",
-                    target={"entity_id": "cover.baie_vitree"},
-                )
-            ]
+            action_service="cover.close_cover",
+            action_cible="cover.baie_vitree",
         )
         veille = veille_avec([regle], memoire, maison, arbitre, emetteur, horloge)
         await allumer(veille, maison, OUVRANT, horloge)
@@ -350,13 +345,8 @@ class TestAgir:
         regle = RegleVeille(
             entite=AMPOULE,
             message="Une lumière est restée allumée.",
-            actions=[
-                ActionHA(
-                    domain="light",
-                    service="turn_off",
-                    target={"entity_id": "light.cuisine"},
-                )
-            ],
+            action_service="light.turn_off",
+            action_cible="light.cuisine",
         )
         veille = veille_avec([regle], memoire, maison, arbitre, emetteur, horloge)
         await allumer(veille, maison, AMPOULE, horloge)
@@ -609,6 +599,41 @@ class TestAnnonceVocale:
         assert CONTEXTE_VEILLE.is_admin is False
         assert peut_agir_seule(MAISON, Niveau.CONFORT)
         assert not peut_agir_seule(MAISON, Niveau.PERSISTANT)
+
+
+class TestCorrectifDeclare:
+    """Le correctif d'une règle se déclare en deux chaînes.
+
+    Une liste d'actes structurés était inexprimable dans le schéma d'options
+    d'un add-on Home Assistant — il n'a pas de type `dict` — et le Superviseur
+    rejetait alors le fichier entier, faisant disparaître l'add-on de la
+    boutique sans le moindre message.
+    """
+
+    def test_deux_chaines_donnent_un_acte(self):
+        regle = RegleVeille(
+            entite=AMPOULE,
+            message="x",
+            action_service="light.turn_off",
+            action_cible="light.cuisine",
+        )
+        assert [a.cle for a in regle.actes] == ["light.turn_off"]
+        assert regle.actes[0].target == {"entity_id": "light.cuisine"}
+
+    def test_sans_service_il_ny_a_pas_de_bouton(self):
+        assert RegleVeille(entite=AMPOULE, message="x").actes == []
+
+    def test_un_service_sans_point_est_ignore(self):
+        """Mieux vaut pas de bouton qu'un appel de service fabriqué au hasard."""
+        assert (
+            RegleVeille(entite=AMPOULE, message="x", action_service="allume").actes == []
+        )
+
+    def test_un_service_sans_cible_reste_valide(self):
+        """`homeassistant.restart` ne vise aucune entité — et se ferait refuser
+        au niveau 4, ce qui est le comportement voulu."""
+        regle = RegleVeille(entite=AMPOULE, message="x", action_service="script.reveil")
+        assert regle.actes[0].target == {}
 
 
 class TestObservateurCoucher:

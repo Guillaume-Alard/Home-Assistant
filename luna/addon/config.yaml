@@ -47,6 +47,12 @@ options:
   # Assistant, visibles dans les outils de développement (§5, F5). Ces règles
   # disent seulement quoi en faire — le message, le niveau, le moment.
   # Un jeu de capteurs de départ est fourni dans docs/P4-CAPTEURS.md.
+  #
+  # Le correctif éventuel se déclare en deux chaînes, `action_service` et
+  # `action_cible` : le schéma d'options d'un add-on ne connaît que des types
+  # simples et n'a pas de `dict`, donc une liste d'actes structurés y est
+  # inexprimable. Un fichier qui en contient est rejeté en bloc, et l'add-on
+  # n'apparaît pas du tout dans la boutique.
   veille: []
   observateurs:
     coucher: ""
@@ -103,11 +109,8 @@ schema:
       silence: bool?
       annonce: bool?
       fait: str?
-      actions:
-        - domain: str
-          service: str
-          target: dict?
-          data: dict?
+      action_service: str?
+      action_cible: str?
   observateurs:
     coucher: str?
     coucher_profil: str?
