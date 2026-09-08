@@ -1,9 +1,14 @@
 # Luna — P0 : HTTPS en local
 
-**Statut : procédure arrêtée, reste à exécuter sur Nova.**
+**Statut : procédure arrêtée et relue, reste à exécuter sur Nova.**
 Contexte connu au 8 septembre 2026 : Nova tourne bien Home Assistant OS (H1
 close), et Guillaume ne possède **aucun nom de domaine** — seulement l'adresse
 Nabu Casa.
+
+*Relue après P3 à P6 : l'option `ipv4` de l'add-on Duck DNS est confirmée
+(§4.3), `trusted_proxies` s'est révélé porter la barrière biométrique de §6
+(§4.5), et le même contexte sécurisé conditionne la caméra de P6 autant que le
+micro de P2.*
 
 §4 du cahier des charges : « À régler **avant** la phase voix. » Ce document dit
 comment, sans acheter de domaine.
@@ -12,9 +17,12 @@ comment, sans acheter de domaine.
 
 ## 1. Le problème, précisément
 
-`getUserMedia()` — l'appel qui ouvre le micro — est refusé par tous les
-navigateurs hors **contexte sécurisé** : `https://`, ou `http://localhost`. Pas
-`http://192.168.1.42:8123`.
+`getUserMedia()` — l'appel qui ouvre le micro **et la caméra** — est refusé par
+tous les navigateurs hors **contexte sécurisé** : `https://`, ou
+`http://localhost`. Pas `http://192.168.1.42:8123`.
+
+C'est donc P2 **et** P6 qui butent sur le même appel : la voix aujourd'hui, le
+visage le jour où tu le décideras. Une seule pièce à monter pour les deux.
 
 ```
 Companion iOS/Android, en Wi-Fi maison
@@ -132,16 +140,20 @@ Par défaut, l'add-on Duck DNS met à jour l'enregistrement `A` avec l'**IP
 publique** de la maison. Or on veut l'IP **privée** de Nova. Trois manières, par
 ordre de préférence :
 
-**a. Épingler l'IP dans l'add-on.** Regarder si le schéma de configuration
-expose une option `ipv4`. Si oui :
+**a. Épingler l'IP dans l'add-on.** ✅ **Vérifié** : le schéma de l'add-on
+Duck DNS 2.0.0 expose bien `ipv4: str?`. Ajoute simplement la ligne :
 
 ```yaml
 ipv4: "192.168.1.42"
 ```
 
-C'est le plus propre : l'add-on continue de rafraîchir, mais avec la bonne
-valeur. *À vérifier sur place — je ne peux pas confirmer d'ici la présence de
-cette option dans la version que tu installeras.*
+C'est le plus propre : l'add-on continue de rafraîchir l'enregistrement, mais
+avec la bonne valeur, et le certificat n'en est pas affecté — le défi DNS-01 ne
+regarde que le `TXT`.
+
+> Attention : `ipv4` est dans le **schéma**, pas dans les **options par
+> défaut**. L'interface ne te proposera donc pas le champ : il faut basculer
+> l'éditeur en YAML et ajouter la ligne à la main.
 
 **b. Poser l'enregistrement à la main, puis surveiller.**
 
@@ -219,6 +231,28 @@ Sans `trusted_proxies`, Home Assistant voit toutes les requêtes venir de l'IP d
 proxy : les journaux deviennent illisibles, la protection contre la force brute
 bannit tout le monde d'un coup, et les automatisations basées sur l'IP source
 mentent. **Ce n'est pas optionnel.**
+
+### Et depuis P3, ça porte plus que les journaux
+
+Ce document a été écrit avant la phase identité. Depuis, l'intégration Luna
+contient la barrière de §6 — « la biométrie n'est active que sur le réseau
+local » — et elle décide en lisant l'IP du client :
+
+```python
+requete = http.current_request.get()
+return util_reseau.is_local(ip_address(requete.remote))
+```
+
+Avec un proxy devant et **sans** `trusted_proxies`, `requete.remote` vaut l'IP
+de NGINX — `172.30.32.x`, une adresse privée. Toute requête paraîtrait donc
+locale, et la barrière ne distinguerait plus rien.
+
+Aujourd'hui le risque reste théorique : l'accès distant passe par Nabu Casa, et
+`is_cloud_connection()` l'écarte avant même de regarder l'IP. Mais le jour où
+tu ouvrirais le 443 depuis internet — ce montage ne le demande pas, beaucoup de
+gens le font ensuite —, `trusted_proxies` serait la **seule** chose empêchant
+la reconnaissance vocale de fonctionner depuis n'importe où. Autant le poser
+correctement maintenant.
 
 Ne **pas** mettre `ssl_certificate` dans le bloc `http:` — le proxy s'en charge,
 et le faire ici couperait le 8123 en clair, ce qu'on cherche justement à éviter.
@@ -302,6 +336,15 @@ navigator.mediaDevices.getUserMedia({ audio: true })
 | Tablette murale | Wi-Fi maison | ✅ |
 | Navigateur de bureau | Wi-Fi maison | ✅ |
 
+### Et une septième vérification, pour `trusted_proxies`
+
+Elle ne se voit pas depuis le navigateur. **Paramètres → Système → Journaux**,
+puis regarde une ligne de connexion : elle doit citer l'IP réelle de l'appareil
+(`192.168.1.x`), **pas** celle du proxy (`172.30.32.x`).
+
+Si tu vois `172.30.32.x`, `trusted_proxies` n'est pas pris en compte — et la
+barrière de §6 ne distingue plus rien (voir §4.5).
+
 Les six au vert : P0 est finie, P2 est débloquée. Une seule au rouge et la phase
 voix bute dessus plus tard, dans un contexte où ce sera bien plus dur à
 diagnostiquer.
@@ -336,9 +379,9 @@ tablette murale uniquement (solution 3 de §4).
 | 2 | Add-on Duck DNS, `lets_encrypt` activé | Certificat valide, aucun port ouvert | 10 min |
 | 3 | Faire pointer le `A` vers l'IP privée de Nova | Le nom résout à la maison | 5 min, ou plus si rebinding |
 | 4 | Add-on NGINX SSL proxy | HTTPS sur le 443, 8123 intact | 5 min |
-| 5 | `trusted_proxies` + `internal_url`, redémarrer HA | Journaux et bannissements corrects | 5 min |
+| 5 | `trusted_proxies` + `internal_url`, redémarrer HA | Journaux, bannissements — **et la barrière biométrique de §6** | 5 min |
 | 6 | URL interne + SSID dans Companion, permission micro | Le local repasse en local | 5 min/appareil |
-| 7 | Les six combinaisons de §7 | **P0 finie, P2 débloquée** | 10 min |
+| 7 | Les six combinaisons de §7, plus la vérification des journaux | **P0 finie, P2 débloquée — et P6 possible le jour venu** | 10 min |
 
 L'étape 0 est indépendante des autres : elle te débloque ce soir, et tu peux
 faire le reste quand tu veux sans rien casser.
