@@ -89,6 +89,7 @@ l'arbitre les refuserait de toute façon.
 
 | | |
 |---|---|
+| [`docs/INSTALLATION.md`](docs/INSTALLATION.md) | **Par où commencer** — de HAOS nu à Luna qui répond, et les pannes par ordre de fréquence |
 | [`docs/P1-HYPOTHESES.md`](docs/P1-HYPOTHESES.md) | Les sept contradictions du cahier des charges et leurs arbitrages, les trente hypothèses, et ce qui reste ouvert |
 | [`docs/P1-CONTRATS.md`](docs/P1-CONTRATS.md) | Couches, contrats WebSocket, échelle d'autonomie, schéma SQLite, écarts constatés, état de la recette |
 | [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md) | Le HTTPS local, sans nom de domaine : DuckDNS et deux add-ons officiels |
@@ -103,18 +104,30 @@ l'arbitre les refuserait de toute façon.
 
 ## Installer sur Nova
 
+**Première installation, sur un HAOS où rien n'est encore posé :**
+[`docs/INSTALLATION.md`](docs/INSTALLATION.md). Une heure, dont vingt minutes
+d'attente pendant que l'add-on se construit. Elle commence par le problème de la
+poule et de l'œuf — HAOS n'a ni `ssh` ni accès disque par défaut, il faut donc
+installer un moyen de copier avant de pouvoir copier quoi que ce soit.
+
+Luna s'installe et converse **sans P0** : seuls le micro et la caméra attendent
+le HTTPS.
+
+**Ensuite, pour redéployer :**
+
 ```bash
 ./ops/deploy.sh root@nova.local
 ```
 
-Puis les quatre étapes manuelles que le script rappelle : installer l'add-on,
-redémarrer Home Assistant, ajouter l'intégration, déclarer la ressource
-Lovelace.
+Reconstruire l'add-on si le cerveau a changé, redémarrer Home Assistant si
+l'intégration a changé, vider le cache du navigateur si la carte a changé.
+`/data` — la base — survit à tout.
 
 ## Vérifier
 
 ```bash
-cd addon        && pytest -q && lint-imports    # 365 tests, 4 contrats de couches
+cd addon        && pytest -q && lint-imports    # 367 tests, 4 contrats de couches
+docker build addon                              # l'image s'installe vraiment
 cd integration  && pytest -q                    # 45 tests, vraie instance HA
 cd card         && pytest -q                    # 68 tests, vrai Chromium
 ```

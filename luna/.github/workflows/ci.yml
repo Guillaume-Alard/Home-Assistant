@@ -50,6 +50,34 @@ jobs:
       - name: Tests dans une vraie instance Home Assistant
         run: pytest -q
 
+  image:
+    name: Add-on — l'image se construit et démarre
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construire l'image
+        run: docker build -t luna-addon:ci addon
+      # Le contrôle qui manquait. Les tests tournent dans un venv de
+      # développement ; rien ne vérifiait que l'add-on **s'installe**. Deux
+      # pièges attendaient au premier déploiement : onnxruntime n'a pas de roue
+      # musl (donc pas d'Alpine), et ses roues manylinux supposent `libgomp1`
+      # présent sur le système. Les deux se voient ici, en trente secondes, au
+      # lieu de se découvrir sur Nova.
+      - name: Les dépendances natives se chargent vraiment
+        run: |
+          docker run --rm luna-addon:ci python -c "
+          import onnxruntime, numpy, aiohttp, aiosqlite, anthropic, pydantic
+          print('onnxruntime', onnxruntime.__version__, onnxruntime.get_available_providers())
+          "
+      - name: L'amorçage est importable
+        run: |
+          docker run --rm luna-addon:ci python -c "
+          from luna.interfaces.app import Luna, servir
+          from luna.kernel.settings import Reglages
+          Luna(Reglages())
+          print('Luna s assemble')
+          "
+
   carte:
     name: Carte — le visage
     runs-on: ubuntu-latest
