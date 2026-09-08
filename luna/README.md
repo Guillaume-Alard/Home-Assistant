@@ -206,34 +206,53 @@ voix ne sert que là où ce signal est muet — **l'iPad partagé du couloir**.
 
 ### Ce qui reste à faire sur Nova, et que le code ne peut pas faire
 
+Dans cet ordre : ce qui débloque le reste, puis ce qui met chaque phase en
+service, puis ce qui demande seulement du temps.
+
+**1. Ce dont tout le reste dépend**
+
+- **P0, le HTTPS local.** Sans lui, `getUserMedia` reste refusé sur le réseau
+  de la maison — et il couvre le micro **comme la caméra**, donc il bloque P2 et
+  P6 à lui seul. Pas de domaine en propre : la procédure passe par un
+  sous-domaine **DuckDNS** gratuit et deux add-ons officiels, en sept étapes
+  chiffrées dans [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md). La première — vider
+  l'URL interne dans l'app Companion — débloque le micro en deux minutes, en
+  attendant le reste.
+
+**2. Mettre chaque phase en service**
+
 - **Installer les add-ons faster-whisper et piper**, et créer un pipeline Assist
-  dont Luna est l'agent de conversation.
-- **Mesurer la latence de transcription** : §7 annonce 1 à 3 s sur le N95, et
-  aucun test ne peut le vérifier d'ici.
+  dont Luna est l'agent de conversation. Puis **choisir une voix française** :
+  c'est une question d'oreille, `rhasspy.github.io/piper-samples`. En remplacer
+  une par une voix entraînée sur mesure est une side-quest à part —
+  [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md).
 - **Déposer un modèle ONNX d'empreinte de locuteur** dans `/share`, renseigner
   l'option `modele_voix`, déclarer les entités `device_tracker` de chacun, puis
   inscrire les voix depuis le badge de la carte. Sans modèle, Luna converse et
   pilote la maison comme avant — seule la reconnaissance reste éteinte, et elle
   le dit.
-
-- **P0, le HTTPS local.** Sans lui, `getUserMedia` reste refusé sur le réseau de
-  la maison et la voix n'a pas de micro. Pas de domaine en propre : la procédure
-  passe par un sous-domaine **DuckDNS** gratuit et deux add-ons officiels, en
-  sept étapes chiffrées dans [`docs/P0-HTTPS.md`](docs/P0-HTTPS.md).
-  La première, vider l'URL interne dans l'app Companion, débloque le micro en
-  deux minutes en attendant le reste.
-- **Vérifier que le cache de prompt prend**
-  (`cache_read_input_tokens > 0` au second échange). C'est le levier de coût
-  numéro un, et le seul point de la recette qu'aucun test ne peut couvrir sans
-  dépenser des crédits.
-- **Choisir une voix française** dans l'add-on Piper. C'est une question
-  d'oreille : `rhasspy.github.io/piper-samples`. En remplacer une par une voix
-  entraînée sur mesure est une side-quest à part —
-  [`docs/VOIX-CUSTOM.md`](docs/VOIX-CUSTOM.md).
 - **Coller les capteurs de veille** dans `configuration.yaml`, puis déclarer les
   règles correspondantes dans les options de l'add-on
   ([`docs/P4-CAPTEURS.md`](docs/P4-CAPTEURS.md)). Sans eux, la veille démarre et
   annonce dans son journal qu'elle n'a rien à surveiller.
+
+**3. Décider si P6 est faisable — avant qu'elle soit écrite**
+
+- **Faire tourner le script de [`docs/VISAGE-MODELES.md`](docs/VISAGE-MODELES.md)
+  sur Orion**, avec de vraies photos du couloir prises par la caméra frontale de
+  l'iPad. Il rend un chiffre : l'écart entre la pire ressemblance de deux photos
+  d'une même personne et la meilleure ressemblance entre deux personnes. C'est
+  lui qui dit si P6 vaut la peine d'être construite. Mets les photos de Liam
+  dedans : une tablette murale cadre mal un enfant, et mieux vaut le savoir
+  maintenant.
+
+**4. Ce qui demande du temps, pas des commandes**
+
+- **Vérifier que le cache de prompt prend** (`cache_read_input_tokens > 0` au
+  second échange). C'est le levier de coût numéro un, et le seul point de la
+  recette qu'aucun test ne peut couvrir sans dépenser des crédits.
+- **Mesurer la latence de transcription** : §7 annonce 1 à 3 s sur le N95, et
+  aucun test ne peut le vérifier d'ici.
 - **Regarder ce que la gardienne trouve la première semaine**, et remplir
   `gardienne.ignorer` avec les appareils hors ligne par choix. Le seuil de
   30 minutes se règle aussi : trop court et tu verras des hoquets Zigbee, trop
