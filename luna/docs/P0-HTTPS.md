@@ -323,25 +323,34 @@ d'appelant potentiellement falsifiée. Le journal le dit mot pour mot :
 « Received X-Forwarded-For header from an untrusted proxy », avec l'IP à
 autoriser. Poser le bloc, redémarrer Home Assistant, et la page s'ouvre.
 
-### 4.6 — Configuration de Home Assistant
+### 4.6 — Déclarer le proxy à Home Assistant
 
-**Obligatoire dès qu'un proxy est devant HA :**
+**Obligatoire dès qu'un proxy est devant HA.** Depuis **2026.7.5**, ça ne se fait
+plus dans `configuration.yaml` : la configuration HTTP a migré dans l'interface,
+et le bloc YAML sera purement ignoré en **2027.2.0**.
 
-```yaml
-# configuration.yaml
-http:
-  use_x_forwarded_for: true
-  trusted_proxies:
-    - 172.30.32.0/23        # réseau des add-ons HAOS — c'est de là que vient NGINX
-    - 127.0.0.1
-    - ::1
+**Paramètres → Système → Réseau.** Deux réglages à poser :
 
-homeassistant:
-  internal_url: "https://guillaume-sentinel.duckdns.org"
-  external_url: "https://xxxxxxxx.ui.nabu.casa"
-```
+| Réglage | Valeur |
+|---|---|
+| **Trust X-Forwarded-For** | activé |
+| **Proxys de confiance** | `172.30.32.0/23` — le réseau des add-ons HAOS, d'où vient NGINX |
 
-Sans `trusted_proxies`, Home Assistant voit toutes les requêtes venir de l'IP du
+S'ils n'apparaissent pas, activer le **Mode avancé** dans son profil
+(cliquer son nom en bas de la barre latérale) et recharger la page.
+
+> **Si le bloc `http:` est déjà dans `configuration.yaml`** — parce qu'on suivait
+> une procédure écrite avant la migration — Home Assistant l'a **déjà importé**
+> au démarrage, et le dit : « La configuration HTTP dans `configuration.yaml` a
+> déjà été migrée et est désormais ignorée. » Les valeurs sont donc actives ; il
+> reste à vérifier qu'elles sont bien là dans l'interface, **puis seulement**
+> supprimer le bloc et redémarrer. Vérifier avant de supprimer, pas l'inverse.
+>
+> Le bloc `homeassistant:` (`internal_url`, `external_url`) n'est pas concerné :
+> il n'appartient pas à l'intégration `http` et reste valide en YAML — mais tant
+> qu'il y est, il verrouille le champ correspondant de l'interface.
+
+Sans proxy de confiance, Home Assistant voit toutes les requêtes venir de l'IP du
 proxy : les journaux deviennent illisibles, la protection contre la force brute
 bannit tout le monde d'un coup, et les automatisations basées sur l'IP source
 mentent. **Ce n'est pas optionnel.**
@@ -357,21 +366,19 @@ requete = http.current_request.get()
 return util_reseau.is_local(ip_address(requete.remote))
 ```
 
-Avec un proxy devant et **sans** `trusted_proxies`, `requete.remote` vaut l'IP
+Avec un proxy devant et **sans** proxy de confiance, `requete.remote` vaut l'IP
 de NGINX — `172.30.32.x`, une adresse privée. Toute requête paraîtrait donc
 locale, et la barrière ne distinguerait plus rien.
 
 Aujourd'hui le risque reste théorique : l'accès distant passe par Nabu Casa, et
 `is_cloud_connection()` l'écarte avant même de regarder l'IP. Mais le jour où
 tu ouvrirais le 443 depuis internet — ce montage ne le demande pas, beaucoup de
-gens le font ensuite —, `trusted_proxies` serait la **seule** chose empêchant
+gens le font ensuite —, ce réglage serait la **seule** chose empêchant
 la reconnaissance vocale de fonctionner depuis n'importe où. Autant le poser
 correctement maintenant.
 
-Ne **pas** mettre `ssl_certificate` dans le bloc `http:` — le proxy s'en charge,
-et le faire ici couperait le 8123 en clair, ce qu'on cherche justement à éviter.
-
-Redémarrer Home Assistant.
+Ne **pas** activer le SSL côté Home Assistant — le proxy s'en charge, et le
+faire ici couperait le 8123 en clair, ce qu'on cherche justement à éviter.
 
 ### 4.7 — Application Companion
 
