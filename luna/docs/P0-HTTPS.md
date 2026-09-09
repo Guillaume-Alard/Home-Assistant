@@ -227,6 +227,39 @@ Contrepartie : les appareils qui court-circuitent le résolveur de la passerelle
 Pour eux, l'enregistrement public reste la réponse, d'où l'intérêt de garder les
 deux justes.
 
+> ⚠️ **Cet enregistrement peut tuer le renouvellement du certificat.** Le hook du
+> §4.3 pose le `TXT` du défi chez DuckDNS, puis attend de le relire lui-même :
+>
+> ```bash
+> curl -s "https://www.duckdns.org/update?domains=$ALIAS&token=$SYS_TOKEN&txt=$TOKEN_VALUE"
+> timeout 120s bash -c -- "while ! dig -t txt \"_acme-challenge.$ALIAS\" | grep -F -- \"$TOKEN_VALUE\"; do sleep 5; done"
+> ```
+>
+> Ce `dig` n'a **pas de `@serveur`** : il part vers le résolveur de HAOS, donc
+> vers la passerelle de la maison. Si la passerelle se déclare autoritaire pour
+> le domaine **et ses sous-domaines**, elle répond elle-même pour
+> `_acme-challenge.…` — sans `TXT`, puisqu'elle n'en connaît aucun. La requête ne
+> sort jamais, la boucle tourne 120 s, et dehydrated abandonne :
+> `ERROR: deploy_challenge hook returned with non-zero exit code`.
+>
+> Ce n'est pas seulement la première émission : le renouvellement automatique
+> tombe dans le même trou tous les soixante jours, et rien n'avertit.
+>
+> Le test qui tranche, avec un sous-domaine qui n'existe pas :
+>
+> ```bash
+> nslookup zzz.guillaume-sentinel.duckdns.org 1.1.1.1      # doit être NXDOMAIN
+> nslookup zzz.guillaume-sentinel.duckdns.org <IP passerelle>
+> ```
+>
+> Si la passerelle répond `192.168.0.251` là où Cloudflare dit « domaine
+> inexistant », elle couvre tout le domaine, et il faut sortir le certificat de
+> son chemin : donner à Nova un résolveur public (**Paramètres → Système →
+> Réseau**, serveurs DNS `1.1.1.1`), ou n'ajouter l'enregistrement local que s'il
+> est vraiment nécessaire — cf. l'encadré du §4.2 sur les deux messages d'erreur
+> de Chrome, qui font prendre pour un problème de résolution ce qui n'en est pas
+> un.
+
 ### 4.5 — Servir le certificat sur le 443
 
 **Boutique → NGINX Home Assistant SSL proxy → Installer.**
