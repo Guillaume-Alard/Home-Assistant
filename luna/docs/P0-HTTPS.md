@@ -183,6 +183,20 @@ Le schéma de l'add-on est `list(rsa|prime256v1|secp384r1)`, sa valeur par défa
 `secp384r1` — une courbe elliptique, plus légère à négocier qu'une clé RSA sur
 un N95.
 
+⚠️ **Ne pas remplir `aliases`.** Le nom trompe : ce n'est pas un libellé, c'est
+une **délégation de domaine**, faite pour valider un certificat en posant le
+`TXT` du défi sous *un autre domaine DuckDNS qu'on possède*. Le hook en tire le
+domaine qu'il interroge :
+
+```bash
+ALIAS="$(jq -r "[.aliases[]|{(.domain):.alias}]|add.\"$DOMAIN\"" $CONFIG_PATH)" || ALIAS="$DOMAIN"
+```
+
+Y écrire un joli nom — `alias: Luna` — envoie le défi sur un domaine qui
+n'existe pas : DuckDNS répond `KO`, le `dig` cherche
+`_acme-challenge.Luna` pendant cent vingt secondes, et dehydrated abandonne. Le
+bloc doit rester **absent**, et `ALIAS` retombe alors sur le domaine lui-même.
+
 C'est vrai de `ipv4` aussi, dans l'autre sens : `str?` le rend facultatif au
 schéma, donc absent des options par défaut, donc invisible dans l'interface
 graphique. Le mode YAML est le seul endroit d'où on peut le poser. Sans lui,
