@@ -434,6 +434,21 @@ Les points de la Partie G qui attendaient Nova :
    liste les exécutions et le temps de chaque étape. Une phrase courte doit
    passer la reconnaissance **sous 3 s** (H38).
 
+   ⚠️ **C'est l'étape de reconnaissance seule qui est mesurée**, pas le délai
+   ressenti. Celui-ci additionne quatre choses : transcrire, réfléchir, agir,
+   puis parler. Les confondre mène au mauvais réglage — changer de modèle
+   Whisper parce que Claude a mis du temps ne fera rien gagner.
+
+   La façon de les distinguer sans même ouvrir la vue de débogage : **Whisper
+   dépend de la longueur de l'audio, pas de la difficulté de la demande.** Un
+   délai qui varie selon ce qu'on demande vient d'après la transcription. Un
+   délai qui varie selon la longueur de la phrase prononcée vient d'elle.
+
+   Le premier échange après un redémarrage est plus lent que les suivants : le
+   préfixe de prompt n'est pas encore en cache. C'est attendu, et c'est aussi la
+   vérification de P1 qui restait à faire — `cache_read_input_tokens > 0` au
+   second échange.
+
 Si c'est trop lent, `tiny-int8`. Si la transcription est approximative,
 `small-int8`. Le réglage se fait à l'oreille, après mesure — H31 le prévoit, et
 c'est une ligne d'option.
