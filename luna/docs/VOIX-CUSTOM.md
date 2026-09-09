@@ -26,9 +26,9 @@ préparatoire — découper, transcrire, normaliser — représente l'essentiel 
 l'effort ; l'entraînement lui-même est une nuit de calcul pendant laquelle tu
 dors.
 
-> **Envoie-le-moi si tu veux.** Je peux te dire en cinq minutes s'il tient la
-> route : durée exploitable, nombre de locuteurs, bruit de fond, saturation. Ça
-> évite d'y passer une soirée pour rien.
+> **Colle-moi les sorties de §3.1 avant de commencer.** Durée, canaux, débit,
+> écrêtage : ces quatre chiffres disent en cinq minutes si le fichier tient la
+> route, et évitent d'y passer une soirée pour rien.
 
 ---
 
@@ -52,12 +52,31 @@ la règle d'indépendance de §2 est respectée.
 
 ### 3.1 — Jauger le fichier
 
+Il faut `ffmpeg` — et il sert ensuite à tout le reste de la chaîne, donc
+autant l'installer maintenant. Sous Windows :
+
+```powershell
+winget install --id Gyan.FFmpeg -e
+```
+
+**Fermer et rouvrir le terminal** après l'installation : le `PATH` n'est relu
+qu'au démarrage du shell, et sans ça `ffprobe` reste introuvable alors qu'il est
+bien là.
+
 ```bash
 # Durée, débit, canaux
 ffprobe -hide_banner -i voix.wav
 
 # Niveau sonore et écrêtage
 ffmpeg -i voix.wav -af "volumedetect" -f null - 2>&1 | grep -E "max_volume|mean_volume"
+```
+
+Sous PowerShell, la seconde ligne s'écrit autrement — `grep` n'existe pas, et le
+périphérique nul s'appelle `NUL`. Le plus sûr est de déléguer à `cmd`, qui gère
+la redirection de la sortie d'erreur comme du texte :
+
+```powershell
+cmd /c "ffmpeg -hide_banner -i voix.wav -af volumedetect -f null NUL 2>&1" | findstr volume
 ```
 
 Si `max_volume` vaut 0.0 dB, le signal est probablement écrêté : mauvais départ.
