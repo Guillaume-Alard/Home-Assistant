@@ -6,8 +6,8 @@ close), et Guillaume ne possède **aucun nom de domaine** — seulement l'adress
 Nabu Casa.
 
 *Relue après P3 à P6 : l'option `ipv4` de l'add-on Duck DNS est confirmée
-(§4.3), `trusted_proxies` s'est révélé porter la barrière biométrique de §6
-(§4.5), et le même contexte sécurisé conditionne la caméra de P6 autant que le
+(§4.4), `trusted_proxies` s'est révélé porter la barrière biométrique de §6
+(§4.6), et le même contexte sécurisé conditionne la caméra de P6 autant que le
 micro de P2.*
 
 §4 du cahier des charges : « À régler **avant** la phase voix. » Ce document dit
@@ -115,7 +115,29 @@ en HTTP clair au 8123 ? ») : avec un proxy, la réponse n'a plus d'importance.
 Un seul sous-domaine suffit : le distant continue de passer par Nabu Casa, ce
 nom-ci ne sert qu'à la maison.
 
-### 4.2 — Le certificat
+### 4.2 — Le nom résout-il vers Nova ? (à faire *avant* le certificat)
+
+C'est la question qui décide si tout ce qui suit est possible, elle se répond en
+cinq minutes, et elle ne demande **ni add-on, ni certificat**. La poser en
+premier évite de découvrir le mur après vingt minutes de montage.
+
+```bash
+curl "https://www.duckdns.org/update?domains=nova-alard&token=<TOKEN>&ip=192.168.1.42"
+# → OK
+nslookup nova-alard.duckdns.org
+```
+
+**L'IP privée revient** → feu vert, passe au 4.3.
+
+**Rien ne revient, ou une autre IP revient** → *DNS rebinding protection* : ton
+routeur ou ton résolveur efface silencieusement les réponses pointant vers une
+adresse privée. Beaucoup le font (Freebox, Livebox, AdGuard Home, Pi-hole,
+pfSense). Deux issues : mettre `duckdns.org` en exception dans le résolveur, ou
+prendre le repli de §8. Rien d'autre dans ce document ne marchera tant que ce
+test est rouge — c'est la cause numéro un d'échec de ce montage, et elle ne se
+manifeste par aucun message clair.
+
+### 4.3 — Le certificat
 
 **Paramètres → Modules complémentaires → Boutique → Duck DNS → Installer.**
 
@@ -134,62 +156,38 @@ Démarrer, puis **lire le journal de l'add-on**. La première émission prend
 quelques minutes — le temps que le `TXT` se propage. Elle est réussie quand
 `/ssl/fullchain.pem` existe. Le renouvellement est ensuite automatique.
 
-### 4.3 — Faire pointer le nom vers Nova (le point délicat)
+### 4.4 — Épingler l'IP privée dans l'add-on
 
-Par défaut, l'add-on Duck DNS met à jour l'enregistrement `A` avec l'**IP
-publique** de la maison. Or on veut l'IP **privée** de Nova. Trois manières, par
-ordre de préférence :
+L'enregistrement posé à la main en §4.2 ne tiendra pas : par défaut, l'add-on
+Duck DNS réécrit le `A` avec l'**IP publique** de la maison à chaque
+rafraîchissement. Il faut donc lui dire quelle valeur écrire.
 
-**a. Épingler l'IP dans l'add-on.** ✅ **Vérifié** : le schéma de l'add-on
-Duck DNS 2.0.0 expose bien `ipv4: str?`. Ajoute simplement la ligne :
+✅ **Vérifié** : le schéma de l'add-on Duck DNS 2.0.0 expose bien `ipv4: str?`.
+Ajoute la ligne aux options :
 
 ```yaml
 ipv4: "192.168.1.42"
 ```
 
-C'est le plus propre : l'add-on continue de rafraîchir l'enregistrement, mais
-avec la bonne valeur, et le certificat n'en est pas affecté — le défi DNS-01 ne
-regarde que le `TXT`.
+L'add-on continue de rafraîchir l'enregistrement, mais avec la bonne valeur, et
+le certificat n'en est pas affecté — le défi DNS-01 ne regarde que le `TXT`.
 
 > Attention : `ipv4` est dans le **schéma**, pas dans les **options par
 > défaut**. L'interface ne te proposera donc pas le champ : il faut basculer
 > l'éditeur en YAML et ajouter la ligne à la main.
 
-**b. Poser l'enregistrement à la main, puis surveiller.**
-
-```bash
-curl "https://www.duckdns.org/update?domains=nova-alard&token=<TOKEN>&ip=192.168.1.42"
-```
-
-Attendre dix minutes, puis vérifier que l'add-on ne l'a pas réécrit :
+Attendre dix minutes, puis vérifier que la valeur a tenu :
 
 ```bash
 nslookup nova-alard.duckdns.org
 ```
 
-S'il répond l'IP privée, c'est réglé. S'il est repassé sur l'IP publique,
-passer en (c).
+Si l'IP publique est revenue malgré `ipv4`, le repli est une entrée dans le
+résolveur DNS de la maison — routeur, AdGuard Home, Pi-hole :
+`nova-alard.duckdns.org → 192.168.1.42`. Plus robuste, une pièce de plus à
+maintenir, et il faut que tous les appareils utilisent bien ce résolveur.
 
-**c. Une entrée dans le résolveur DNS de la maison.** Routeur, AdGuard Home,
-Pi-hole : `nova-alard.duckdns.org → 192.168.1.42`. Plus robuste, une pièce de
-plus à maintenir, et il faut que tous les appareils utilisent bien ce résolveur.
-
-> ⚠️ **Le piège, quelle que soit la manière.** Beaucoup de routeurs et de
-> résolveurs (Freebox, Livebox, AdGuard Home, Pi-hole, pfSense) appliquent une
-> *protection contre le DNS rebinding* : ils effacent silencieusement les
-> réponses pointant vers une IP privée. Le nom ne résout alors nulle part, sans
-> message d'erreur utile. **À tester en premier**, avant même de configurer quoi
-> que ce soit :
->
-> ```bash
-> nslookup nova-alard.duckdns.org
-> ```
->
-> Si l'IP privée ne revient pas alors que tu viens de la poser, il faut mettre
-> `duckdns.org` en exception dans le résolveur. C'est la cause numéro un
-> d'échec de cette approche, et elle ne se manifeste par aucun message clair.
-
-### 4.4 — Servir le certificat sur le 443
+### 4.5 — Servir le certificat sur le 443
 
 **Boutique → NGINX Home Assistant SSL proxy → Installer.**
 
@@ -209,7 +207,7 @@ passe que par là.
 > Vérifier que rien d'autre n'occupe le port 443 de Nova. Si l'add-on refuse de
 > démarrer, c'est presque toujours ça.
 
-### 4.5 — Configuration de Home Assistant
+### 4.6 — Configuration de Home Assistant
 
 **Obligatoire dès qu'un proxy est devant HA :**
 
@@ -259,7 +257,7 @@ et le faire ici couperait le 8123 en clair, ce qu'on cherche justement à évite
 
 Redémarrer Home Assistant.
 
-### 4.6 — Application Companion
+### 4.7 — Application Companion
 
 Sur **chaque** appareil — ton téléphone, celui de Clara, la tablette murale :
 
@@ -343,7 +341,7 @@ puis regarde une ligne de connexion : elle doit citer l'IP réelle de l'appareil
 (`192.168.1.x`), **pas** celle du proxy (`172.30.32.x`).
 
 Si tu vois `172.30.32.x`, `trusted_proxies` n'est pas pris en compte — et la
-barrière de §6 ne distingue plus rien (voir §4.5).
+barrière de §6 ne distingue plus rien (voir §4.6).
 
 Les six au vert : P0 est finie, P2 est débloquée. Une seule au rouge et la phase
 voix bute dessus plus tard, dans un contexte où ce sera bien plus dur à
@@ -376,8 +374,8 @@ tablette murale uniquement (solution 3 de §4).
 |---|---|---|---|
 | 0 | Vider l'URL interne dans l'app Companion | **Micro débloqué tout de suite**, tout passe par internet | 2 min |
 | 1 | Créer un sous-domaine DuckDNS | Un nom à toi, gratuit | 5 min |
-| 2 | Add-on Duck DNS, `lets_encrypt` activé | Certificat valide, aucun port ouvert | 10 min |
-| 3 | Faire pointer le `A` vers l'IP privée de Nova | Le nom résout à la maison | 5 min, ou plus si rebinding |
+| 2 | Poser le `A` vers l'IP privée **et le résoudre** (§4.2) | **Feu vert ou feu rouge** : dit tout de suite si le montage est possible | 5 min |
+| 3 | Add-on Duck DNS, `lets_encrypt` activé, `ipv4` épinglé | Certificat valide, aucun port ouvert | 10 min |
 | 4 | Add-on NGINX SSL proxy | HTTPS sur le 443, 8123 intact | 5 min |
 | 5 | `trusted_proxies` + `internal_url`, redémarrer HA | Journaux, bannissements — **et la barrière biométrique de §6** | 5 min |
 | 6 | URL interne + SSID dans Companion, permission micro | Le local repasse en local | 5 min/appareil |
