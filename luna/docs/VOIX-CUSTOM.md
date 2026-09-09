@@ -83,6 +83,20 @@ Si `max_volume` vaut 0.0 dB, le signal est probablement écrêté : mauvais dép
 Si la durée totale est sous dix minutes, l'affinage Piper est hors de portée :
 va directement au **§7**, qui dit quoi faire à la place.
 
+> **Raccourci quand la source est une plateforme TTS.** Tu fournis le texte,
+> donc tu connais déjà les transcriptions : les §3.2 et §3.3 — découper à
+> l'oreille, puis transcrire — n'ont plus lieu d'être. Il suffit de synthétiser
+> un fichier par bloc de texte, de découper aux silences, et d'aligner sur les
+> lignes du bloc dans l'ordre. C'est ce que fait
+> [`tools/voix/`](../tools/voix/), corpus fourni.
+>
+> Deux avertissements valent quand même pour cette voie. §4 d'abord : une source
+> synthétique transmet ses défauts, et Piper héritera de ses liaisons ratées et
+> de ses fins de phrase plates — écoute quelques blocs avant d'en synthétiser
+> quarante. §5 ensuite : réutiliser la sortie d'une plateforme pour entraîner un
+> autre modèle est précisément le cas que §7 encadre. Usage strictement privé,
+> le modèle ne quitte jamais la maison.
+
 ### 3.2 — Découper en phrases
 
 ```bash

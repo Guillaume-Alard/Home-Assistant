@@ -1,0 +1,664 @@
+# Corpus de voix pour Luna — à synthétiser bloc par bloc.
+#
+# Une phrase par ligne. Les lignes commençant par # sont ignorées.
+# Les nombres, heures et dates sont écrits EN TOUTES LETTRES : la plateforme TTS
+# et l'espeak-ng de Piper n'étendent pas les chiffres de la même façon, et un
+# désaccord entre les deux apprendrait au modèle à dire un mot pour un autre.
+#
+# Chaque bloc fait environ mille cinq cents caractères — sous la limite par
+# requête de la plupart des plateformes. Si la tienne accepte plus, colle
+# plusieurs blocs à la suite : le script de découpage s'en accommode tant qu'un
+# fichier audio correspond à un bloc entier.
+
+# BLOC 01
+Bonsoir Guillaume, la maison est calme.
+J'ai allumé le salon.
+La fenêtre de la cuisine est restée ouverte depuis deux heures.
+Il fait dix-neuf degrés dans la chambre, c'est un peu frais pour dormir.
+Tu veux que je baisse le chauffage ?
+D'accord, je m'en occupe.
+Je ne peux pas fermer les volets sans que tu me le confirmes.
+Le portail est ouvert, je préfère te le signaler.
+Clara est rentrée il y a vingt minutes.
+Liam a laissé la lumière de sa chambre allumée toute la nuit.
+Il est vingt-deux heures trente, tu m'avais demandé de te le rappeler.
+La machine à laver a fini son cycle.
+Rien d'anormal depuis ce matin.
+Le détecteur du garage ne répond plus depuis midi.
+Veux-tu que je te prévienne quand il revient ?
+
+# BLOC 02
+Bonjour, il est sept heures dix.
+La température extérieure est de quatre degrés.
+Je te conseille une écharpe.
+La chaudière a démarré à cinq heures, comme d'habitude.
+Trois lumières sont restées allumées cette nuit : le couloir, la salle de bain et la buanderie.
+Je les ai éteintes à trois heures trente.
+Tu rentres tard ce soir ?
+Je peux préparer la maison pour ton retour si tu me dis à quelle heure.
+Le lave-vaisselle est en marche, il finira dans quarante minutes.
+Personne n'a ouvert la porte d'entrée depuis hier soir.
+J'ai remarqué que tu éteins la cuisine vers vingt-trois heures presque tous les soirs.
+Tu veux que je le fasse à ta place ?
+Je ne le ferai que si tu me dis oui.
+C'est noté, je ne te le proposerai plus.
+Bonne nuit.
+
+# BLOC 03
+Je n'ai pas compris, tu peux répéter ?
+Attends, je vérifie.
+Voilà, c'est fait.
+Je ne trouve pas d'appareil qui porte ce nom.
+Il y en a deux qui pourraient correspondre : la lampe du bureau et la lampe de chevet.
+Laquelle ?
+Je crois que tu parles du radiateur de la chambre, mais je ne suis pas sûre.
+Ce n'est pas quelque chose que je peux faire toute seule.
+Je te le propose, et tu décides.
+Je préfère te demander plutôt que de me tromper.
+Ça ne marche pas, et je ne sais pas encore pourquoi.
+Le service ne répond pas, j'ai essayé trois fois.
+Je réessaie dans cinq minutes.
+Cette fois c'est passé.
+Désolée pour l'attente.
+
+# BLOC 04
+Il pleut depuis une heure et demie.
+Le vent souffle à quarante kilomètres par heure, les volets vont claquer.
+Le soleil se couche à dix-sept heures cinquante-deux.
+Demain matin il fera huit degrés, avec du brouillard jusqu'à neuf heures.
+Le week-end s'annonce sec.
+La pièce la plus froide de la maison est la buanderie, treize degrés.
+La plus chaude est le salon, vingt et un.
+L'humidité de la salle de bain est montée à soixante-quinze pour cent après la douche.
+Elle est redescendue en vingt minutes, c'est normal.
+La consommation d'hier était de onze kilowattheures.
+C'est un peu plus que la moyenne de la semaine.
+Le chauffage représente les deux tiers.
+Rien d'inquiétant.
+Le compteur d'eau n'a rien enregistré cette nuit, donc pas de fuite.
+Tant mieux.
+
+# BLOC 05
+Est-ce que tu veux que je continue ?
+Qui a ouvert la porte du garage ?
+Combien de temps le four est-il resté allumé ?
+Pourquoi la lumière du couloir s'est-elle éteinte toute seule ?
+Où est passé le capteur de la véranda ?
+Quand veux-tu que je te réveille ?
+À quelle heure part ton train demain ?
+Tu préfères que je te prévienne tout de suite, ou en fin de journée ?
+Je récapitule : tu veux que j'éteigne tout sauf la chambre, c'est bien ça ?
+Est-ce que quelqu'un est encore debout à cette heure-ci ?
+Faut-il que je coupe le chauffage pendant ton absence ?
+Tu veux le détail, ou juste l'essentiel ?
+Puis-je te poser une question ?
+Serait-il utile que je t'en reparle demain matin ?
+N'est-ce pas un peu tôt pour fermer les volets ?
+
+# BLOC 06
+Trois choses ce matin : le portail est ouvert, la poubelle sort ce soir, et il va pleuvoir vers seize heures.
+Dans le salon, il y a quatre lampes, deux prises et un thermomètre.
+J'ai éteint la cuisine, la salle à manger, le couloir et l'entrée.
+Il reste allumés : le bureau, la véranda et la chambre de Liam.
+Les appareils qui ne répondent plus sont le détecteur du garage, la prise de la cave et le capteur de la boîte aux lettres.
+Le premier depuis midi, le deuxième depuis hier, le troisième depuis samedi dernier.
+Lundi, mardi et jeudi, tu es rentré après vingt heures.
+Mercredi et vendredi, avant dix-huit heures.
+J'ai regardé les sept derniers jours, puis les trente derniers, puis les trois derniers mois.
+La tendance est la même partout.
+Le matin, le midi et le soir, la consommation forme trois pics bien nets.
+Celui du soir est le plus haut, de loin.
+Café, douche, chauffage : tout se déclenche entre sept heures et sept heures et demie.
+C'est la demi-heure la plus chargée de la journée.
+Le reste se répartit tranquillement.
+
+# BLOC 07
+Il faudrait que je puisse te joindre quand quelque chose d'important se produit, sinon je note et tu découvres le lendemain.
+Comme je ne peux pas décider seule de ce qui compte, je te propose et tu tranches.
+Quand tu me dis non trois fois de suite, j'arrête de te le proposer, et je te laisse tranquille pendant un mois.
+Si tu changes d'avis, il suffit de me le redemander une fois pour que je reprenne.
+J'ai remarqué qu'entre le moment où tu éteins la télévision et celui où tu montes te coucher, il s'écoule environ un quart d'heure.
+Ce n'est pas une règle, c'est une habitude, et je ne m'en servirai que si tu me dis qu'elle te convient.
+Ce que je sais de la maison vient de ce que ses capteurs racontent, et un capteur muet ne veut pas dire que tout va bien.
+Quand un appareil se tait pendant plus d'une demi-heure, je considère qu'il y a un problème, et je te le dis une seule fois.
+Je ne répète pas une alerte tant que rien n'a changé, parce qu'une alarme qu'on entend tous les jours ne s'entend plus.
+Si tu me demandes d'ignorer un appareil, je l'ignore vraiment, et il ne réapparaîtra pas dans mes rapports.
+Ce que tu me confies reste ici, sur cette machine, et n'en sort que pour ce que tu m'as demandé de faire.
+Je ne prétends pas savoir ce que je ne sais pas : quand je devine, je te le dis, et quand je me trompe, je le corrige.
+
+# BLOC 08
+Le chien a fait tomber quelque chose dans la cuisine.
+Attention, la plaque est encore chaude.
+Ça y est, tout est éteint.
+Parfait.
+Très bien, je note.
+Ah, ça c'est nouveau.
+Tiens, c'est étrange.
+Oh, tu es rentré plus tôt que d'habitude.
+Bien sûr.
+Avec plaisir.
+Aucun problème.
+Je m'en occupe tout de suite.
+Voilà qui est fait.
+Bonne journée.
+À tout à l'heure.
+Repose-toi bien.
+Prends soin de toi.
+Bon appétit.
+Bon courage.
+À demain.
+
+# BLOC 09
+Le huit janvier, le vingt-trois février et le premier mars.
+Nous sommes le mardi quatorze octobre deux mille vingt-six.
+Il est exactement six heures quarante-sept.
+Dans une heure et quart.
+Il y a trois quarts d'heure.
+Depuis quarante-deux minutes.
+Pendant deux heures et demie.
+Vers minuit et demi.
+À midi pile.
+Le premier du mois.
+Le trente et un décembre.
+La semaine prochaine, mercredi.
+Il y a quinze jours.
+Dans un mois et demi.
+L'année dernière à la même époque.
+Cinq virgule sept degrés.
+Quatre-vingt-treize pour cent.
+Deux cent soixante-quatorze euros.
+Mille deux cent cinquante watts.
+Zéro virgule trois.
+Un tiers.
+Les trois quarts.
+Une fois et demie.
+Le double.
+La moitié.
+
+# BLOC 10
+Un an, un banc, un bond, un brin : quatre nasales que rien ne confond.
+Le vent d'antan emportait les champs de lin jusqu'aux étangs.
+Ces monts sombres montent sans un son.
+Chacun son chemin, chacune sa chance.
+Cinq daims bruns bondissent en plein champ.
+Le pain, la faim, le bain, le teint.
+Mon oncle et ma tante ont un grand jardin devant leur maison.
+Les enfants entendent le train qui entre en gare.
+Un bon vin blanc, un long moment, un instant paisible.
+Il ment, il monte, il mange, il manque.
+Le tambour résonne longtemps dans le tunnel.
+Rien n'entame la confiance qu'on met dans une chanson d'enfance.
+
+# BLOC 11
+Une flûte, une ruse, une lune, une plume.
+Tu as vu la rue, tu as su la suite.
+Le mur du sud est humide.
+Sur la butte, la brume s'attarde.
+Deux jeunes bœufs meuglent sous les feuilles.
+Le peintre veut peu, mais il le veut bien.
+La sœur du docteur pleure de bonheur.
+Ce beurre a le goût d'une fleur.
+Un feu bleu, un jeu creux, un vœu heureux.
+Il pleut sur les tuiles et sur les feuilles.
+Huit huîtres, une nuit humide, la pluie qui fuit.
+Lui, il essuie la buée du puits.
+Aujourd'hui, la truite nage sous le pont de bois.
+Le juillet suivant, tout a changé.
+
+# BLOC 12
+La grenouille de la vigne grignote une châtaigne.
+Le peigne d'Agnès est resté dans la baignoire.
+Un agneau, une montagne, une campagne, une châtaigne.
+Le rossignol siffle au fond du vallon.
+Le rouge-gorge revient chaque printemps sur le rebord de la fenêtre.
+Grand-mère préparait des crêpes le premier dimanche du mois.
+Le train traverse trois tunnels avant d'arriver.
+Trois grosses grappes de raisin traînent sur la treille.
+Le brouillard brouille les branches du bouleau.
+Quatre roues rouges roulent sur la route rocailleuse.
+Le prêtre prête son parapluie au promeneur pressé.
+Strictement stricte, la structure structurelle strie le sol.
+
+# BLOC 13
+Les enfants ont attendu une heure et demie devant l'école.
+Ils ont eu froid, mais ils n'ont rien dit.
+Vous avez un instant ?
+Nous avons été très heureux de les voir arriver.
+On entend encore les oiseaux à cette heure-ci.
+Les autres arrivent après.
+Il est allé aux Halles en une heure.
+Quand est-ce qu'il arrive ?
+Elles ont ouvert grand les yeux.
+Deux hommes attendaient au coin de la rue.
+Petit à petit, l'oiseau fait son nid.
+Tout est prêt, tout est en ordre, tout ira bien.
+
+# BLOC 14
+Guillaume est descendu chercher le courrier.
+Clara préfère travailler dans le bureau du haut.
+Liam a huit ans et n'aime pas le noir.
+Nova s'occupe de la maison, Orion des calculs, Nebula des sauvegardes.
+Loggia est le nom du tableau de bord.
+La Loggia s'ouvre sur le salon, côté sud.
+Marseille, Bordeaux, Strasbourg, Rennes et Lyon.
+La rue des Acacias croise l'avenue Jean-Jaurès.
+Il vient de Saint-Étienne, elle de Neuilly-sur-Seine.
+Le docteur Lévêque a téléphoné ce matin.
+Madame Fernandez passera jeudi vers quinze heures.
+Les Dupont-Moreau ont emménagé au numéro douze.
+
+# BLOC 15
+Quand je regarde ce qui s'est passé cette semaine, une chose revient : la porte de la véranda reste ouverte le soir, presque tous les soirs, et personne ne s'en aperçoit avant le lendemain matin.
+Ce n'est pas grave en été, ça l'est beaucoup plus en janvier, parce que le chauffage tourne pour rien pendant des heures et que la facture s'en ressent à la fin du mois.
+Je pourrais te le signaler chaque fois que ça arrive, mais tu recevrais une alerte par jour, et au bout d'une semaine tu ne les lirais plus.
+Alors je te propose autre chose : je te le dis une fois, ce soir, et si tu me réponds que ça te va, je fermerai la porte moi-même les fois suivantes.
+Si tu préfères continuer à décider toi-même à chaque fois, dis-le, et je me contenterai de te prévenir sans rien faire d'autre.
+Ce que je ne ferai jamais, c'est prendre l'habitude d'agir sans te l'avoir demandé au moins une fois.
+
+# BLOC 16
+Le matin, la maison met un moment à se réveiller.
+D'abord la chaudière, puis la lumière du couloir, puis la cafetière.
+On entend l'eau monter dans les tuyaux.
+Quelqu'un descend l'escalier sans allumer.
+La porte du frigo s'ouvre et se referme deux fois.
+Dehors, il fait encore nuit.
+La rue est vide, à part une voiture qui passe lentement.
+Le chauffage s'arrête vers neuf heures, quand personne n'est plus là.
+La maison redevient silencieuse jusqu'au milieu de l'après-midi.
+Puis tout recommence, dans l'autre sens.
+Les lumières s'allument une à une, du bas vers le haut.
+Et vers vingt-trois heures, elles s'éteignent presque toutes en même temps.
+
+# BLOC 17
+Je ne suis pas certaine de ce que j'avance.
+Il se peut que je me trompe.
+Je crois comprendre, mais dis-moi si je me trompe.
+Ce n'est qu'une hypothèse.
+Je n'ai pas assez d'observations pour en être sûre.
+Trois soirs, ce n'est pas une habitude, c'est une coïncidence.
+Au bout d'une vingtaine, j'en serai raisonnablement certaine.
+Pour l'instant, je préfère ne rien affirmer.
+Je te le redirai quand j'en saurai plus.
+Je me suis trompée, la fenêtre était bien fermée.
+J'avais mal lu le capteur.
+Voilà qui est corrigé.
+
+# BLOC 18
+Ce que tu me demandes dépasse ce que j'ai le droit de faire seule.
+Je peux te le proposer, mais c'est toi qui valides.
+Les volets, les serrures et l'alarme, je n'y touche pas.
+Ce n'est pas une question de confiance, c'est une règle posée dès le départ.
+Une lumière qu'on rallume ne coûte rien ; une porte qu'on déverrouille, si.
+Je peux allumer, éteindre, régler la température et te dire ce que je vois.
+Pour tout le reste, il faut ton accord explicite.
+Et cet accord n'est valable qu'une fois.
+La prochaine fois, je redemanderai.
+Même à toi.
+Même si tu es administrateur.
+C'est écrit ainsi, et je m'y tiens.
+
+# BLOC 19
+Il y avait une bibliothèque au fond du couloir, avec des livres empilés jusqu'au plafond.
+Personne ne se souvenait qui les avait mis là.
+Le bois du parquet craquait toujours au même endroit, entre la troisième et la quatrième latte.
+En hiver, la lumière entrait par la fenêtre de l'ouest pendant vingt minutes, pas plus.
+Le reste du temps, il fallait allumer.
+Sur la table, il restait une tasse, un carnet et un stylo sans capuchon.
+Le carnet était ouvert à une page presque vide.
+Quelqu'un avait écrit trois mots puis s'était arrêté.
+Dehors, le vent faisait battre un volet mal accroché.
+On l'entendait à peine depuis le salon.
+Mais dans la chambre du haut, c'était un bruit régulier, obstiné, impossible à ignorer.
+Il a fallu attendre le printemps pour que quelqu'un pense à le réparer.
+
+# BLOC 20
+Tu veux qu'on regarde ça ensemble ?
+On peut aussi laisser tomber pour ce soir.
+Franchement, ça peut attendre demain.
+Ce n'est pas urgent du tout.
+Là, en revanche, ça mérite qu'on s'en occupe maintenant.
+Je te préviens tout de suite : ce sera un peu long.
+Mais ça vaut le coup.
+Tu me diras si je vais trop vite.
+D'accord, je reprends depuis le début.
+Alors voilà.
+En résumé : rien de cassé, deux choses à surveiller, une à réparer.
+Le reste va très bien.
+
+# BLOC 21
+Le capteur de la porte d'entrée n'a pas envoyé de nouvelle depuis trente-cinq minutes.
+Avant de crier au loup, j'attends dix minutes de plus, au cas où ce serait un hoquet du réseau.
+Toujours rien.
+Je te le signale donc maintenant, et une seule fois.
+Quatre appareils du même fabricant se sont tus en même temps, ce qui ressemble plus à une passerelle en panne qu'à quatre pannes séparées.
+Je te le dis comme un seul problème, pas comme quatre.
+La passerelle Zigbee est revenue à onze heures douze.
+Les quatre appareils ont suivi dans la minute.
+L'incident est clos, il aura duré une heure et quarante minutes.
+J'ai vérifié le journal système : rien d'autre à signaler.
+Le tableau de bord fait référence à deux entités qui n'existent plus.
+Elles s'appelaient prise du bureau et lampe de la terrasse.
+
+# BLOC 22
+Mets la chambre à dix-neuf degrés.
+Éteins tout sauf le couloir.
+Allume la véranda à trente pour cent.
+Passe le salon en lumière chaude.
+Baisse un peu, c'est trop fort.
+Remonte de deux degrés.
+Coupe le chauffage de la buanderie jusqu'à demain matin.
+Rallume ce que tu viens d'éteindre.
+Non, pas celle-là, l'autre.
+Oui, celle du fond.
+C'est bon, laisse comme ça.
+Annule, j'ai changé d'avis.
+
+# BLOC 23
+La première fois qu'on installe quelque chose chez soi, on croit toujours que ce sera vite fait.
+Puis on découvre qu'il manque un câble, que le mot de passe est ailleurs, et que la notice décrit une version qui n'existe plus.
+On y passe la soirée, on finit par y arriver, et le lendemain on ne se souvient déjà plus de ce qui avait coincé.
+C'est pour ça qu'il vaut mieux écrire ce qu'on a fait pendant qu'on s'en souvient encore.
+Une note de trois lignes évite deux heures de recherche six mois plus tard.
+Personne ne le fait, et tout le monde le regrette.
+Le meilleur moment pour documenter une chose, c'est juste après l'avoir comprise.
+Pas avant, où l'on écrit ce qu'on croit ; pas longtemps après, où l'on a oublié pourquoi c'était difficile.
+Une bonne procédure ne dit pas seulement quoi faire, elle dit à quoi ressemble le succès à chaque étape.
+Sinon on avance sans savoir si on avance.
+Et quand ça casse, on ne sait pas depuis quand.
+C'est la différence entre une recette et une liste d'ingrédients.
+
+# BLOC 24
+Il y a des jours où tout marche du premier coup, et on se demande pourquoi on s'inquiétait.
+Il y en a d'autres où la même chose refuse obstinément de fonctionner, sans qu'aucun message n'explique pourquoi.
+Ce sont ces jours-là qui apprennent le plus, même s'ils sont désagréables sur le moment.
+Le plus difficile n'est pas de réparer, c'est de comprendre ce qui est cassé.
+Une fois qu'on a nommé le problème, la solution tient souvent en une ligne.
+On croit chercher une réponse, alors qu'on cherche la bonne question.
+Quand deux explications sont possibles, il vaut mieux trouver la mesure qui les départage que choisir la plus séduisante.
+Une hypothèse qu'on ne peut pas mettre en défaut ne sert à rien.
+Et une mesure qui confirme ce qu'on espérait mérite qu'on la refasse autrement.
+J'ai eu tort trois fois de suite avant de tomber juste, et chaque fois c'était pour une bonne raison.
+La quatrième était la bonne, mais je ne l'aurais pas trouvée sans les trois autres.
+C'est la partie du travail dont on ne parle jamais.
+
+# BLOC 25
+En automne, les feuilles s'accumulent devant la porte du garage.
+Il faut les balayer avant qu'il pleuve, sinon elles collent au sol et forment une pâte brune.
+Le voisin passe le râteau tous les samedis matin, sans exception, depuis douze ans.
+On règle sa montre dessus.
+L'hiver, c'est la neige qui pose problème, mais seulement deux ou trois fois par an.
+Le reste du temps, il fait simplement froid et gris.
+Au printemps, le jardin redevient impraticable pendant trois semaines.
+La terre est trop molle, on s'enfonce jusqu'à la cheville.
+Puis d'un seul coup tout sèche, et l'herbe pousse plus vite qu'on ne peut la tondre.
+L'été, la maison garde la chaleur jusque tard dans la nuit.
+On ouvre tout à vingt-trois heures et on referme à sept heures du matin.
+C'est le seul moment de l'année où l'ordre des gestes s'inverse.
+
+# BLOC 26
+Attention, ne touche pas à ça.
+Écoute, on va faire autrement.
+Regarde, c'est plus simple que ça en a l'air.
+Viens voir.
+Laisse-moi finir.
+Rappelle-moi demain.
+Dis-moi si ça change quelque chose.
+Préviens-moi quand tu arrives.
+Ferme la porte derrière toi, s'il te plaît.
+Prends ton temps, rien ne presse.
+Reviens quand tu veux.
+N'oublie pas la clé.
+Fais attention à la marche.
+Assieds-toi, j'en ai pour deux minutes.
+Vas-y, je t'écoute.
+
+# BLOC 27
+Ce n'est ni très grave ni tout à fait anodin.
+Ni l'un ni l'autre, en réalité.
+Ce n'est pas que je refuse, c'est que je ne peux pas.
+Non seulement il est tard, mais en plus il fait froid.
+Soit tu me le confirmes, soit je laisse tomber.
+Plutôt que d'attendre, autant s'en occuper maintenant.
+Bien que ce soit inhabituel, ça reste possible.
+Même si tu insistes, la réponse sera la même.
+À moins que tu ne préfères le contraire.
+Quoi qu'il arrive, je te préviendrai.
+Tant que rien ne change, je me tais.
+Dès que ça bouge, tu le sauras.
+
+# BLOC 28
+Le café refroidit toujours plus vite qu'on ne l'imagine.
+Douze minutes, et il n'est déjà plus buvable.
+La théière en fonte tient une heure, mais elle pèse deux kilos.
+Sur la table de la cuisine, il y a une nappe à carreaux bleus qui date d'avant nous.
+Elle a une tache d'encre dans un coin, impossible à faire partir.
+On a essayé le vinaigre, le citron, et un produit qui promettait des miracles.
+Rien n'y a fait.
+Maintenant on met simplement une assiette dessus quand il y a du monde.
+Le pain sort du four à seize heures trente chez le boulanger du coin.
+Si on arrive à moins le quart, il en reste encore.
+À dix-sept heures, il n'y a plus que des baguettes de la veille.
+C'est un détail, mais tout le quartier le sait.
+
+# BLOC 29
+J'ai vérifié, tout est en ordre.
+Il y a un souci, mais rien d'alarmant.
+Ça m'ennuie de te déranger pour si peu.
+Je préfère t'en parler tout de suite.
+Ce n'est vraiment pas de chance.
+Tant pis, on fera autrement.
+C'est une bonne nouvelle.
+Voilà qui est nettement mieux.
+Je suis contente que ça ait marché.
+Je m'attendais à pire, honnêtement.
+Ça aurait pu être beaucoup plus compliqué.
+Finalement, tout s'est bien passé.
+
+# BLOC 30
+Quand une porte reste ouverte alors que le chauffage tourne, l'énergie part dehors sans que personne ne s'en rende compte.
+Un radiateur ne sait pas qu'une fenêtre est ouverte : il chauffe plus fort, c'est tout.
+La différence se voit sur la facture avant de se voir dans la maison.
+Deux degrés de moins la nuit représentent à peu près sept pour cent sur l'année.
+Ce n'est pas énorme, mais c'est gratuit.
+Fermer les volets avant la tombée de la nuit vaut à peu près autant, pour le même prix.
+Le chauffe-eau consomme surtout entre deux heures et cinq heures du matin.
+Le décaler d'une heure ne change rien au confort et beaucoup à la courbe.
+Les veilles des appareils représentent près d'un dixième du total.
+La télévision, la box, la console et les trois chargeurs qui ne chargent rien.
+Rien de tout cela ne mérite qu'on se prive de quoi que ce soit.
+Ce sont juste des choses qu'on ne voit pas si personne ne les regarde.
+
+# BLOC 31
+Tu m'avais demandé de te rappeler d'appeler le plombier.
+C'est fait, tu peux l'oublier.
+Le rendez-vous de jeudi tient toujours.
+Il n'a pas rappelé depuis mardi.
+Le colis est arrivé, il est devant la porte.
+La poubelle jaune sort ce soir, la verte la semaine prochaine.
+Le contrôle technique arrive à échéance dans trois semaines.
+L'assurance a envoyé un courrier, il est sur la table de l'entrée.
+Il reste deux boîtes dans le placard du haut.
+Le filtre de la hotte n'a pas été changé depuis six mois.
+La pile du détecteur de fumée du couloir faiblit.
+Il vaudrait mieux la remplacer avant qu'il se mette à siffler la nuit.
+
+# BLOC 32
+Il paraît que le froid arrive en fin de semaine.
+On verra bien.
+De toute façon, la maison est prête.
+Les tuyaux extérieurs ont été purgés le mois dernier.
+Le robinet du jardin est fermé côté cave.
+Il ne reste qu'à rentrer les plantes qui craignent le gel.
+Le laurier peut rester dehors, l'olivier non.
+Les deux citronniers passent l'hiver dans la véranda depuis toujours.
+Ils perdent quelques feuilles en janvier, puis repartent en mars.
+C'est comme ça chaque année.
+On s'inquiète, et chaque année ils repartent.
+Il n'y a pas de raison que cette fois soit différente.
+
+# BLOC 33
+Le silence d'une maison vide n'est jamais complet.
+Il y a le frigo qui se déclenche, le parquet qui travaille, la circulation au loin.
+On finit par ne plus les entendre, et c'est leur absence qui réveille.
+Une nuit où le frigo s'arrête, tout le monde se réveille sans savoir pourquoi.
+C'est un peu la même chose avec les capteurs.
+Tant qu'ils parlent, personne ne les remarque.
+Le jour où l'un se tait, il faut quelqu'un pour s'en apercevoir.
+Sinon la panne dure des semaines et on la découvre par hasard.
+Une maison qui va bien, ce n'est pas une maison où rien n'arrive.
+C'est une maison où ce qui arrive se remarque assez tôt.
+Le reste est une question de patience et d'attention.
+Rien de plus compliqué que ça.
+
+# BLOC 34
+Je vais te dire ce que j'ai vu, puis ce que j'en pense, et tu jugeras.
+Ce que j'ai vu : la température de la chambre est descendue à quinze degrés entre trois heures et cinq heures.
+Ce que j'en pense : soit la fenêtre est restée entrouverte, soit le radiateur ne chauffe plus.
+Le capteur d'ouverture n'a rien signalé, ce qui pencherait pour le radiateur.
+Mais ce capteur est justement l'un de ceux qui se taisent depuis hier.
+Donc je ne peux pas trancher, et je ne vais pas faire semblant.
+Ce que je peux faire, c'est te le dire maintenant plutôt que demain.
+Et te proposer d'aller vérifier, ce qui prendra dix secondes.
+Si c'est la fenêtre, tu la fermes et c'est réglé.
+Si c'est le radiateur, il vaut mieux le savoir avant le prochain coup de froid.
+Dans les deux cas, tu sauras à quoi t'en tenir.
+C'est tout ce que je cherche.
+
+# BLOC 35
+Autrefois, il fallait se lever pour éteindre.
+On traversait le couloir dans le noir en comptant les pas.
+Sept jusqu'à la porte, trois de plus jusqu'à l'interrupteur.
+Tout le monde connaissait ce trajet par cœur.
+Aujourd'hui il suffit de le demander à voix haute, et quelque chose répond.
+Ce n'est pas un progrès considérable, mais c'est agréable.
+Le vrai changement n'est pas d'éteindre sans se lever.
+C'est de savoir, sans y penser, que rien n'est resté allumé.
+La différence tient à ça : ne plus avoir à vérifier.
+Une maison qui se surveille elle-même libère un peu d'attention pour autre chose.
+Et de l'attention, c'est bien la seule chose qu'on ne puisse pas acheter.
+Le reste s'installe en une soirée.
+
+# BLOC 36
+Vraiment ?
+Tu es sûr ?
+Ah bon.
+Tiens donc.
+Ça alors.
+Eh bien.
+Bon, très bien.
+Alors là, je ne m'y attendais pas.
+C'est une excellente idée.
+Je n'y avais pas pensé.
+Tu as raison.
+Effectivement.
+En effet.
+Exactement.
+Tout à fait.
+Absolument pas.
+Certainement pas.
+Pas du tout.
+Au contraire.
+Justement.
+
+# BLOC 37
+La lumière de l'escalier s'allume quand on passe, et s'éteint deux minutes après.
+Personne n'a jamais eu besoin de la régler autrement.
+Dans la salle de bain, c'est différent : deux minutes ne suffisent jamais.
+On a fini par mettre dix, et le problème a disparu.
+Le garage s'allume à l'ouverture de la porte et reste allumé un quart d'heure.
+C'est le temps qu'il faut pour rentrer les courses et ressortir.
+Ces trois réglages ont demandé six mois pour trouver leur bonne valeur.
+Aucun n'était évident au départ.
+Chacun a été ajusté deux ou trois fois, après une gêne concrète.
+C'est comme ça que ça marche : on part d'une valeur plausible et on corrige à l'usage.
+Vouloir tout régler parfaitement dès le premier jour ne mène nulle part.
+Il faut vivre avec avant de savoir ce qui manque.
+
+# BLOC 38
+Trente-sept, cinquante-huit, quatre-vingt-onze, cent quatre.
+Soixante-seize virgule deux.
+Deux mille vingt-six.
+Le numéro treize bis.
+Chambre deux cent quarante et un.
+Vingt et un heures cinquante-neuf.
+Zéro six, douze, trente-quatre, cinquante-six, soixante-dix-huit.
+Cinq cent mille.
+Un million deux cent mille.
+Le tiers de quarante-deux.
+Neuf sur dix.
+Un sur trois.
+Le premier, le deuxième, le troisième, le dernier.
+Vingt-quatrième étage.
+Quatre-vingt-dix-neuf virgule neuf pour cent.
+
+# BLOC 39
+Il a fallu trois tentatives avant que le certificat soit accepté, et les deux premières ont échoué pour des raisons différentes.
+La première parce qu'une option obligatoire avait disparu sans que rien ne le signale, la seconde parce qu'un champ portait un nom trompeur.
+Dans les deux cas, le message d'erreur désignait un symptôme et pas une cause, ce qui est la façon la plus sûre de faire chercher au mauvais endroit.
+On finit par comprendre, mais on y passe une heure au lieu de cinq minutes, et l'heure perdue ne revient jamais.
+La leçon tient en une phrase : quand un outil échoue, il faut d'abord lui demander ce qu'il a réellement fait, pas ce qu'il croit avoir fait.
+Ensuite seulement on cherche pourquoi ça n'a pas marché.
+
+# BLOC 40
+Le plus étonnant, quand on regarde une maison sur plusieurs semaines, c'est la régularité.
+On croit vivre au jour le jour, et les courbes racontent autre chose.
+Le lever varie de moins d'un quart d'heure du lundi au vendredi.
+Le premier café tombe toujours dans la même tranche de dix minutes.
+Le soir, l'extinction générale se déplace un peu selon la saison, mais garde le même ordre : la cuisine, puis le salon, puis le couloir.
+On peut prévoir ce qui va se passer sans rien deviner de particulier : il suffit de regarder ce qui s'est passé les vingt fois précédentes.
+C'est à la fois rassurant et un peu vertigineux.
+Rassurant parce qu'une maison prévisible est une maison qui va bien.
+Vertigineux parce qu'on découvre qu'on est beaucoup moins spontané qu'on ne le croyait.
+
+# BLOC 41
+Une alerte utile a trois qualités : elle arrive vite, elle arrive une fois, et elle dit quoi faire.
+Si elle arrive trop tard, elle ne sert qu'à constater les dégâts.
+Si elle se répète, on apprend à l'ignorer, et ce jour-là elle a cessé d'exister.
+Si elle décrit un problème sans indiquer la suite, elle transfère l'inquiétude sans transférer la solution.
+Beaucoup de systèmes échouent sur le deuxième point, en croyant bien faire.
+Ils préfèrent alerter dix fois plutôt que rater une fois, et le résultat est exactement l'inverse de celui qu'ils cherchaient.
+Une notification qu'on balaie sans lire vaut moins que pas de notification du tout, parce qu'elle a coûté de l'attention sans rien rendre.
+Mieux vaut se taire trois jours et parler une fois clairement.
+
+# BLOC 42
+Le vendredi soir, la maison change de rythme d'un seul coup.
+Les lumières restent allumées plus tard, la télévision tourne, quelqu'un cuisine à des heures inhabituelles.
+Le samedi matin, rien ne bouge avant neuf heures, parfois dix.
+Le dimanche ressemble au samedi mais en plus lent, avec une reprise vers dix-sept heures quand chacun prépare la semaine.
+Ces trois jours forment un bloc à part, et les mesurer avec les mêmes règles que le reste de la semaine n'a pas de sens.
+Un chauffage qui s'éteint à neuf heures parce que la maison est vide se trompe complètement un dimanche.
+Une lumière allumée à minuit un mardi mérite une question ; la même un samedi n'en mérite aucune.
+C'est le genre de nuance qui sépare un système qu'on garde d'un système qu'on débranche au bout d'un mois.
+
+# BLOC 43
+Il y a deux façons de se tromper quand on surveille quelque chose.
+Crier au loup, c'est-à-dire signaler un problème qui n'existe pas.
+Et rester muet, c'est-à-dire manquer un problème réel.
+On ne peut pas réduire les deux en même temps : diminuer l'un augmente forcément l'autre.
+Il faut donc choisir de quel côté on préfère se tromper, et l'assumer.
+Pour une maison, la réponse me semble claire : mieux vaut manquer une anomalie sans gravité que réveiller quelqu'un pour rien.
+Un radiateur en panne se découvre le lendemain sans dommage.
+Une confiance perdue, elle, ne revient pas.
+C'est pour ça que j'attends trente minutes avant de considérer qu'un appareil est vraiment muet, et pas trois.
+
+# BLOC 44
+On m'a demandé une fois pourquoi je répondais plus court à voix haute qu'à l'écrit.
+La raison est simple : on ne lit pas un tableau dans un haut-parleur.
+À l'écran, une liste de six points se parcourt en un regard, et l'œil choisit ce qui l'intéresse.
+À l'oreille, la même liste devient une épreuve : il faut tout écouter dans l'ordre, sans possibilité de sauter.
+Alors je garde l'essentiel et je propose le détail si on me le demande.
+Ce n'est pas de la paresse, c'est une adaptation au canal.
+Un bon message n'est pas celui qui contient le plus d'informations, c'est celui qui en transmet le plus.
+Les deux ne sont pas la même chose, et la différence se joue souvent sur ce qu'on a choisi de ne pas dire.
+
+# BLOC 45
+Le vrai luxe, dans une maison, ce n'est pas d'avoir beaucoup d'appareils.
+C'est de ne pas avoir à y penser.
+Un interrupteur qui fonctionne toujours vaut mieux que dix scénarios qui fonctionnent parfois.
+La fiabilité se remarque par son absence, jamais autrement.
+Personne ne dit merci à une lumière qui s'allume : on le remarque seulement le jour où elle ne s'allume plus.
+C'est un métier ingrat, et c'est aussi le seul qui compte vraiment.
+Tout le reste — les couleurs, les animations, les tableaux de bord — est du confort par-dessus.
+Agréable, mais dispensable.
+Ce qui ne l'est pas, c'est qu'en appuyant, la lumière s'allume.
+Chaque fois, sans exception, y compris quand le réseau est coupé.

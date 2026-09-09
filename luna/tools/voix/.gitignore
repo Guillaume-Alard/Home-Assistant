@@ -1,0 +1,5 @@
+# L'audio ne part jamais dans un commit (§5 : usage strictement privé).
+blocs/
+dataset/
+.normalise/
+*.wav
