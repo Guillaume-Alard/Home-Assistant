@@ -334,15 +334,118 @@ tous viennent d'une contrainte rencontrée en écrivant le code.
 
 | # | Vérification | État |
 |---|---|---|
-| 1 | Add-ons faster-whisper et piper, pipeline « Luna » | ⏳ à faire sur Nova |
+| 1 | Add-ons faster-whisper et piper, pipeline « Luna » | ⏳ à faire sur Nova — **procédure en Partie H** |
 | 2 | Appuyer, parler, relâcher → la lumière s'allume, la réponse est lue | ✅ chemin testé de bout en bout (capture réelle, worklet réel, PCM réel) |
 | 3 | Depuis le bouton Assist de l'app Companion | ✅ l'agent est testé dans une vraie instance HA ; le passage par l'app reste à faire sur Nova |
 | 4 | Le tour de parole apparaît dans le fil de la carte | ✅ testé (diffusion du relais) |
 | 5 | « ferme les volets » à l'oral → même refus qu'à l'écrit | ✅ testé — la voix ne donne aucun droit supplémentaire |
 | 6 | Interruption | ✅ `luna/cancel` et Échap, inchangés depuis P1 |
-| 7 | Latence STT sous 3 s | ⏳ **à mesurer sur Nova** — aucun test ne peut le faire ici |
+| 7 | Latence STT sous 3 s | ⏳ **à mesurer sur Nova** — aucun test ne peut le faire ici, voir H.4 |
 | 8 | Micro refusé ou page non sécurisée → message explicite | ✅ testé, les deux cas |
 | 9 | `ruff`, `lint-imports`, `pytest` verts | ✅ 219 tests |
 
 Restent deux réponses qui ne changent que des options : **Q1** (quelle voix
 française) et **Q2** (un pipeline Assist existe-t-il déjà sur Nova).
+
+---
+
+# Partie H — La procédure sur Nova
+
+Ce que la recette appelle « à faire sur Nova », en clair. Trente minutes, dont
+une dizaine d'attente pendant que les modèles se téléchargent.
+
+Prérequis : **P0 est finie**. Sans contexte sécurisé, le micro de la carte ne
+peut pas s'ouvrir — le bouton existe, il explique pourquoi il ne fait rien
+(H41), et c'est tout ce qu'il peut faire.
+
+## H.1 — Les deux add-ons
+
+**Paramètres → Modules complémentaires → Boutique.** Les deux sont officiels,
+publiés par le projet Home Assistant, et n'ont besoin d'aucun dépôt ajouté.
+
+**Whisper** (l'add-on porte ce nom ; il fait tourner *faster-whisper*) :
+
+| Option | Valeur | Pourquoi |
+|---|---|---|
+| `model` | `base-int8` | H31. Le compromis visé par §7 : 1 à 3 s sur un N95. `int8` divise la mémoire et le temps CPU sans perte audible en français courant. |
+| `language` | `fr` | Sans ça, Whisper détecte la langue à chaque tour — plus lent, et il se trompe sur les phrases courtes. |
+
+**Piper** :
+
+| Option | Valeur |
+|---|---|
+| `voice` | une voix française — `fr_FR-siwis-medium` si tu n'as pas d'avis (H32) |
+
+Le choix de la voix est une question d'oreille, pas de technique : les
+échantillons sont sur `rhasspy.github.io/piper-samples`, et changer d'avis coûte
+une ligne d'option. Une voix `low` coûte moins de CPU mais s'entend. Si ta
+version de l'add-on expose une option `streaming`, active-la : Luna envoie sa
+réponse en flux, et Piper peut commencer à parler avant qu'elle soit finie.
+
+Démarrer les deux. Le premier lancement télécharge le modèle — quelques minutes,
+une seule fois.
+
+## H.2 — Les brancher
+
+Les add-ons ne se câblent pas tout seuls : ils parlent le protocole **Wyoming**,
+et Home Assistant doit les découvrir.
+
+**Paramètres → Appareils et services.** Deux découvertes « Wyoming Protocol »
+attendent en haut de la page. **Configurer** les deux. Tu obtiens deux entités :
+une de reconnaissance vocale, une de synthèse.
+
+C'est l'étape la plus facile à sauter, parce que rien ne la réclame : sans elle,
+les add-ons tournent, la page des assistants ne les propose pas, et il n'y a
+aucun message d'erreur nulle part.
+
+## H.3 — Le pipeline
+
+**Paramètres → Assistants vocaux → Ajouter un assistant.**
+
+| Champ | Valeur |
+|---|---|
+| Nom | `Luna` |
+| Langue | Français |
+| Agent de conversation | **Luna** |
+| Reconnaissance vocale | l'entité Whisper, langue `fr` |
+| Synthèse vocale | l'entité Piper, la voix choisie |
+| Mot d'éveil | **aucun** |
+
+Pas de mot d'éveil, c'est une décision, pas un oubli : B4. Un mot d'éveil suppose
+d'envoyer de l'audio en continu au serveur, et le N95 fait déjà tourner Whisper.
+
+Puis **définir ce pipeline comme préféré** (H33). Sans ça, la carte devrait le
+nommer explicitement dans `assist_pipeline/run`, et le bouton Assist de l'app
+Companion continuerait de parler à l'assistant intégré de Home Assistant — pas à
+Luna. Le symptôme est déroutant : la carte marche, la voix répond, mais ce n'est
+pas Luna qui répond.
+
+## H.4 — La recette
+
+Les points de la Partie G qui attendaient Nova :
+
+1. **Point 1** — les deux add-ons tournent, le pipeline « Luna » existe, Luna en
+   est l'agent.
+2. **Point 3** — depuis le **bouton Assist de l'app Companion**, sans ouvrir
+   Loggia : « allume le salon ». La lumière s'allume, la réponse est lue. Puis
+   vérifier le **point 4** : ce tour de parole apparaît dans le fil de la carte
+   restée ouverte sur un autre écran (H36).
+3. **Point 7** — la latence. Sur la page de l'assistant, la vue de **débogage**
+   liste les exécutions et le temps de chaque étape. Une phrase courte doit
+   passer la reconnaissance **sous 3 s** (H38).
+
+Si c'est trop lent, `tiny-int8`. Si la transcription est approximative,
+`small-int8`. Le réglage se fait à l'oreille, après mesure — H31 le prévoit, et
+c'est une ligne d'option.
+
+## H.5 — Deux choses qui ne se voient qu'à l'usage
+
+**Quand Luna parle.** L'option `speak` de la carte vaut `voix` par défaut : elle
+ne lit à voix haute que ce qui a été demandé de vive voix. `toujours` lit aussi
+les réponses tapées, `jamais` la rend muette dans la carte sans toucher aux
+satellites.
+
+**La longueur des réponses.** Le prompt porte déjà la consigne : une réponse lue
+à voix haute tient en une ou deux phrases, sans énumération. C'est pour ça
+qu'une même question donne une réponse plus courte au micro qu'au clavier — ce
+n'est pas une troncature.
