@@ -342,9 +342,18 @@ S'ils n'apparaissent pas, activer le **Mode avancé** dans son profil
 > **Si le bloc `http:` est déjà dans `configuration.yaml`** — parce qu'on suivait
 > une procédure écrite avant la migration — Home Assistant l'a **déjà importé**
 > au démarrage, et le dit : « La configuration HTTP dans `configuration.yaml` a
-> déjà été migrée et est désormais ignorée. » Les valeurs sont donc actives ; il
-> reste à vérifier qu'elles sont bien là dans l'interface, **puis seulement**
-> supprimer le bloc et redémarrer. Vérifier avant de supprimer, pas l'inverse.
+> déjà été migrée et est désormais ignorée. » Mais **l'import est partiel** :
+> l'URL passe, les proxys de confiance ne suivent pas. Activer la bascule sans
+> remplir la liste rend `at least one trusted proxy is required to use
+> X-Forwarded-For at 'config.trusted_proxies'. Got None`. Il faut donc saisir
+> `172.30.32.0/23` à la main, vérifier que les deux réglages sont en place,
+> **puis seulement** supprimer le bloc et redémarrer. Vérifier avant de
+> supprimer, pas l'inverse.
+>
+> Le champ est une **liste** : taper la valeur ne suffit pas, il faut la valider
+> — touche Entrée ou bouton d'ajout — pour qu'elle devienne une entrée. Du texte
+> resté dans la zone de saisie n'est pas enregistré, et produit exactement le
+> même `Got None`.
 >
 > Le bloc `homeassistant:` (`internal_url`, `external_url`) n'est pas concerné :
 > il n'appartient pas à l'intégration `http` et reste valide en YAML — mais tant
