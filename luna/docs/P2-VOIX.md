@@ -449,3 +449,42 @@ satellites.
 à voix haute tient en une ou deux phrases, sans énumération. C'est pour ça
 qu'une même question donne une réponse plus courte au micro qu'au clavier — ce
 n'est pas une troncature.
+
+## H.6 — Le réveil à la voix, concrètement
+
+B4 renvoyait le mot d'éveil « aux satellites » sans dire ce que c'était. Voici.
+
+**Rien à coder côté Luna.** Le mot d'éveil vit entièrement dans le satellite et
+le pipeline Assist : quand il se déclenche, un tour de parole ordinaire arrive à
+Luna, exactement comme un appui sur le bouton de la carte. Luna ne saura même
+pas qu'il y a eu un mot d'éveil. C'est une question de matériel et de
+configuration, pas de code.
+
+**Deux moteurs, et la différence est structurante.**
+
+| | Où il tourne | Ce qui traverse le réseau |
+|---|---|---|
+| **microWakeWord** | dans le satellite, sur un ESP32-S3 | rien, jusqu'au déclenchement |
+| **openWakeWord** | sur Nova, en add-on | **l'audio en continu**, en permanence |
+
+Le second est celui que B4 écarte : il suppose qu'un appareil diffuse son micro
+sans arrêt vers le N95, qui décode déjà de la parole par ailleurs. Le premier ne
+coûte rien à Nova tant que personne ne parle.
+
+**Le matériel de référence** est la *Home Assistant Voice Preview Edition* de
+Nabu Casa, une soixantaine d'euros : ESP32-S3, DSP audio XMOS pour l'annulation
+d'écho — c'est lui qui permet d'être entendu pendant que la musique joue —,
+deux micros, et un interrupteur physique qui **coupe l'alimentation** des micros
+plutôt que de les désactiver logiciellement. Cette dernière ligne compte : c'est
+la seule forme de mise en sourdine qu'on puisse vérifier sans faire confiance à
+un logiciel.
+
+> ⚠️ **À vérifier avant d'acheter.** Une régression connue a cassé le mot
+> d'éveil sur certaines versions d'ESPHome à partir de la 2026.3.3 : la nouvelle
+> pile audio consomme assez de mémoire pour ne plus en laisser à
+> `micro_wake_word`. Regarde où en est le correctif au moment où tu commandes.
+
+**L'iPad du couloir ne peut pas jouer ce rôle.** Un navigateur ne fait pas de
+détection locale, donc il faudrait diffuser en continu — le cas exclu ci-dessus.
+Il reste ce qu'il est : un excellent appui-pour-parler, sur une tablette déjà au
+mur.
