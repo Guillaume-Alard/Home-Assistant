@@ -136,6 +136,14 @@ nslookup guillaume-sentinel.duckdns.org
 > ouvrir `http://guillaume-sentinel.duckdns.org:8123` depuis le téléphone en
 > Wi-Fi maison. La page de connexion Home Assistant s'affiche, le nom résout
 > depuis cet appareil aussi.
+>
+> **Le port fait partie du test.** Sans `:8123`, le navigateur tente le port 80,
+> où rien n'écoute : il rend `ERR_CONNECTION_REFUSED`, « Ce site est
+> inaccessible ». Ça ressemble à un échec et c'en est l'inverse — pour refuser
+> une connexion, il a fallu résoudre le nom, joindre Nova, et se faire fermer la
+> porte au nez. Le vrai échec de résolution porte un autre nom :
+> `ERR_NAME_NOT_RESOLVED`. Lire lequel des deux s'affiche répond à la question
+> plus sûrement que la page elle-même.
 
 **Rien ne revient, ou une autre IP revient** → *DNS rebinding protection* : ton
 routeur ou ton résolveur efface silencieusement les réponses pointant vers une
@@ -236,8 +244,15 @@ Le 8123 reste donc joignable comme avant, pour tout ce qui lui parle déjà.
 La montée en WebSocket est gérée nativement : c'est vital, la carte Luna ne
 passe que par là.
 
-> Vérifier que rien d'autre n'occupe le port 443 de Nova. Si l'add-on refuse de
-> démarrer, c'est presque toujours ça.
+> **Ne pas démarrer avant que `/ssl/fullchain.pem` existe.** L'add-on ne sait pas
+> attendre : il lit le certificat au démarrage, ne le trouve pas, et s'arrête —
+> `stat: can't stat '/ssl/fullchain.pem': No such file or directory`, puis
+> `Service nginx exited with code 1`. Ce n'est pas un défaut de configuration,
+> c'est le §4.3 qui n'est pas fini. Rien à corriger ici : finir le certificat,
+> puis démarrer.
+>
+> L'autre cause d'un refus de démarrer, une fois le certificat en place : quelque
+> chose occupe déjà le port 443 de Nova.
 
 ### 4.6 — Configuration de Home Assistant
 
