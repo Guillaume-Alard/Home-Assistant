@@ -19,14 +19,14 @@ comment, sans acheter de domaine.
 
 `getUserMedia()` — l'appel qui ouvre le micro **et la caméra** — est refusé par
 tous les navigateurs hors **contexte sécurisé** : `https://`, ou
-`http://localhost`. Pas `http://192.168.1.42:8123`.
+`http://localhost`. Pas `http://192.168.0.251:8123`.
 
 C'est donc P2 **et** P6 qui butent sur le même appel : la voix aujourd'hui, le
 visage le jour où tu le décideras. Une seule pièce à monter pour les deux.
 
 ```
 Companion iOS/Android, en Wi-Fi maison
-   └─► URL interne  http://192.168.1.42:8123
+   └─► URL interne  http://192.168.0.251:8123
          └─► window.isSecureContext === false
                └─► navigator.mediaDevices === undefined
                      └─► le bouton micro de la carte Luna ne peut rien faire
@@ -108,8 +108,8 @@ en HTTP clair au 8123 ? ») : avec un proxy, la réponse n'a plus d'importance.
 
 1. Aller sur **duckdns.org**, se connecter (GitHub, Google — gratuit, sans
    carte).
-2. Créer un sous-domaine, par exemple `nova-alard`. Il devient
-   `nova-alard.duckdns.org`.
+2. Créer un sous-domaine, par exemple `guillaume-sentinel`. Il devient
+   `guillaume-sentinel.duckdns.org`.
 3. Noter le **token** affiché en haut de la page.
 
 Un seul sous-domaine suffit : le distant continue de passer par Nabu Casa, ce
@@ -122,12 +122,20 @@ cinq minutes, et elle ne demande **ni add-on, ni certificat**. La poser en
 premier évite de découvrir le mur après vingt minutes de montage.
 
 ```bash
-curl "https://www.duckdns.org/update?domains=nova-alard&token=<TOKEN>&ip=192.168.1.42"
+curl "https://www.duckdns.org/update?domains=guillaume-sentinel&token=<TOKEN>&ip=192.168.0.251"
 # → OK
-nslookup nova-alard.duckdns.org
+nslookup guillaume-sentinel.duckdns.org
 ```
 
 **L'IP privée revient** → feu vert, passe au 4.3.
+
+> Regarde **quel serveur** `nslookup` a interrogé, ligne « Serveur ». S'il
+> répond `one.one.one.one` ou `dns.google`, cette machine parle à un résolveur
+> public qui, lui, ne filtre jamais — le test ne dit alors rien des appareils en
+> DHCP normal, qui passent par la box. Le contre-test ne demande aucun terminal :
+> ouvrir `http://guillaume-sentinel.duckdns.org:8123` depuis le téléphone en
+> Wi-Fi maison. La page de connexion Home Assistant s'affiche, le nom résout
+> depuis cet appareil aussi.
 
 **Rien ne revient, ou une autre IP revient** → *DNS rebinding protection* : ton
 routeur ou ton résolveur efface silencieusement les réponses pointant vers une
@@ -143,7 +151,7 @@ manifeste par aucun message clair.
 
 ```yaml
 domains:
-  - nova-alard.duckdns.org
+  - guillaume-sentinel.duckdns.org
 token: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 lets_encrypt:
   accept_terms: true
@@ -166,7 +174,7 @@ rafraîchissement. Il faut donc lui dire quelle valeur écrire.
 Ajoute la ligne aux options :
 
 ```yaml
-ipv4: "192.168.1.42"
+ipv4: "192.168.0.251"
 ```
 
 L'add-on continue de rafraîchir l'enregistrement, mais avec la bonne valeur, et
@@ -179,12 +187,12 @@ le certificat n'en est pas affecté — le défi DNS-01 ne regarde que le `TXT`.
 Attendre dix minutes, puis vérifier que la valeur a tenu :
 
 ```bash
-nslookup nova-alard.duckdns.org
+nslookup guillaume-sentinel.duckdns.org
 ```
 
 Si l'IP publique est revenue malgré `ipv4`, le repli est une entrée dans le
 résolveur DNS de la maison — routeur, AdGuard Home, Pi-hole :
-`nova-alard.duckdns.org → 192.168.1.42`. Plus robuste, une pièce de plus à
+`guillaume-sentinel.duckdns.org → 192.168.0.251`. Plus robuste, une pièce de plus à
 maintenir, et il faut que tous les appareils utilisent bien ce résolveur.
 
 ### 4.5 — Servir le certificat sur le 443
@@ -192,7 +200,7 @@ maintenir, et il faut que tous les appareils utilisent bien ce résolveur.
 **Boutique → NGINX Home Assistant SSL proxy → Installer.**
 
 ```yaml
-domain: nova-alard.duckdns.org
+domain: guillaume-sentinel.duckdns.org
 certfile: fullchain.pem
 keyfile: privkey.pem
 hsts: max-age=31536000; includeSubDomains
@@ -221,7 +229,7 @@ http:
     - ::1
 
 homeassistant:
-  internal_url: "https://nova-alard.duckdns.org"
+  internal_url: "https://guillaume-sentinel.duckdns.org"
   external_url: "https://xxxxxxxx.ui.nabu.casa"
 ```
 
@@ -262,7 +270,7 @@ Redémarrer Home Assistant.
 Sur **chaque** appareil — ton téléphone, celui de Clara, la tablette murale :
 
 1. **Paramètres → Companion app → Serveurs → Nova**
-2. **URL interne** : `https://nova-alard.duckdns.org`
+2. **URL interne** : `https://guillaume-sentinel.duckdns.org`
 3. **Se connecter en Wi-Fi (SSID)** : cocher le SSID de la maison. C'est ce qui
    dit à l'app d'utiliser l'URL interne à la maison, et Nabu Casa ailleurs.
 4. Autoriser le micro pour l'application au niveau du système
@@ -338,7 +346,7 @@ navigator.mediaDevices.getUserMedia({ audio: true })
 
 Elle ne se voit pas depuis le navigateur. **Paramètres → Système → Journaux**,
 puis regarde une ligne de connexion : elle doit citer l'IP réelle de l'appareil
-(`192.168.1.x`), **pas** celle du proxy (`172.30.32.x`).
+(`192.168.0.x`), **pas** celle du proxy (`172.30.32.x`).
 
 Si tu vois `172.30.32.x`, `trusted_proxies` n'est pas pris en compte — et la
 barrière de §6 ne distingue plus rien (voir §4.6).
