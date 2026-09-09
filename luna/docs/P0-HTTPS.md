@@ -255,10 +255,15 @@ deux justes.
 > Si la passerelle répond `192.168.0.251` là où Cloudflare dit « domaine
 > inexistant », elle couvre tout le domaine, et il faut sortir le certificat de
 > son chemin : donner à Nova un résolveur public (**Paramètres → Système →
-> Réseau**, serveurs DNS `1.1.1.1`), ou n'ajouter l'enregistrement local que s'il
-> est vraiment nécessaire — cf. l'encadré du §4.2 sur les deux messages d'erreur
-> de Chrome, qui font prendre pour un problème de résolution ce qui n'en est pas
-> un.
+> Réseau**, serveurs DNS `1.1.1.1`).
+>
+> **Mesuré sur la UCG Max de la maison : ce n'est pas le cas.** Un
+> enregistrement *Local DNS Record* UniFi ne vaut que pour le nom exact ; la
+> passerelle transmet `_acme-challenge.…` comme n'importe quelle autre requête et
+> rend le `TXT` à l'identique de Cloudflare. L'avertissement reste écrit parce
+> qu'il dépend de l'implémentation de chaque passerelle — dnsmasq offre les deux
+> formes, `host-record` pour le nom seul et `address=/domaine/` pour le domaine
+> entier — et que le test coûte deux commandes.
 
 ### 4.5 — Servir le certificat sur le 443
 
