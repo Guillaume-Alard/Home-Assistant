@@ -140,14 +140,20 @@ nslookup guillaume-sentinel.duckdns.org
 **Rien ne revient, ou une autre IP revient** → *DNS rebinding protection* : ton
 routeur ou ton résolveur efface silencieusement les réponses pointant vers une
 adresse privée. Beaucoup le font (Freebox, Livebox, AdGuard Home, Pi-hole,
-pfSense). Deux issues : mettre `duckdns.org` en exception dans le résolveur, ou
-prendre le repli de §8. Rien d'autre dans ce document ne marchera tant que ce
-test est rouge — c'est la cause numéro un d'échec de ce montage, et elle ne se
+pfSense). L'issue est un **enregistrement DNS local sur la passerelle**, décrit
+en §4.4 : la passerelle répond elle-même, il n'y a donc plus de réponse externe
+à filtrer. C'est la cause numéro un d'échec de ce montage, et elle ne se
 manifeste par aucun message clair.
+
+Rien ne presse pour autant : le certificat de §4.3 et le proxy de §4.5 ne
+dépendent pas de la résolution locale — seul leur *usage* en dépend. Les deux
+chantiers avancent en parallèle.
 
 ### 4.3 — Le certificat
 
 **Paramètres → Modules complémentaires → Boutique → Duck DNS → Installer.**
+
+Passer en **⋮ → Éditer en YAML**, et écrire le bloc **en entier** :
 
 ```yaml
 domains:
@@ -155,45 +161,63 @@ domains:
 token: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 lets_encrypt:
   accept_terms: true
+  algo: secp384r1
   certfile: fullchain.pem
   keyfile: privkey.pem
 seconds: 300
+ipv4: "192.168.0.251"
 ```
+
+⚠️ **`algo` est obligatoire.** L'éditeur YAML **remplace** les options, il ne
+les fusionne pas : omettre une clé du bloc `lets_encrypt` la supprime, et le
+Superviseur refuse l'enregistrement avec `Missing option 'algo' in lets_encrypt`.
+Le schéma de l'add-on est `list(rsa|prime256v1|secp384r1)`, sa valeur par défaut
+`secp384r1` — une courbe elliptique, plus légère à négocier qu'une clé RSA sur
+un N95.
+
+C'est vrai de `ipv4` aussi, dans l'autre sens : `str?` le rend facultatif au
+schéma, donc absent des options par défaut, donc invisible dans l'interface
+graphique. Le mode YAML est le seul endroit d'où on peut le poser. Sans lui,
+l'add-on réécrit l'enregistrement `A` avec l'IP **publique** de la maison au
+premier rafraîchissement, et le §4.2 est défait en cinq minutes.
 
 Démarrer, puis **lire le journal de l'add-on**. La première émission prend
 quelques minutes — le temps que le `TXT` se propage. Elle est réussie quand
 `/ssl/fullchain.pem` existe. Le renouvellement est ensuite automatique.
 
-### 4.4 — Épingler l'IP privée dans l'add-on
+> Cette étape ne dépend **pas** du §4.2 : le défi DNS-01 passe par l'API
+> DuckDNS, pas par la résolution locale. Un nom qui ne résout pas encore depuis
+> le téléphone n'empêche ni le certificat ni le proxy — seulement leur usage.
 
-L'enregistrement posé à la main en §4.2 ne tiendra pas : par défaut, l'add-on
-Duck DNS réécrit le `A` avec l'**IP publique** de la maison à chaque
-rafraîchissement. Il faut donc lui dire quelle valeur écrire.
+### 4.4 — Vérifier que l'IP épinglée tient
 
-✅ **Vérifié** : le schéma de l'add-on Duck DNS 2.0.0 expose bien `ipv4: str?`.
-Ajoute la ligne aux options :
-
-```yaml
-ipv4: "192.168.0.251"
-```
-
-L'add-on continue de rafraîchir l'enregistrement, mais avec la bonne valeur, et
-le certificat n'en est pas affecté — le défi DNS-01 ne regarde que le `TXT`.
-
-> Attention : `ipv4` est dans le **schéma**, pas dans les **options par
-> défaut**. L'interface ne te proposera donc pas le champ : il faut basculer
-> l'éditeur en YAML et ajouter la ligne à la main.
-
-Attendre dix minutes, puis vérifier que la valeur a tenu :
+`ipv4` a été posé en §4.3. Attendre dix minutes — un cycle de rafraîchissement —
+puis :
 
 ```bash
 nslookup guillaume-sentinel.duckdns.org
 ```
 
-Si l'IP publique est revenue malgré `ipv4`, le repli est une entrée dans le
-résolveur DNS de la maison — routeur, AdGuard Home, Pi-hole :
-`guillaume-sentinel.duckdns.org → 192.168.0.251`. Plus robuste, une pièce de plus à
-maintenir, et il faut que tous les appareils utilisent bien ce résolveur.
+Si l'IP publique est revenue malgré `ipv4`, ou si le §4.2 avait viré au rouge,
+le repli est un **enregistrement DNS local sur la passerelle**.
+
+Sur une **UniFi** (UCG, UDM, UDR), c'est natif depuis UniFi Network 8.2 :
+*Local DNS Records*, un enregistrement **Host (A)** —
+`guillaume-sentinel.duckdns.org → 192.168.0.251`. Chercher « DNS » dans la
+recherche des réglages ; selon la version, la page vit sous *Routing* ou sous
+les réglages globaux de réseau.
+
+C'est plus qu'un repli, c'est plus robuste que l'enregistrement public :
+
+- la passerelle répond elle-même, donc **aucune protection contre le rebinding
+  ne s'applique** — il n'y a pas de réponse externe à filtrer ;
+- tous les appareils en DHCP reçoivent la bonne réponse sans configuration ;
+- le nom continue de résoudre à la maison **même si DuckDNS tombe**.
+
+Contrepartie : les appareils qui court-circuitent le résolveur de la passerelle
+— un PC réglé sur 1.1.1.1, un téléphone avec un DNS chiffré — ne le voient pas.
+Pour eux, l'enregistrement public reste la réponse, d'où l'intérêt de garder les
+deux justes.
 
 ### 4.5 — Servir le certificat sur le 443
 
@@ -383,7 +407,7 @@ tablette murale uniquement (solution 3 de §4).
 | 0 | Vider l'URL interne dans l'app Companion | **Micro débloqué tout de suite**, tout passe par internet | 2 min |
 | 1 | Créer un sous-domaine DuckDNS | Un nom à toi, gratuit | 5 min |
 | 2 | Poser le `A` vers l'IP privée **et le résoudre** (§4.2) | **Feu vert ou feu rouge** : dit tout de suite si le montage est possible | 5 min |
-| 3 | Add-on Duck DNS, `lets_encrypt` activé, `ipv4` épinglé | Certificat valide, aucun port ouvert | 10 min |
+| 3 | Add-on Duck DNS en YAML : `algo`, `accept_terms`, `ipv4` | Certificat valide, aucun port ouvert | 10 min |
 | 4 | Add-on NGINX SSL proxy | HTTPS sur le 443, 8123 intact | 5 min |
 | 5 | `trusted_proxies` + `internal_url`, redémarrer HA | Journaux, bannissements — **et la barrière biométrique de §6** | 5 min |
 | 6 | URL interne + SSID dans Companion, permission micro | Le local repasse en local | 5 min/appareil |
