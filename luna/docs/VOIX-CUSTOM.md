@@ -80,8 +80,8 @@ cmd /c "ffmpeg -hide_banner -i voix.wav -af volumedetect -f null NUL 2>&1" | fin
 ```
 
 Si `max_volume` vaut 0.0 dB, le signal est probablement écrêté : mauvais départ.
-Si la durée totale est sous dix minutes, arrête-toi là et prends une voix
-standard — voir §6.
+Si la durée totale est sous dix minutes, l'affinage Piper est hors de portée :
+va directement au **§7**, qui dit quoi faire à la place.
 
 ### 3.2 — Découper en phrases
 
@@ -235,3 +235,56 @@ va. C'est instantané, gratuit, et ça marche.
 
 Luna a un caractère par ce qu'elle dit et par la manière dont elle le formule —
 son prompt système y travaille déjà. La voix vient après.
+
+---
+
+## 7. Si tu n'as que deux ou trois minutes
+
+C'est le cas le plus fréquent, et il mérite mieux qu'un « non ». Trois issues,
+par ordre de qualité du résultat.
+
+### a. Enregistrer davantage — de loin la meilleure
+
+Si la voix est disponible — la tienne, ou celle de quelqu'un qui a dit oui —
+alors 30 à 60 minutes se lisent en une soirée, et le corpus devient **meilleur
+que n'importe quel extrait trouvé** : tu enregistres exactement les phrases que
+Luna dira. Des heures, des chiffres, des noms propres, des questions, des
+annonces courtes. Ce sont précisément les endroits où un modèle affiné trahit,
+et les seuls que tu peux couvrir à la source.
+
+Trois consignes qui coûtent zéro et changent tout :
+
+- **Un seul micro, une seule pièce, une seule session** si possible. Changer de
+  source en cours de corpus donne un modèle qui change de voix en cours de
+  phrase.
+- **Viser des pics autour de −3 dB**, pas 0. Un fichier normalisé au plafond
+  n'a plus de marge, et l'écrêtage s'apprend comme un trait de la voix.
+- **Lire à voix posée**, comme on parle à quelqu'un dans la pièce — pas comme on
+  lit un texte. Piper reproduit la prosodie qu'on lui donne.
+
+### b. Le clonage à partir d'un court extrait — et ce qu'il coûte
+
+D'autres familles de modèles clonent une voix à partir de quelques dizaines de
+secondes. Deux minutes suffiraient largement. Mais ils sont d'un tout autre
+poids que Piper, et **ne tourneront pas en temps réel sur le N95** : les faire
+tourner voudrait dire les héberger sur Orion, donc rendre la voix de Luna
+dépendante d'une machine qui a le droit d'être éteinte.
+
+C'est exactement ce que §2 interdit : « Si Nebula et Orion sont éteintes, Luna
+fonctionne normalement. » Une voix qui disparaît quand le NAS dort n'est pas une
+voix, c'est une panne intermittente.
+
+Il reste **un usage honnête** : la couche 1 du TTS de §7 — les **phrases figées**
+des alertes de veille, pré-synthétisées et mises en cache. Celles-là ne se
+calculent pas en direct, donc Orion peut les fabriquer une fois pour toutes et
+s'éteindre. Le prix à payer est réel et il faut le regarder en face : les
+alertes parleraient d'une voix, les réponses d'une autre. À ne faire que si le
+résultat te plaît vraiment.
+
+### c. Une voix Piper standard
+
+Instantané, gratuit, et ça marche. Voir §6.
+
+Luna a un caractère par ce qu'elle dit et par la façon dont elle le formule —
+son prompt système y travaille déjà, et c'est ce qui s'entend en premier. La
+voix vient après.
