@@ -167,6 +167,7 @@ Passer en **⋮ → Éditer en YAML**, et écrire le bloc **en entier** :
 domains:
   - guillaume-sentinel.duckdns.org
 token: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+aliases: []
 lets_encrypt:
   accept_terms: true
   algo: secp384r1
@@ -193,9 +194,16 @@ ALIAS="$(jq -r "[.aliases[]|{(.domain):.alias}]|add.\"$DOMAIN\"" $CONFIG_PATH)" 
 ```
 
 Y écrire un joli nom — `alias: Luna` — envoie le défi sur un domaine qui
-n'existe pas : DuckDNS répond `KO`, le `dig` cherche
-`_acme-challenge.Luna` pendant cent vingt secondes, et dehydrated abandonne. Le
-bloc doit rester **absent**, et `ALIAS` retombe alors sur le domaine lui-même.
+n'existe pas : DuckDNS répond `KO`, le `dig` cherche `_acme-challenge.Luna`
+pendant cent vingt secondes, et dehydrated abandonne.
+
+La clé, elle, est **obligatoire** — l'omettre rend `Missing option 'aliases' in
+root`, exactement comme `algo`. Ce qui doit être vide, c'est la **liste** :
+`aliases: []`. Le `jq` ne trouve alors aucune correspondance, sort en erreur, et
+le `||` fait retomber `ALIAS` sur le domaine lui-même. Trois clés, trois raisons
+différentes de ne pas se laisser guider par l'interface : `algo` obligatoire et
+facile à effacer, `ipv4` facultative donc jamais proposée, `aliases` obligatoire
+mais qui doit rester vide.
 
 C'est vrai de `ipv4` aussi, dans l'autre sens : `str?` le rend facultatif au
 schéma, donc absent des options par défaut, donc invisible dans l'interface
