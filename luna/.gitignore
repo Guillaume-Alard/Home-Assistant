@@ -12,3 +12,4 @@ venv*/
 # Un modèle de voix ne part jamais dans un commit (§7, usage strictement privé).
 *.onnx
 *.onnx.json
+*.egg-info/

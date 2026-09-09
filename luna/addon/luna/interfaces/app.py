@@ -204,6 +204,15 @@ class Luna:
             log.info(
                 "Reconnaissance de voix inactive — %s", self.empreinte.motif_indisponible
             )
+        if self.reglages.defaut_emprunte_une_identite:
+            log.warning(
+                "profil_par_defaut = « %s » : toute personne non identifiée — "
+                "l'iPad du couloir, un satellite vocal — reprend le fil de "
+                "conversation de %s, ses faits et son scope. La valeur attendue "
+                "est « guest ».",
+                self.reglages.profil_par_defaut,
+                self.reglages.profil_par_defaut,
+            )
         self._purge = asyncio.create_task(self._boucle_purge(), name="luna-purge")
         # Un ouvrant déjà ouvert au démarrage ne doit pas attendre qu'on le
         # referme pour être signalé.

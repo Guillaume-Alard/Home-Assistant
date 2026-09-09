@@ -129,6 +129,19 @@ class TestReglages:
         r = Reglages(profils=[{"utilisateur_ha": "abc-123", "profil": "clara"}])
         assert r.profil_pour(identifiant="abc-123") == "clara"
 
+    def test_un_profil_par_defaut_nomme_emprunte_une_identite(self):
+        """Le réglage qui donne le fil de Guillaume à un inconnu.
+
+        `conversation_courante()` reprend le fil du profil sur douze heures :
+        avec `profil_par_defaut: guillaume`, l'iPad du couloir continue la
+        conversation de Guillaume et reçoit ses faits. Les deux seules valeurs
+        qui n'empruntent l'identité de personne sont `guest` et `unknown`.
+        """
+        assert not Reglages(profil_par_defaut="guest").defaut_emprunte_une_identite
+        assert not Reglages(profil_par_defaut="unknown").defaut_emprunte_une_identite
+        for nomme in ("guillaume", "clara", "liam"):
+            assert Reglages(profil_par_defaut=nomme).defaut_emprunte_une_identite, nomme
+
     def test_les_secrets_ne_fuient_pas_dans_les_journaux(self):
         r = Reglages(anthropic_api_key="sk-ant-vrai-secret", relay_secret="hunter2")
         vue = r.secrets_masques()

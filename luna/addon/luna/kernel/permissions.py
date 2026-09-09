@@ -10,6 +10,14 @@ from .autonomy import Niveau
 
 PROFILS = ("guillaume", "clara", "liam", "guest", "unknown")
 
+#: Les deux seuls profils par défaut qui n'empruntent l'identité de personne.
+#: `conversation_courante()` reprend le fil du profil, et le contexte lui livre
+#: ses faits : mettre ici quelqu'un de la maison donne son fil, ses faits et son
+#: scope à toute personne non identifiée — l'iPad du couloir, un satellite
+#: vocal. C'est un réglage, donc une erreur possible, donc un avertissement au
+#: démarrage (§8 : « Jamais d'échec silencieux »).
+SANS_IDENTITE = frozenset({"guest", "unknown"})
+
 #: La maison agissant d'elle-même (P4). Ce n'est le profil de personne : il
 #: n'apparaît donc pas dans `PROFILS`, ne peut pas être choisi comme profil par
 #: défaut, et n'est jamais résolu à partir d'un utilisateur Home Assistant.

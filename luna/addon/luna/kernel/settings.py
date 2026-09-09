@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .permissions import SANS_IDENTITE
 from .schemas import ActionHA
 
 CHEMIN_OPTIONS = Path("/data/options.json")
@@ -206,6 +207,15 @@ class Reglages(BaseModel):
     url_ha: str = URL_HA_SUPERVISOR
     jeton_ha: str = ""
     chemin_base: Path = CHEMIN_BASE
+
+    @property
+    def defaut_emprunte_une_identite(self) -> bool:
+        """Le profil par défaut désigne-t-il quelqu'un de la maison ?
+
+        Si oui, un inconnu hérite de son fil de conversation et de ses faits.
+        Voir `SANS_IDENTITE`.
+        """
+        return self.profil_par_defaut not in SANS_IDENTITE
 
     def profil_pour(
         self, *, nom: str | None = None, identifiant: str | None = None
