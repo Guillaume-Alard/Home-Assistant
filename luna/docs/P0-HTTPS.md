@@ -314,6 +314,15 @@ passe que par là.
 > L'autre cause d'un refus de démarrer, une fois le certificat en place : quelque
 > chose occupe déjà le port 443 de Nova.
 
+**`400: Bad Request` en ouvrant le nom en HTTPS** n'est pas un échec du proxy,
+c'est le §4.6 qui n'est pas encore fait. La page vient de Home Assistant : le
+TLS a fonctionné, NGINX a relayé, HA a répondu. NGINX ajoute `X-Forwarded-For` à
+chaque requête, et Home Assistant refuse cet en-tête tant que l'adresse qui
+l'envoie ne figure pas dans `trusted_proxies` — plutôt que de gober une identité
+d'appelant potentiellement falsifiée. Le journal le dit mot pour mot :
+« Received X-Forwarded-For header from an untrusted proxy », avec l'IP à
+autoriser. Poser le bloc, redémarrer Home Assistant, et la page s'ouvre.
+
 ### 4.6 — Configuration de Home Assistant
 
 **Obligatoire dès qu'un proxy est devant HA :**
