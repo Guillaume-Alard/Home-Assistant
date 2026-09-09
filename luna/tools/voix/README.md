@@ -14,15 +14,36 @@ d'être : on découpe aux silences et on aligne sur les lignes du bloc.
 
 ## La marche à suivre
 
-**1. Synthétiser.** Un bloc = une requête = **un fichier**, déposé dans
-`blocs/` sous le nom `bloc-01.wav`, `bloc-02.wav`, … Le numéro doit
-correspondre au `# BLOC nn` du corpus. Si ta plateforme accepte plus de mille
-caractères par requête, colle plusieurs blocs à la suite — mais alors un seul
-fichier pour ces blocs ne marchera pas : garde un fichier par bloc.
+**0. Répartir.** Demande au script comment grouper les blocs pour la limite de
+ta plateforme :
 
-Garde **la même voix et les mêmes réglages** d'un bloc à l'autre. Changer de
-vitesse ou d'intonation en cours de corpus apprend au modèle à changer de voix
-en cours de phrase.
+```bash
+./preparer.py --groupes 5000
+```
+
+Il propose les plages et les noms de fichiers correspondants. À 5 000
+caractères, quarante-cinq blocs tiennent en **sept requêtes**.
+
+**1. Synthétiser.** Un fichier par requête, déposé dans `blocs/` : `bloc-07.wav`
+pour un bloc seul, `bloc-01-06.wav` pour une plage. Le script accepte les deux
+et concatène les phrases dans l'ordre des blocs.
+
+⚠️ **Ne colle jamais les lignes `# BLOC nn`.** La plateforme les lirait à voix
+haute — « bloc zéro un » — ce qui ajoute un segment et décale tout l'alignement
+du groupe. Seules les phrases.
+
+⚠️ **N'utilise aucun marqueur d'émotion, de pause ou de son.** Ils changent
+l'audio sans apparaître dans la transcription : le modèle apprendrait à
+prononcer un texte qu'il n'a pas.
+
+Garde **le même modèle, la même voix, la même vitesse, la même hauteur et le
+même volume** d'un fichier à l'autre. Changer un curseur en cours de corpus
+apprend au modèle à changer de voix en cours de phrase.
+
+Grouper divise le nombre d'allers-retours par sept, au prix d'un risque : un
+mauvais découpage invalide tout le groupe au lieu d'un seul bloc. Le script le
+détecte et refuse d'écrire, mais il faut resynthétiser le groupe entier. Si tu
+préfères la sécurité, garde un fichier par bloc.
 
 **2. Vérifier avant d'écrire.**
 

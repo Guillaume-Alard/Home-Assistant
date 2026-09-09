@@ -12,13 +12,20 @@ Un décalage d'une ligne empoisonne tout ce qui suit : le modèle apprendrait à
 prononcer chaque phrase avec le texte de la précédente. C'est la seule erreur
 de cette chaîne qui ne se voit pas avant d'écouter le modèle entraîné.
 
-    ./preparer.py --verifier     # les comptes tombent-ils juste ?
-    ./preparer.py                # écrit dataset/
+    ./preparer.py --groupes 5000   # comment répartir les blocs par requête
+    ./preparer.py --verifier       # les comptes tombent-ils juste ?
+    ./preparer.py                  # écrit dataset/
 
 Arborescence attendue :
 
     corpus.txt
-    blocs/bloc-01.wav  bloc-02.wav  …   (un fichier par « # BLOC nn »)
+    blocs/bloc-01.wav              un fichier pour le bloc 01
+    blocs/bloc-01-06.wav           ou un fichier pour les blocs 01 à 06
+
+La plupart des plateformes acceptent plusieurs milliers de caractères par
+requête : synthétiser plusieurs blocs d'un coup divise le nombre d'allers-retours
+par sept. Le prix est qu'un mauvais découpage invalide tout le groupe au lieu
+d'un seul bloc — `--groupes` propose une répartition, à toi de choisir la taille.
 """
 
 from __future__ import annotations
@@ -125,10 +132,76 @@ def decouper(source: Path, debut: float, fin: float, cible: Path) -> None:
            "-sample_fmt", "s16", str(cible))
 
 
+def fichiers_de_blocs(blocs: list[tuple[int, list[str]]]) -> tuple[list[tuple[Path, list[str]]], list[int]]:
+    """Associe chaque fichier audio aux phrases qu'il doit contenir.
+
+    Un fichier vaut soit un bloc (`bloc-07.wav`), soit une plage de blocs
+    consécutifs (`bloc-07-12.wav`). Dans le second cas les phrases sont
+    concaténées dans l'ordre des blocs — le même ordre que celui du collage
+    dans la plateforme.
+    """
+    par_numero = dict(blocs)
+    trouves: list[tuple[Path, list[str], set[int]]] = []
+    for fichier in sorted(BLOCS.glob("bloc-*.wav")):
+        nom = re.match(r"^bloc-(\d+)(?:-(\d+))?$", fichier.stem)
+        if nom is None:
+            print(f"nom ignoré : {fichier.name} (attendu bloc-nn.wav ou bloc-nn-mm.wav)")
+            continue
+        premier = int(nom.group(1))
+        dernier = int(nom.group(2) or nom.group(1))
+        couverts = list(range(premier, dernier + 1))
+        if inconnus := [n for n in couverts if n not in par_numero]:
+            print(f"nom ignoré : {fichier.name} — bloc(s) inexistant(s) : {inconnus}")
+            continue
+        phrases = [phrase for n in couverts for phrase in par_numero[n]]
+        trouves.append((fichier, phrases, set(couverts)))
+
+    vus: set[int] = set()
+    for fichier, _, couverts in trouves:
+        if chevauche := sorted(vus & couverts):
+            sys.exit(f"{fichier.name} recouvre des blocs déjà pris : {chevauche}")
+        vus |= couverts
+
+    return [(f, p) for f, p, _ in trouves], sorted(set(par_numero) - vus)
+
+
+def proposer_groupes(blocs: list[tuple[int, list[str]]], plafond: int) -> None:
+    """Répartit les blocs en requêtes tenant sous la limite de la plateforme."""
+    marge = int(plafond * 0.94)  # de quoi absorber un retour à la ligne de plus
+    groupes: list[list[tuple[int, list[str]]]] = []
+    courant: list[tuple[int, list[str]]] = []
+    taille = 0
+    for numero, phrases in blocs:
+        n = sum(len(p) + 1 for p in phrases)
+        if courant and taille + n > marge:
+            groupes.append(courant)
+            courant, taille = [], 0
+        courant.append((numero, phrases))
+        taille += n
+    if courant:
+        groupes.append(courant)
+
+    print(f"{len(groupes)} requêtes pour {len(blocs)} blocs, sous {plafond} caractères :\n")
+    for membres in groupes:
+        premier, dernier = membres[0][0], membres[-1][0]
+        taille = sum(len(p) + 1 for _, ph in membres for p in ph)
+        nb = sum(len(ph) for _, ph in membres)
+        nom = f"bloc-{premier:02d}-{dernier:02d}.wav" if premier != dernier else f"bloc-{premier:02d}.wav"
+        print(f"  {nom:20s} blocs {premier:02d}–{dernier:02d}   {taille:5d} car   {nb:3d} phrases")
+    print(
+        "\nColle les phrases de ces blocs à la suite, SANS les lignes « # BLOC nn » :\n"
+        "la plateforme les lirait à voix haute, ce qui ajouterait un segment et\n"
+        "décalerait tout l'alignement du groupe."
+    )
+
+
 def main() -> int:
     analyse = argparse.ArgumentParser(description=__doc__)
     analyse.add_argument("--verifier", action="store_true",
                          help="compte les segments sans rien écrire")
+    analyse.add_argument("--groupes", type=int, metavar="LIMITE",
+                         help="propose une répartition des blocs par requête, "
+                              "pour une limite de LIMITE caractères")
     analyse.add_argument("--seuil", type=int, default=-35,
                          help="seuil de silence en dB (défaut : -35)")
     analyse.add_argument("--silence", type=float, default=0.4,
@@ -140,6 +213,9 @@ def main() -> int:
             sys.exit(f"{outil} est introuvable dans le PATH.")
 
     blocs = lire_corpus()
+    if options.groupes:
+        proposer_groupes(blocs, options.groupes)
+        return 0
     if not BLOCS.is_dir():
         sys.exit(f"Dossier introuvable : {BLOCS}")
 
@@ -155,23 +231,18 @@ def main() -> int:
     # encore enregistré est l'état normal, pas une anomalie. Les confondre avec
     # les vrais écarts noierait les deux qui comptent sous quarante qui ne
     # comptent pas.
-    manquants: list[int] = []
+    fichiers, manquants = fichiers_de_blocs(blocs)
 
-    for numero, phrases in blocs:
-        source = BLOCS / f"bloc-{numero:02d}.wav"
-        if not source.exists():
-            manquants.append(numero)
-            continue
-
+    for source, phrases in fichiers:
         normalise = travail / source.name
         normaliser(source, normalise)
         plages = segments(normalise, options.seuil, options.silence)
 
         marque = "ok" if len(plages) == len(phrases) else "ÉCART"
-        print(f"bloc {numero:02d} : {len(plages):3d} segments / {len(phrases):3d} phrases  {marque}")
+        print(f"{source.stem:14s} : {len(plages):3d} segments / {len(phrases):3d} phrases  {marque}")
         if len(plages) != len(phrases):
             desaccords.append(
-                f"bloc {numero:02d} : {len(plages)} segments pour {len(phrases)} phrases"
+                f"{source.name} : {len(plages)} segments pour {len(phrases)} phrases"
             )
             continue
         if options.verifier:
@@ -197,7 +268,9 @@ def main() -> int:
             "Trop peu : deux phrases sont collées — essaie --seuil -30, ou\n"
             "--silence 0.3. En dernier recours, resynthétise le bloc en marquant\n"
             "une pause plus nette entre les phrases.\n"
-            "Un bloc en écart est ignoré : mieux vaut un corpus plus court qu'un\n"
+            "Une ligne « # BLOC nn » collée par mégarde dans la plateforme donne\n"
+            "exactement un segment de trop : elle est lue à voix haute.\n"
+            "Un fichier en écart est ignoré : mieux vaut un corpus plus court qu'un\n"
             "corpus décalé."
         )
 
