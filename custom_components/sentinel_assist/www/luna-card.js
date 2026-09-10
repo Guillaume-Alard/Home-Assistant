@@ -155,6 +155,69 @@ const STYLES = `
     cursor: pointer;
   }
   .envoi:disabled { opacity: .5; cursor: default; }
+
+  .micro {
+    flex: 0 0 auto;
+    align-self: flex-end;
+    width: 40px; height: 40px;
+    border: 1px solid var(--luna-bord);
+    border-radius: 12px;
+    background: var(--luna-carte);
+    color: var(--luna-texte);
+    font-size: 16px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .micro:hover:not(:disabled) { border-color: var(--luna-accent); }
+  .micro:disabled { opacity: 0.4; cursor: not-allowed; }
+  .carte[data-orbe="listening"] .micro {
+    background: var(--luna-accent); color: #fff; border-color: var(--luna-accent);
+  }
+`;
+
+// Micro → PCM 16 bits mono 16 kHz (interpolation linéaire). Repris tel quel du
+// worklet du cockpit Sentinel ; inséré via Blob pour ne dépendre d'aucun fichier.
+const WORKLET_SRC = `
+class LunaPcm extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    const target = (options.processorOptions && options.processorOptions.targetRate) || 16000;
+    this.ratio = sampleRate / target;
+    this.readPos = 0; this.pending = new Float32Array(0);
+    this.out = new Int16Array(2048); this.outLen = 0; this.active = false; this.frame = 0;
+    this.port.onmessage = (e) => {
+      if (e.data === 'start') { this.active = true; this.pending = new Float32Array(0); this.readPos = 0; this.outLen = 0; }
+      else if (e.data === 'stop') { this.active = false; this.flush(); }
+    };
+  }
+  flush() {
+    if (this.outLen > 0) { const b = this.out.slice(0, this.outLen); this.port.postMessage({ type: 'chunk', buffer: b.buffer }, [b.buffer]); this.outLen = 0; }
+    this.port.postMessage({ type: 'flushed' });
+  }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    if ((this.frame++ & 3) === 0) {
+      let s = 0; for (let i = 0; i < ch.length; i++) s += ch[i] * ch[i];
+      this.port.postMessage({ type: 'level', value: Math.sqrt(s / ch.length), active: this.active });
+    }
+    if (!this.active) return true;
+    const data = new Float32Array(this.pending.length + ch.length);
+    data.set(this.pending); data.set(ch, this.pending.length);
+    let pos = this.readPos;
+    while (pos + 1 < data.length) {
+      const i = Math.floor(pos), frac = pos - i;
+      const v = data[i] * (1 - frac) + data[i + 1] * frac;
+      this.out[this.outLen++] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+      if (this.outLen === this.out.length) { const b = this.out.slice(0); this.port.postMessage({ type: 'chunk', buffer: b.buffer }, [b.buffer]); this.outLen = 0; }
+      pos += this.ratio;
+    }
+    const consumed = Math.floor(pos);
+    this.pending = data.slice(consumed); this.readPos = pos - consumed;
+    return true;
+  }
+}
+registerProcessor('luna-pcm', LunaPcm);
 `;
 
 const ORBE_SVG = `
@@ -174,6 +237,8 @@ class LunaCard extends HTMLElement {
     this._conversationId = null;
     this._busy = false;
     this._rendu = false;
+    this._voix = null;        // état d'un tour vocal en cours (null = aucun)
+    this._workletUrl = null;  // URL Blob du worklet micro (créée à la demande)
   }
 
   // Lovelace appelle toujours setConfig ; on part de défauts, jamais d'un objet vide.
@@ -185,9 +250,11 @@ class LunaCard extends HTMLElement {
       height: 460,
       stream: true,    // rendu « mot à mot » ; repli auto si indisponible
       entry_id: "",    // intégration Sentinel à interroger (vide = la première)
+      voice: true,     // bouton micro (pipeline Assist d'HA) si l'appareil le permet
+      pipeline: "",    // id du pipeline Assist ; vide = pipeline préféré d'HA
       ...(config || {}),
     };
-    if (this._rendu) this._appliquerConfig();
+    if (this._rendu) { this._appliquerConfig(); this._majMicro(); }
   }
 
   set hass(hass) {
@@ -218,6 +285,7 @@ class LunaCard extends HTMLElement {
       </header>
       <div class="fil"></div>
       <div class="saisie">
+        <button class="micro" type="button" title="Parler à Luna" aria-label="Parler à Luna">🎙</button>
         <textarea rows="1" placeholder="Écris à Luna…" aria-label="Message à Luna"></textarea>
         <button class="envoi" type="button" title="Envoyer" aria-label="Envoyer">➤</button>
       </div>`;
@@ -227,8 +295,10 @@ class LunaCard extends HTMLElement {
     this._fil = carte.querySelector(".fil");
     this._zone = carte.querySelector("textarea");
     this._bouton = carte.querySelector(".envoi");
+    this._micro = carte.querySelector(".micro");
 
     this._bouton.addEventListener("click", () => this._envoyer());
+    this._micro.addEventListener("click", () => this._ecouter());
     this._zone.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._envoyer(); }
     });
@@ -236,6 +306,7 @@ class LunaCard extends HTMLElement {
 
     this._rendu = true;
     this._appliquerConfig();
+    this._majMicro();
     this._peindreFil();
   }
 
@@ -265,6 +336,7 @@ class LunaCard extends HTMLElement {
     this._messages.push({ role: "moi", texte });
     this._busy = true;
     this._bouton.disabled = true;
+    this._majMicro();
     this._orbe("thinking");
     this._peindreFil({ attente: true });
 
@@ -291,6 +363,7 @@ class LunaCard extends HTMLElement {
     } finally {
       this._busy = false;
       this._bouton.disabled = false;
+      this._majMicro();
     }
   }
 
@@ -373,6 +446,193 @@ class LunaCard extends HTMLElement {
       texte: "Luna est injoignable pour l'instant. Vérifie l'intégration Sentinel.",
     });
     this._orbe("idle");
+    this._peindreFil();
+  }
+
+  // ── Voix (pipeline Assist de Home Assistant : micro → texte → Luna → voix) ──
+  //
+  // On s'appuie sur le pipeline Assist d'HA : il fait la transcription (STT), la
+  // conversation (l'agent Sentinel) et la synthèse (TTS). La carte capture le
+  // micro, streame le PCM à HA (canal binaire), affiche la transcription et la
+  // réponse, et joue la voix. Jamais un service externe : tout passe par HA.
+
+  _urlWorklet() {
+    if (!this._workletUrl) {
+      this._workletUrl = URL.createObjectURL(
+        new Blob([WORKLET_SRC], { type: "application/javascript" })
+      );
+    }
+    return this._workletUrl;
+  }
+
+  _voixSupportee() {
+    return !!(
+      window.isSecureContext
+      && navigator.mediaDevices && navigator.mediaDevices.getUserMedia
+      && (window.AudioContext || window.webkitAudioContext)
+      && this._hass && this._hass.connection && this._hass.connection.socket
+    );
+  }
+
+  _majMicro() {
+    if (!this._micro) return;
+    const actif = this._config.voice !== false;
+    this._micro.hidden = !actif;
+    if (!actif) return;
+    const ok = this._voixSupportee();
+    this._micro.disabled = !ok || (this._busy && !this._voix);
+    this._micro.title = ok ? "Parler à Luna" : "Voix indisponible (HTTPS + micro requis)";
+  }
+
+  async _ecouter() {
+    // Déjà en écoute → « j'ai fini de parler » : on clôt le micro ; le pipeline
+    // poursuit tout seul (transcription → réponse → voix).
+    if (this._voix && !this._voix.microArrete) { this._arreterMicro(); return; }
+    if (this._voix || this._busy) return;
+    if (!this._voixSupportee()) { this._noticeVoix(); return; }
+    this._busy = true;
+    this._bouton.disabled = true;
+    this._voix = { microArrete: false, handlerId: null, finEnvoyee: false };
+    this._majMicro();
+    this._orbe("listening");
+    try {
+      await this._demarrerPipeline();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("luna-card voix:", err);
+      this._messages.push({
+        role: "erreur",
+        texte: "Micro indisponible ou refusé. Tu peux toujours écrire à Luna.",
+      });
+      this._peindreFil();
+      this._finPipeline();
+    }
+  }
+
+  async _demarrerPipeline() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+    if (!this._voix) { stream.getTracks().forEach((t) => t.stop()); return; } // annulé
+    const ctx = new AC();
+    await ctx.audioWorklet.addModule(this._urlWorklet());
+    if (!this._voix) { stream.getTracks().forEach((t) => t.stop()); ctx.close(); return; }
+    const src = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, "luna-pcm", { processorOptions: { targetRate: 16000 } });
+    node.port.onmessage = (e) => this._surChunk(e.data);
+    src.connect(node); // pas relié à la sortie : on ne rejoue pas le micro
+    Object.assign(this._voix, { stream, ctx, src, node });
+
+    const sub = {
+      type: "assist_pipeline/run",
+      start_stage: "stt",
+      end_stage: "tts",
+      input: { sample_rate: 16000 },
+    };
+    if (this._config.pipeline) sub.pipeline = this._config.pipeline;
+    const unsub = await this._hass.connection.subscribeMessage(
+      (evt) => this._surEvenementPipeline(evt), sub
+    );
+    if (this._voix) this._voix.unsub = unsub;
+    else unsub();
+  }
+
+  _surChunk(data) {
+    const v = this._voix;
+    const socket = this._hass && this._hass.connection && this._hass.connection.socket;
+    if (!v || !socket || v.handlerId == null || v.finEnvoyee) return;
+    if (data.type === "chunk") {
+      const audio = new Uint8Array(data.buffer);
+      const frame = new Uint8Array(audio.length + 1);
+      frame[0] = v.handlerId;
+      frame.set(audio, 1);
+      try { socket.send(frame.buffer); } catch { /* socket parti */ }
+    } else if (data.type === "flushed") {
+      v.finEnvoyee = true;
+      try { socket.send(new Uint8Array([v.handlerId]).buffer); } catch { /* rien */ }
+    }
+  }
+
+  _surEvenementPipeline(evt) {
+    const v = this._voix;
+    if (!v) return;
+    const t = evt.type;
+    const d = evt.data || {};
+    if (t === "run-start") {
+      v.handlerId = d.runner_data && d.runner_data.stt_binary_handler_id;
+      if (v.node && !v.microArrete) { try { v.node.port.postMessage("start"); } catch { /* rien */ } }
+    } else if (t === "stt-end") {
+      if (!v.microArrete) this._arreterMicro();
+      const texte = (d.stt_output && d.stt_output.text) || "";
+      if (texte) { this._messages.push({ role: "moi", texte }); this._peindreFil(); }
+      this._orbe("thinking");
+    } else if (t === "intent-end") {
+      const io = d.intent_output || {};
+      this._conversationId = io.conversation_id || this._conversationId;
+      const dit = io.response && io.response.speech && io.response.speech.plain
+        && io.response.speech.plain.speech;
+      if (dit) { this._messages.push({ role: "luna", texte: dit }); this._peindreFil(); }
+    } else if (t === "tts-end") {
+      const url = d.tts_output && d.tts_output.url;
+      this._orbe("speaking");
+      if (url) this._jouerTts(url);
+    } else if (t === "run-end") {
+      if (!(v.audio && !v.audio.ended)) this._finPipeline(); // laisse la voix finir
+    } else if (t === "error") {
+      this._messages.push({ role: "erreur", texte: d.message || "La voix a échoué." });
+      this._peindreFil();
+      this._finPipeline();
+    }
+  }
+
+  // « J'ai fini de parler » : on arrête la capture ; la fin d'audio (trame vide)
+  // part sur le message 'flushed' du worklet, pour ne rien tronquer.
+  _arreterMicro() {
+    const v = this._voix;
+    if (!v || v.microArrete) return;
+    v.microArrete = true;
+    this._orbe("thinking");
+    try { v.node && v.node.port.postMessage("stop"); } catch { /* rien */ }
+    try { v.stream && v.stream.getTracks().forEach((t) => t.stop()); } catch { /* rien */ }
+    if (v.handlerId == null) this._finPipeline(); // rien n'a démarré : on referme
+  }
+
+  _jouerTts(url) {
+    try {
+      const audio = new Audio(url);
+      if (this._voix) this._voix.audio = audio;
+      audio.addEventListener("ended", () => this._finPipeline());
+      audio.addEventListener("error", () => this._finPipeline());
+      const p = audio.play();
+      if (p && p.catch) p.catch(() => this._finPipeline());
+    } catch {
+      this._finPipeline();
+    }
+  }
+
+  _finPipeline() {
+    const v = this._voix;
+    this._voix = null;
+    if (v) {
+      try { v.unsub && v.unsub(); } catch { /* rien */ }
+      try { v.node && v.node.port.postMessage("stop"); } catch { /* rien */ }
+      try { v.node && v.node.disconnect(); } catch { /* rien */ }
+      try { v.src && v.src.disconnect(); } catch { /* rien */ }
+      try { v.stream && v.stream.getTracks().forEach((t) => t.stop()); } catch { /* rien */ }
+      try { v.ctx && v.ctx.state !== "closed" && v.ctx.close(); } catch { /* rien */ }
+    }
+    this._busy = false;
+    this._bouton.disabled = false;
+    this._orbe("idle");
+    this._majMicro();
+  }
+
+  _noticeVoix() {
+    this._messages.push({
+      role: "erreur",
+      texte: "Pour parler à Luna, ouvre Home Assistant en HTTPS et autorise le micro. Le clavier marche partout.",
+    });
     this._peindreFil();
   }
 

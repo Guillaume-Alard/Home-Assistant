@@ -13,6 +13,30 @@
 <body>
 <div class="cadre"><luna-card id="carte"></luna-card></div>
 
+<!-- Stubs audio : pas de vrai micro/audio dans le banc. On pilote le pipeline
+     par les événements du faux hass ; ici on neutralise juste la capture et la
+     lecture pour que le chemin vocal se déroule de façon déterministe. -->
+<script>
+  window.__audio = { joue: [] };
+  (function () {
+    const md = navigator.mediaDevices || {};
+    md.getUserMedia = async () => ({ getTracks: () => [{ stop() {} }] });
+    try { Object.defineProperty(navigator, "mediaDevices", { value: md, configurable: true }); } catch (e) {}
+    window.AudioWorkletNode = class { constructor() { this.port = { postMessage() {}, onmessage: null }; } connect() {} disconnect() {} };
+    window.AudioContext = class {
+      constructor() { this.state = "running"; this.audioWorklet = { addModule: async () => {} }; }
+      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      close() { this.state = "closed"; }
+    };
+    window.Audio = class {
+      constructor(url) { this.url = url; this.ended = false; this._l = {}; window.__audio.joue.push(url); }
+      addEventListener(e, cb) { this._l[e] = cb; }
+      pause() {}
+      play() { setTimeout(() => { this.ended = true; this._l.ended && this._l.ended(); }, 120); return Promise.resolve(); }
+    };
+  })();
+</script>
+
 <script type="module">
   import "../www/luna-card.js";
   import { fauxHass } from "./faux-hass.js";
@@ -20,18 +44,21 @@
   const carte = document.getElementById("carte");
   carte.setConfig({ title: "Luna", subtitle: "Ton intendante numérique", height: 440 });
   const REPONSE = "Le salon est éteint et l'alarme est désarmée. Rien à signaler.";
-  carte.hass = fauxHass({ reply: REPONSE, delai: 40 });
+  const TRANSCRIPT = "est-ce que tout est éteint ?";
+  carte.hass = fauxHass({ reply: REPONSE, delai: 40, transcript: TRANSCRIPT });
 
   const q = (s) => carte.shadowRoot.querySelector(s);
   const lunaBulles = () =>
     [...carte.shadowRoot.querySelectorAll(".bulle.luna")].filter((b) => !b.classList.contains("points"));
 
-  // Points d'entrée pour Playwright (test_carte.py).
   window.__banc = {
-    REPONSE,
-    reset(opts) { carte.hass = fauxHass({ reply: REPONSE, delai: 40, ...(opts || {}) }); },
+    REPONSE, TRANSCRIPT,
+    reset(opts) { carte.hass = fauxHass({ reply: REPONSE, delai: 40, transcript: TRANSCRIPT, ...(opts || {}) }); },
     async envoyer(texte) { q("textarea").value = texte; q(".envoi").click(); },
+    parler() { q(".micro").click(); },
     etatOrbe: () => q(".carte").dataset.orbe,
+    microDesactive: () => q(".micro").disabled,
+    audioJoue: () => window.__audio.joue,
     bulles: () => [...carte.shadowRoot.querySelectorAll(".bulle")].map((b) => ({
       classe: b.className, texte: b.textContent,
     })),

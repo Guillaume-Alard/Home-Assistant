@@ -117,6 +117,46 @@ def test_erreur_affiche_une_bulle(sync_playwright):
         assert page.evaluate("() => window.__banc.etatOrbe()") == "idle"
 
 
+def test_voix_pipeline(sync_playwright):
+    """Le bouton micro lance le pipeline Assist : écoute → transcription → réponse
+    → voix jouée. (Micro et audio stubés ; on éprouve la machine à états.)"""
+    with _serveur(ROOT) as base, _page(sync_playwright) as page:
+        _ouvrir(page, base)
+        page.evaluate("() => window.__banc.parler()")
+
+        # On écoute (l'orbe passe à « listening »), le micro reste actionnable (pour couper).
+        page.wait_for_function("() => window.__banc.etatOrbe() === 'listening'", timeout=4000)
+        assert page.evaluate("() => window.__banc.microDesactive()") is False
+
+        # La transcription devient ma bulle, la réponse de Luna suit.
+        page.wait_for_function(
+            "() => window.__banc.bulles().some(b => b.classe.includes('moi') && b.texte === window.__banc.TRANSCRIPT)",
+            timeout=5000,
+        )
+        page.wait_for_function(
+            "() => window.__banc.bulles().some(b => b.classe.includes('luna') && b.texte === window.__banc.REPONSE)",
+            timeout=5000,
+        )
+        # La voix (TTS) est jouée, l'orbe « parle », puis revient au repos.
+        page.wait_for_function(
+            "() => window.__banc.audioJoue().includes('/api/tts_proxy/luna.mp3')", timeout=5000
+        )
+        page.wait_for_function("() => window.__banc.etatOrbe() === 'idle'", timeout=5000)
+
+        subs = page.evaluate("() => window.__banc.abonnements()")
+        run = [s for s in subs if s["type"] == "assist_pipeline/run"]
+        assert run and run[0]["start_stage"] == "stt" and run[0]["end_stage"] == "tts"
+
+
+def test_voix_erreur(sync_playwright):
+    with _serveur(ROOT) as base, _page(sync_playwright) as page:
+        _ouvrir(page, base)
+        page.evaluate("() => window.__banc.reset({ pipelineErreur: true })")
+        page.evaluate("() => window.__banc.parler()")
+        page.wait_for_function("() => window.__banc.bulles().some(b => b.classe.includes('erreur'))")
+        page.wait_for_function("() => window.__banc.etatOrbe() === 'idle'", timeout=4000)
+
+
 def main() -> int:
     try:
         from playwright.sync_api import sync_playwright
@@ -126,7 +166,9 @@ def main() -> int:
     test_streaming_mot_a_mot(sync_playwright)
     test_repli_si_streaming_absent(sync_playwright)
     test_erreur_affiche_une_bulle(sync_playwright)
-    print("OK — carte Luna : streaming mot à mot, repli non-stream, gestion d'erreur.")
+    test_voix_pipeline(sync_playwright)
+    test_voix_erreur(sync_playwright)
+    print("OK — carte Luna : streaming, repli, erreur, et voix (pipeline Assist).")
     return 0
 
 

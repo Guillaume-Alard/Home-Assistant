@@ -32,7 +32,8 @@ conversationnels par entité), et `SENTINEL_ASSIST_TOKEN` renseigné côté Sent
 
 - Envoie la phrase de l'utilisateur à Sentinel et prononce sa réponse.
 - Sert et enregistre la **carte Lovelace « Luna »** (`custom:luna-card`) : orbe
-  animée + conversation, qui parle à Luna par le pipeline de conversation d'HA
-  (jamais un appel externe). Voir `docs/APP-HA.md`.
+  animée + conversation en streaming, et **voix** (bouton micro → pipeline Assist
+  d'HA : transcription → Luna → réponse parlée). Tout passe par HA, jamais un
+  appel externe. Voir `docs/APP-HA.md`.
 - Sentinel gère le reste : même fil que l'interface web, mêmes règles de
   sécurité (actions sensibles refusées hors interface). Voir `docs/ASSIST.md`.

@@ -68,6 +68,8 @@ subtitle: Ton intendante numérique
 height: 460                    # hauteur en pixels
 stream: true                   # rendu « mot à mot » (défaut) ; false = un bloc
 agent: conversation.sentinel   # agent de conversation (chemin non-streamé / repli)
+voice: true                    # bouton micro (défaut) ; false = clavier seul
+pipeline: ""                   # id d'un pipeline Assist ; vide = pipeline préféré
 ```
 
 - `agent` : par défaut, la carte **détecte** l'agent Sentinel (une entité
@@ -76,6 +78,36 @@ agent: conversation.sentinel   # agent de conversation (chemin non-streamé / re
 - Pour un effet **« app plein écran »** : crée un tableau de bord ne contenant
   que cette carte, et épingle-le au menu latéral (Modifier le tableau de bord →
   Paramètres → afficher dans la barre latérale).
+
+## La voix — parler à Luna
+
+Le bouton **micro** (🎙) lance le **pipeline Assist de Home Assistant** : HA
+transcrit ta voix (STT), la fait traiter par l'agent Sentinel, puis **prononce**
+la réponse (TTS) — le tout avec les moteurs vocaux que tu as déjà configurés
+dans HA. La carte capture le micro et streame l'audio à HA par sa WebSocket
+interne ; **rien ne sort du réseau local par la carte**. L'orbe suit : elle
+**écoute** (halo ouvert, micro rose), **réfléchit**, puis **parle** pendant que
+la voix joue.
+
+Un appui lance l'écoute ; un second appui dit « j'ai fini de parler » (sinon la
+détection de silence d'HA s'en charge, si ton pipeline l'active).
+
+Trois conditions, sinon le micro reste grisé (le clavier, lui, marche partout) :
+
+1. **HTTPS.** Le navigateur n'autorise le micro qu'en **contexte sécurisé** —
+   HA doit être ouvert en `https://…` (ou en `localhost`). En `http://` sur le
+   LAN, le micro est refusé par le navigateur, pas par la carte.
+2. **La permission micro**, accordée à HA sur l'appareil (l'app companion la
+   demande la première fois).
+3. **Un pipeline Assist** configuré avec **STT + TTS + l'agent Sentinel**
+   (Paramètres → Voix). Par défaut la carte prend ton pipeline **préféré** ;
+   `pipeline:` en force un autre.
+
+> À valider chez toi : le chemin audio (capture, format, lecture TTS) dépend de
+> l'appareil et du pipeline. La machine à états de la carte est testée (voir
+> plus bas), mais le micro réel et le rendu de la voix se vérifient sur ton HA —
+> surtout dans l'app iOS. Si le micro ne s'active pas, c'est presque toujours le
+> point 1 (HTTPS).
 
 ## L'orbe vient de la branche « visage »
 
@@ -100,13 +132,18 @@ Le test ouvre la carte avec un faux `hass` et vérifie les trois chemins :
 texte final, l'orbe « parle » pendant le remplissage, puis revient au repos, via
 un abonnement à `sentinel_assist/converse`, jamais un `fetch` externe) ; **repli**
 (si la commande de streaming manque, la carte bascule sur `conversation/process`
-et affiche quand même la réponse) ; **erreur** (une bulle, l'orbe au repos). Le
-banc manuel est `custom_components/sentinel_assist/tests/banc.html`.
+et affiche quand même la réponse) ; **erreur** (une bulle, l'orbe au repos) ; et
+la **voix** (le micro lance le pipeline Assist simulé — écoute, transcription en
+bulle, réponse, voix jouée, retour au repos ; le micro et l'audio sont stubés,
+on éprouve la machine à états). Le banc manuel est
+`custom_components/sentinel_assist/tests/banc.html`.
 
 ## La suite (incréments futurs, indépendants)
 
-Le **streaming mot à mot** est fait. Viendront ensuite, si tu le veux :
+Le **streaming mot à mot** et la **voix** sont faits. Viendront ensuite, si tu
+le veux :
 
-- **Voix** dans la carte (le micro d'Assist existe déjà côté HA).
+- La **transcription en direct** dans la bulle (au lieu d'apparaître à la fin de
+  la phrase) et le **mot d'éveil**.
 - Les **propositions** à valider directement dans la carte (aujourd'hui : dans
   le cockpit).
