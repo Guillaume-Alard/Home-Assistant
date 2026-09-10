@@ -23,6 +23,7 @@ from homeassistant.util import network as util_reseau
 
 from .client import ClientRelais, ErreurLuna
 from .const import DOMAINE, TAILLE_AUDIO_MAX
+from .prononciation import nom_dans, pour_la_voix
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -341,7 +342,9 @@ async def ws_speak(hass, connection, msg) -> None:
         )
         return
 
-    texte = msg["text"].strip()
+    # La carte affiche le texte brut et fait lire celui-ci : ici, seul l'audio
+    # est concerné, donc la normalisation ne peut rien abîmer à l'écran.
+    texte = pour_la_voix(msg["text"].strip(), nom_dans(hass))
     if not texte:
         connection.send_error(msg["id"], "internal", "Rien à dire.")
         return

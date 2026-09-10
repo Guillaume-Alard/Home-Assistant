@@ -30,6 +30,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import ClientRelais, ErreurLuna
 from .const import DOMAINE
+from .prononciation import nom_dans, pour_la_voix
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,8 +87,11 @@ class AgentLuna(conversation.ConversationEntity):
             dit = [err.message]
 
         reponse = intent.IntentResponse(language=user_input.language)
+        # Home Assistant n'a qu'un texte, affiché *et* lu : la normalisation
+        # doit donc rester juste des deux côtés (voir `prononciation`).
         reponse.async_set_speech(
-            "".join(dit).strip() or "Je n'ai pas de réponse à te donner."
+            pour_la_voix("".join(dit).strip(), nom_dans(self.hass))
+            or "Je n'ai pas de réponse à te donner."
         )
         return conversation.ConversationResult(
             response=reponse,
