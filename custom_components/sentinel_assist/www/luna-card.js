@@ -183,6 +183,8 @@ class LunaCard extends HTMLElement {
       subtitle: "Ton intendante numérique",
       agent: "",       // entity_id d'un agent conversation ; vide = détection auto
       height: 460,
+      stream: true,    // rendu « mot à mot » ; repli auto si indisponible
+      entry_id: "",    // intégration Sentinel à interroger (vide = la première)
       ...(config || {}),
     };
     if (this._rendu) this._appliquerConfig();
@@ -266,35 +268,112 @@ class LunaCard extends HTMLElement {
     this._orbe("thinking");
     this._peindreFil({ attente: true });
 
+    const peutStreamer = this._config.stream !== false
+      && !!this._hass.connection?.subscribeMessage;
     try {
-      const reponse = await this._hass.callWS({
-        type: "conversation/process",
-        text: texte,
-        agent_id: this._agentId(),
-        conversation_id: this._conversationId || undefined,
-        language: this._hass.language || "fr",
-      });
-      this._conversationId = reponse?.conversation_id || this._conversationId;
-      const dit = this._extraireReponse(reponse);
-      this._messages.push({ role: "luna", texte: dit });
-      this._orbe("speaking");
-      this._peindreFil();
-      // Un bref instant « parle », puis retour au repos.
-      clearTimeout(this._retour);
-      this._retour = setTimeout(() => this._orbe("idle"), 1200);
+      if (peutStreamer) {
+        await this._streamer(texte);        // rendu mot à mot (peut basculer en repli)
+      } else {
+        await this._envoyerSimple(texte);   // un seul bloc
+      }
     } catch (err) {
-      this._messages.push({
-        role: "erreur",
-        texte: "Luna est injoignable pour l'instant. Vérifie l'agent de conversation Sentinel.",
-      });
-      this._orbe("idle");
-      this._peindreFil();
+      // Streaming indisponible (commande absente sur une intégration ancienne) :
+      // on retombe une fois sur le chemin non-streamé, sans doubler l'affichage.
       // eslint-disable-next-line no-console
-      console.error("luna-card:", err);
+      console.warn("luna-card: streaming indisponible, repli.", err);
+      try {
+        await this._envoyerSimple(texte);
+      } catch (err2) {
+        this._erreurBulle();
+        // eslint-disable-next-line no-console
+        console.error("luna-card:", err2);
+      }
     } finally {
       this._busy = false;
       this._bouton.disabled = false;
     }
+  }
+
+  // Streaming : la bulle de Luna se remplit fragment par fragment (event_message).
+  // La promesse ne REJETTE que si l'abonnement lui-même échoue (commande absente)
+  // → repli ; une erreur en cours de flux affiche une bulle et se résout.
+  _streamer(texte) {
+    return new Promise((resolve, reject) => {
+      const enCours = { role: "luna", texte: "" };
+      let bulle = null;
+      let unsub = null;
+      const finir = () => { if (unsub) { unsub(); unsub = null; } };
+
+      const onEvt = (evt) => {
+        if (evt.error) {
+          finir();
+          if (!bulle) { this._messages.push({ role: "erreur", texte: evt.error }); this._peindreFil(); }
+          this._orbe("idle");
+          resolve();
+          return;
+        }
+        if (evt.delta) {
+          if (!bulle) {  // premier fragment : on remplace les points par la bulle
+            this._messages.push(enCours);
+            this._peindreFil();
+            bulle = [...this._fil.querySelectorAll(".bulle.luna")].pop();
+            this._orbe("speaking");
+          }
+          enCours.texte += evt.delta;
+          if (bulle) bulle.textContent = enCours.texte;
+          this._fil.scrollTop = this._fil.scrollHeight;
+        }
+        if (evt.done) {
+          finir();
+          if (!bulle) {  // rien reçu (réponse vide) : on pose le texte final s'il existe
+            enCours.texte = evt.text || "…";
+            this._messages.push(enCours);
+            this._peindreFil();
+          }
+          this._finDeTour();
+          resolve();
+        }
+      };
+
+      this._hass.connection
+        .subscribeMessage(onEvt, {
+          type: "sentinel_assist/converse",
+          text: texte,
+          entry_id: this._config.entry_id || undefined,
+        })
+        .then((u) => { unsub = u; })
+        .catch(reject);  // commande inconnue / refus → repli non-streamé
+    });
+  }
+
+  // Repli : le pipeline de conversation d'HA, réponse en un bloc.
+  async _envoyerSimple(texte) {
+    const reponse = await this._hass.callWS({
+      type: "conversation/process",
+      text: texte,
+      agent_id: this._agentId(),
+      conversation_id: this._conversationId || undefined,
+      language: this._hass.language || "fr",
+    });
+    this._conversationId = reponse?.conversation_id || this._conversationId;
+    this._messages.push({ role: "luna", texte: this._extraireReponse(reponse) });
+    this._peindreFil();
+    this._finDeTour();
+  }
+
+  _finDeTour() {
+    this._orbe("speaking");
+    clearTimeout(this._retour);
+    this._retour = setTimeout(() => this._orbe("idle"), 1200);
+  }
+
+  _erreurBulle() {
+    this._messages.push({
+      role: "erreur",
+      texte: "Luna est injoignable pour l'instant. Vérifie l'intégration Sentinel.",
+    });
+    this._orbe("idle");
+    this._peindreFil();
   }
 
   // Agent conversation à interroger : config explicite, sinon détection d'un agent

@@ -749,3 +749,48 @@ def test_panneau_historique_via_ws(client_ha, fake_ha, brain_interdit):
     assert entry["outcome"] == "ok"
     assert "Allume la lumière du salon".lower() in entry["authorization"].lower()
     assert hist["proposals"] == []
+
+
+# ── Agent Assist : streaming SSE (rendu « mot à mot » de la carte Luna) ──────
+
+def test_assist_streaming_sse(client_assist, fake_brain):
+    """`stream: true` → une réponse SSE, fragment par fragment, close par [DONE]."""
+    resp = client_assist.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer jeton-assist-test"},
+        json={"model": "sentinel", "stream": True,
+              "messages": [{"role": "user", "content": "bonjour"}]},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    body = resp.text
+    assert body.rstrip().endswith("[DONE]")
+
+    contenu, role_vu, fin_vue = "", False, False
+    for ligne in body.splitlines():
+        if not ligne.startswith("data:"):
+            continue
+        charge = ligne[5:].strip()
+        if charge == "[DONE]":
+            continue
+        delta = json.loads(charge)["choices"][0]["delta"]
+        if delta.get("role") == "assistant":
+            role_vu = True
+        contenu += delta.get("content") or ""
+        if json.loads(charge)["choices"][0]["finish_reason"] == "stop":
+            fin_vue = True
+    assert role_vu and fin_vue
+    assert contenu == "Bonjour Guillaume."  # les deux fragments du faux cerveau
+
+
+def test_assist_non_stream_inchange(client_assist, fake_brain):
+    """Sans `stream`, la réponse reste un bloc unique (rétrocompatibilité)."""
+    resp = client_assist.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer jeton-assist-test"},
+        json={"model": "sentinel", "messages": [{"role": "user", "content": "bonjour"}]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["object"] == "chat.completion"
+    assert data["choices"][0]["message"]["content"] == "Bonjour Guillaume."

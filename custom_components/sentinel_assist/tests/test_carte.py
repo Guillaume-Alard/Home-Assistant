@@ -59,7 +59,7 @@ def _ouvrir(page, base):
     page.wait_for_function("() => window.__banc && document.getElementById('carte').shadowRoot")
 
 
-def test_conversation_et_orbe(sync_playwright):
+def test_streaming_mot_a_mot(sync_playwright):
     with _serveur(ROOT) as base, _page(sync_playwright) as page:
         _ouvrir(page, base)
         assert page.evaluate("() => window.__banc.etatOrbe()") == "idle"
@@ -69,26 +69,49 @@ def test_conversation_et_orbe(sync_playwright):
         page.wait_for_function("() => window.__banc.etatOrbe() === 'thinking'")
         assert any(b["classe"].endswith("moi") for b in page.evaluate("() => window.__banc.bulles()"))
 
-        # La réponse de Luna arrive, puis l'orbe revient au repos.
+        # La réponse se REMPLIT : on observe un préfixe strict du texte final…
         page.wait_for_function(
-            "() => window.__banc.bulles().some(b => b.classe.includes('luna') && !b.classe.includes('points'))"
+            "() => { const t = window.__banc.texteLuna(), f = window.__banc.REPONSE;"
+            " return t.length > 0 && t.length < f.length && f.startsWith(t); }",
+            timeout=4000,
+        )
+        # …et l'orbe « parle » pendant qu'elle se remplit.
+        assert page.evaluate("() => window.__banc.etatOrbe()") == "speaking"
+
+        # Puis le texte complet, et l'orbe revient au repos.
+        page.wait_for_function(
+            "() => window.__banc.texteLuna() === window.__banc.REPONSE", timeout=4000
         )
         page.wait_for_function("() => window.__banc.etatOrbe() === 'idle'", timeout=4000)
-        luna = [b for b in page.evaluate("() => window.__banc.bulles()")
-                if "luna" in b["classe"] and "points" not in b["classe"]]
-        assert luna and "salon" in luna[-1]["texte"]
 
-        # La carte a parlé au bon agent, par le pipeline d'HA (jamais un fetch).
+        # Streaming = abonnement à sentinel_assist/converse, PAS conversation/process.
+        subs = page.evaluate("() => window.__banc.abonnements()")
+        assert subs and subs[0]["type"] == "sentinel_assist/converse"
+        assert subs[0]["text"] == "éteins le salon"
+        assert not page.evaluate("() => window.__banc.appels()")  # aucun repli
+
+
+def test_repli_si_streaming_absent(sync_playwright):
+    with _serveur(ROOT) as base, _page(sync_playwright) as page:
+        _ouvrir(page, base)
+        # Intégration sans la commande de streaming : l'abonnement échoue.
+        page.evaluate("() => window.__banc.reset({ streamAbsent: true })")
+        page.evaluate("() => window.__banc.envoyer('coucou')")
+
+        # La carte bascule sur conversation/process et affiche quand même la réponse.
+        page.wait_for_function(
+            "() => window.__banc.texteLuna() === window.__banc.REPONSE", timeout=4000
+        )
         proc = [a for a in page.evaluate("() => window.__banc.appels()")
                 if a["type"] == "conversation/process"]
         assert proc and proc[0]["agent_id"] == "conversation.sentinel"
-        assert proc[0]["text"] == "éteins le salon"
+        page.wait_for_function("() => window.__banc.etatOrbe() === 'idle'", timeout=4000)
 
 
 def test_erreur_affiche_une_bulle(sync_playwright):
     with _serveur(ROOT) as base, _page(sync_playwright) as page:
         _ouvrir(page, base)
-        page.evaluate("() => window.__banc.modeErreur()")
+        page.evaluate("() => window.__banc.reset({ erreur: true })")
         page.evaluate("() => window.__banc.envoyer('coucou')")
         page.wait_for_function("() => window.__banc.bulles().some(b => b.classe.includes('erreur'))")
         assert page.evaluate("() => window.__banc.etatOrbe()") == "idle"
@@ -100,9 +123,10 @@ def main() -> int:
     except ImportError:
         print("Playwright absent — `pip install playwright && playwright install chromium`.")
         return 0  # pas un échec : le test est simplement indisponible ici
-    test_conversation_et_orbe(sync_playwright)
+    test_streaming_mot_a_mot(sync_playwright)
+    test_repli_si_streaming_absent(sync_playwright)
     test_erreur_affiche_une_bulle(sync_playwright)
-    print("OK — carte Luna : conversation, orbe et gestion d'erreur.")
+    print("OK — carte Luna : streaming mot à mot, repli non-stream, gestion d'erreur.")
     return 0
 
 

@@ -18,24 +18,44 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CARD_FILENAME, CARD_URL_BASE, CARD_VERSION, DOMAIN
+from . import websocket as ws
+from .const import (
+    CARD_FILENAME,
+    CARD_URL_BASE,
+    CARD_VERSION,
+    CONF_BASE_URL,
+    CONF_TOKEN,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["conversation"]
 
 _CARD_REGISTERED = "card_registered"
+_WS_REGISTERED = "ws_registered"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    store = hass.data.setdefault(DOMAIN, {})
+    # Coordonnées de Sentinel, à disposition de la commande WebSocket de streaming.
+    store.setdefault("entries", {})[entry.entry_id] = {
+        "base": entry.data[CONF_BASE_URL],
+        "token": entry.data[CONF_TOKEN],
+    }
+    if not store.get(_WS_REGISTERED):
+        ws.async_register(hass)
+        store[_WS_REGISTERED] = True
     await _register_card(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    # La ressource frontend reste enregistrée pour la session : la retirer
-    # casserait une autre entrée éventuelle et n'apporte rien (fichier statique).
+    # La ressource frontend et la commande WS restent enregistrées pour la session
+    # (les retirer casserait une autre entrée éventuelle) ; on oublie juste les
+    # coordonnées de cette entrée pour ne plus router vers un Sentinel disparu.
+    hass.data.get(DOMAIN, {}).get("entries", {}).pop(entry.entry_id, None)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 

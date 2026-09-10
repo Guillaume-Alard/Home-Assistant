@@ -22,9 +22,13 @@ La carte **ne parle qu'à Home Assistant**, par sa WebSocket interne
 (`hass.connection`). Elle n'ouvre **jamais** de connexion vers un hôte externe,
 et **aucun jeton** ne se trouve dans la page.
 
-Chaque phrase passe par le **pipeline de conversation d'HA**
-(`conversation/process`), qui la route vers l'**agent Sentinel** (l'intégration
-`sentinel_assist`). Donc :
+Par défaut, la réponse arrive **mot à mot** : la carte s'abonne à une commande
+WebSocket de l'intégration (`sentinel_assist/converse`), qui relaie le **flux**
+de Sentinel (SSE) et repousse chaque fragment à la carte. Si cette commande
+n'est pas disponible (intégration plus ancienne, ou `stream: false`), la carte
+**retombe** sur le pipeline de conversation d'HA (`conversation/process`),
+réponse en un bloc. Dans les deux cas, la phrase est routée vers l'**agent
+Sentinel** (l'intégration `sentinel_assist`). Donc :
 
 - **Même cerveau** que partout ailleurs — y compris le **choix du modèle**
   (multi-LLM) : ce que tu règles dans le cockpit vaut aussi ici.
@@ -62,7 +66,8 @@ type: custom:luna-card
 title: Luna                    # titre affiché
 subtitle: Ton intendante numérique
 height: 460                    # hauteur en pixels
-agent: conversation.sentinel   # agent de conversation à interroger
+stream: true                   # rendu « mot à mot » (défaut) ; false = un bloc
+agent: conversation.sentinel   # agent de conversation (chemin non-streamé / repli)
 ```
 
 - `agent` : par défaut, la carte **détecte** l'agent Sentinel (une entité
@@ -90,18 +95,18 @@ pip install playwright && playwright install chromium
 python custom_components/sentinel_assist/tests/test_carte.py
 ```
 
-Le test ouvre la carte avec un faux `hass`, envoie une phrase, et vérifie : ma
-bulle apparaît, l'orbe passe à « réfléchit », la réponse de Luna s'affiche,
-l'orbe revient au repos, et la carte a bien parlé à l'agent `conversation.*`
-(jamais un `fetch` externe). Le mode erreur affiche une bulle et laisse l'orbe
-au repos. Le banc manuel est `custom_components/sentinel_assist/tests/banc.html`.
+Le test ouvre la carte avec un faux `hass` et vérifie les trois chemins :
+**streaming** (la bulle de Luna se remplit — on observe un préfixe strict du
+texte final, l'orbe « parle » pendant le remplissage, puis revient au repos, via
+un abonnement à `sentinel_assist/converse`, jamais un `fetch` externe) ; **repli**
+(si la commande de streaming manque, la carte bascule sur `conversation/process`
+et affiche quand même la réponse) ; **erreur** (une bulle, l'orbe au repos). Le
+banc manuel est `custom_components/sentinel_assist/tests/banc.html`.
 
 ## La suite (incréments futurs, indépendants)
 
-Cette première version est volontairement resserrée — **une phase testable, qui
-ne dépend pas des suivantes**. Viendront, si tu le veux :
+Le **streaming mot à mot** est fait. Viendront ensuite, si tu le veux :
 
-- **Streaming** de la réponse (mot à mot) plutôt qu'en un bloc.
 - **Voix** dans la carte (le micro d'Assist existe déjà côté HA).
 - Les **propositions** à valider directement dans la carte (aujourd'hui : dans
   le cockpit).

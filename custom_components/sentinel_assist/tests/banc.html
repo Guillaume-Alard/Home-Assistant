@@ -19,23 +19,25 @@
 
   const carte = document.getElementById("carte");
   carte.setConfig({ title: "Luna", subtitle: "Ton intendante numérique", height: 440 });
-  carte.hass = fauxHass({ reply: "Le salon est éteint et l'alarme est désarmée. Rien à signaler.", delai: 120 });
+  const REPONSE = "Le salon est éteint et l'alarme est désarmée. Rien à signaler.";
+  carte.hass = fauxHass({ reply: REPONSE, delai: 40 });
 
-  // Points d'entrée pour le pilotage par Playwright (test_carte.py).
+  const q = (s) => carte.shadowRoot.querySelector(s);
+  const lunaBulles = () =>
+    [...carte.shadowRoot.querySelectorAll(".bulle.luna")].filter((b) => !b.classList.contains("points"));
+
+  // Points d'entrée pour Playwright (test_carte.py).
   window.__banc = {
-    // Écrit un texte et déclenche l'envoi comme le ferait l'utilisateur.
-    async envoyer(texte) {
-      const zone = carte.shadowRoot.querySelector("textarea");
-      zone.value = texte;
-      carte.shadowRoot.querySelector(".envoi").click();
-    },
-    etatOrbe: () => carte.shadowRoot.querySelector(".carte").dataset.orbe,
+    REPONSE,
+    reset(opts) { carte.hass = fauxHass({ reply: REPONSE, delai: 40, ...(opts || {}) }); },
+    async envoyer(texte) { q("textarea").value = texte; q(".envoi").click(); },
+    etatOrbe: () => q(".carte").dataset.orbe,
     bulles: () => [...carte.shadowRoot.querySelectorAll(".bulle")].map((b) => ({
       classe: b.className, texte: b.textContent,
     })),
+    texteLuna: () => { const b = lunaBulles(); return b.length ? b[b.length - 1].textContent : ""; },
     appels: () => carte._hass._appels,
-    // Permet au test de forcer le mode erreur.
-    modeErreur() { carte.hass = fauxHass({ erreur: true, delai: 40 }); },
+    abonnements: () => carte._hass._abonnements,
   };
 </script>
 </body>

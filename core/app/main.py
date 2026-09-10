@@ -45,7 +45,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -727,7 +727,49 @@ class Sentinel:
                 raise  # notre propre annulation (client HTTP parti), pas le tour
         return holder.get("text") or "Désolé, ma réponse a été interrompue."
 
-    async def _assist_body(self, text: str) -> str:
+    async def run_assist_stream(self, text: str):
+        """Variante streaming d'un tour Assist : rend les fragments au fil de l'eau.
+
+        Même machinerie de tour unique (verrou + barge-in) que `run_assist_reply` —
+        c'est le même `_assist_body` qui tourne, ici avec un callback qui pousse
+        chaque fragment dans une file que ce générateur draine. Un tour non
+        streamé (intent local) rend son texte en un seul fragment. En cas d'erreur
+        sans aucun fragment produit, le message d'erreur est émis en fin de flux.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        done = object()
+        holder: dict[str, str] = {}
+
+        def _on_delta(delta: str) -> None:
+            queue.put_nowait(delta)
+
+        async def _turn() -> None:
+            try:
+                holder["text"] = await self._assist_body(text, on_delta=_on_delta)
+            finally:
+                queue.put_nowait(done)
+
+        async with self._turn_lock:
+            await self._cancel_locked()
+            task = asyncio.create_task(_turn(), name="assist-stream")
+            self._turn_task = task
+
+        emitted = False
+        try:
+            while True:
+                item = await queue.get()
+                if item is done:
+                    break
+                emitted = True
+                yield item
+        finally:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        # Erreur (ou repli) sans aucun fragment : on rend quand même le texte final.
+        if not emitted and holder.get("text"):
+            yield holder["text"]
+
+    async def _assist_body(self, text: str, on_delta=None) -> str:
         source = "assist"
         assistant_id = uuid.uuid4().hex[:12]
         parts: list[str] = []
@@ -750,6 +792,8 @@ class Sentinel:
                 await self.hub.broadcast(
                     {"type": "assistant_delta", "id": assistant_id, "text": delta}
                 )
+                if on_delta is not None:
+                    on_delta(delta)
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -946,8 +990,39 @@ async def assist_chat(request: Request):
             {"error": {"message": "Aucun message utilisateur."}}, status_code=400
         )
 
-    reply = await sentinel.run_assist_reply(text)
     model = str(body.get("model") or sentinel.settings.model)
+
+    # Streaming (SSE, compatible OpenAI) : la réponse arrive fragment par fragment.
+    # C'est ce que consomme la carte Luna (via l'intégration) pour le rendu « mot
+    # à mot ». Sans `stream`, on garde la réponse en un seul bloc (rétrocompat).
+    if body.get("stream"):
+        cid = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+
+        async def _sse():
+            base = {"id": cid, "object": "chat.completion.chunk",
+                    "created": int(time.time()), "model": model}
+            # Premier chunk : le rôle, comme le fait l'API OpenAI.
+            first = {**base, "choices": [{"index": 0, "delta": {"role": "assistant"},
+                                          "finish_reason": None}]}
+            yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
+            try:
+                async for delta in sentinel.run_assist_stream(text):
+                    chunk = {**base, "choices": [{"index": 0, "delta": {"content": delta},
+                                                  "finish_reason": None}]}
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            except Exception:  # le flux ne doit jamais planter à mi-course sans clore
+                log.exception("Flux Assist interrompu")
+            end = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+            yield f"data: {json.dumps(end, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            _sse(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    reply = await sentinel.run_assist_reply(text)
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
         "object": "chat.completion",
