@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banc — luna-card</title>
+<style>
+  body { margin: 0; background: #060b10; padding: 24px;
+         font-family: system-ui, sans-serif; display: flex; justify-content: center; }
+  .cadre { width: 420px; max-width: 100%; }
+</style>
+</head>
+<body>
+<div class="cadre"><luna-card id="carte"></luna-card></div>
+
+<script type="module">
+  import "../www/luna-card.js";
+  import { fauxHass } from "./faux-hass.js";
+
+  const carte = document.getElementById("carte");
+  carte.setConfig({ title: "Luna", subtitle: "Ton intendante numérique", height: 440 });
+  carte.hass = fauxHass({ reply: "Le salon est éteint et l'alarme est désarmée. Rien à signaler.", delai: 120 });
+
+  // Points d'entrée pour le pilotage par Playwright (test_carte.py).
+  window.__banc = {
+    // Écrit un texte et déclenche l'envoi comme le ferait l'utilisateur.
+    async envoyer(texte) {
+      const zone = carte.shadowRoot.querySelector("textarea");
+      zone.value = texte;
+      carte.shadowRoot.querySelector(".envoi").click();
+    },
+    etatOrbe: () => carte.shadowRoot.querySelector(".carte").dataset.orbe,
+    bulles: () => [...carte.shadowRoot.querySelectorAll(".bulle")].map((b) => ({
+      classe: b.className, texte: b.textContent,
+    })),
+    appels: () => carte._hass._appels,
+    // Permet au test de forcer le mode erreur.
+    modeErreur() { carte.hass = fauxHass({ erreur: true, delai: 40 }); },
+  };
+</script>
+</body>
+</html>

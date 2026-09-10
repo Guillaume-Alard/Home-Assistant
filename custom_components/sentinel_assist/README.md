@@ -5,6 +5,10 @@ d'*Extended OpenAI Conversation* (souvent cassée sur les versions récentes de
 HA). Minimal, sans bibliothèque tierce, il relaie chaque phrase vers l'API
 `/v1/chat/completions` de Sentinel.
 
+Il **sert aussi la carte Lovelace « Luna »** (le visage de Luna : orbe +
+conversation, dans Home Assistant). La carte est enregistrée d'office —
+cherche **Luna** dans le sélecteur de cartes. Voir `docs/APP-HA.md`.
+
 Prérequis : **Home Assistant 2024.2 ou plus récent** (API des agents
 conversationnels par entité), et `SENTINEL_ASSIST_TOKEN` renseigné côté Sentinel.
 
@@ -27,5 +31,8 @@ conversationnels par entité), et `SENTINEL_ASSIST_TOKEN` renseigné côté Sent
 ## Ce qu'il fait
 
 - Envoie la phrase de l'utilisateur à Sentinel et prononce sa réponse.
+- Sert et enregistre la **carte Lovelace « Luna »** (`custom:luna-card`) : orbe
+  animée + conversation, qui parle à Luna par le pipeline de conversation d'HA
+  (jamais un appel externe). Voir `docs/APP-HA.md`.
 - Sentinel gère le reste : même fil que l'interface web, mêmes règles de
   sécurité (actions sensibles refusées hors interface). Voir `docs/ASSIST.md`.
