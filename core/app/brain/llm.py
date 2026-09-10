@@ -191,6 +191,17 @@ def _system_blocks(
     return blocks
 
 
+def _system_text(
+    settings: Settings, memory_text: str = "", speaker: Speaker | None = None
+) -> str:
+    """Prompt système aplati en une seule chaîne, pour les API compatibles OpenAI.
+
+    Mêmes morceaux que `_system_blocks` (consigne stable + date/heure + à qui tu
+    parles + mémoire), mais sans le découpage en blocs ni le cache de prompt
+    (propres à Anthropic) : les autres API attendent un simple message « system »."""
+    return "\n\n".join(b["text"] for b in _system_blocks(settings, memory_text, speaker))
+
+
 def _web_search_tool(settings: Settings) -> dict:
     """Outil natif de recherche web (Anthropic), avec citations intégrées.
 
@@ -254,11 +265,65 @@ class Brain:
         # Fournit le bloc « ce que je sais de toi » injecté dans le prompt (async :
         # il lit le Store). Absent en test unitaire → mémoire vide, comportement inchangé.
         self._memory_provider = memory_provider
+        # Claude est le cerveau de RÉFÉRENCE, piloté nativement par le SDK Anthropic.
         self._client: anthropic.AsyncAnthropic | None = (
             anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
             if settings.anthropic_api_key
             else None
         )
+        # Multi-LLM : liste des fournisseurs (Claude + alternatifs compatibles OpenAI),
+        # fournisseur actif (commutable à chaud) et cache des adaptateurs alternatifs.
+        from .providers import load_profiles, resolve_default
+
+        self._profiles = load_profiles(settings)
+        self._by_id = {p.id: p for p in self._profiles}
+        self._default_id = resolve_default(self._profiles, settings.llm_default_provider)
+        self._active_id = self._default_id
+        self._oai: dict[str, object] = {}
+
+    # ── Fournisseurs (multi-LLM) ─────────────────────────────────────────
+
+    @property
+    def active_id(self) -> str:
+        return self._active_id
+
+    @property
+    def default_id(self) -> str:
+        return self._default_id
+
+    def providers_public(self) -> dict:
+        """Vue cockpit des fournisseurs (jamais de clé)."""
+        from .providers import public_view
+
+        return public_view(self._profiles, self._active_id, self._default_id)
+
+    def set_provider(self, provider_id: str) -> bool:
+        """Bascule le fournisseur actif (à chaud). Refuse un fournisseur indisponible."""
+        profile = self._by_id.get(provider_id)
+        if profile is None or not profile.available:
+            return False
+        self._active_id = provider_id
+        log.info("Fournisseur LLM actif : %s (%s)", profile.label, profile.model)
+        return True
+
+    def _openai_provider(self, profile):
+        from .providers import OpenAICompatProvider
+
+        prov = self._oai.get(profile.id)
+        if prov is None or prov.profile is not profile:
+            prov = OpenAICompatProvider(profile)
+            self._oai[profile.id] = prov
+        return prov
+
+    async def _read_memory(self, who: Speaker) -> str:
+        """Mémoire du locuteur courant, lue une fois pour tout le tour (invité = rien)."""
+        if self._memory_provider is None:
+            return ""
+        try:
+            return await self._memory_provider(who.subject)
+        except Exception:
+            log.exception("Lecture de la mémoire impossible — tour sans profil")
+            return ""
 
     async def stream_reply(
         self, history: list[dict], *, utterance: str = "", source: str = "text",
@@ -269,37 +334,55 @@ class Brain:
         `history` : [{"role": "user"|"assistant", "content": …}], premier rôle
         `user`, dernier = message courant. `utterance` (la phrase d'origine) est
         transmise au moteur d'actions pour journaliser l'autorisation.
+
+        Le fournisseur actif décide du chemin : Claude (natif Anthropic, avec
+        recherche web + citations) ou un modèle alternatif (adaptateur compatible
+        OpenAI). La préparation — mémoire, outils déclarés — est commune ; la
+        sécurité aussi : tout appel d'outil repart par la Toolbox et le moteur.
         """
+        who = speaker or OWNER
+        profile = self._by_id.get(self._active_id) or self._by_id.get(self._default_id)
+        messages: list[dict] = list(history)
+        tools: list[dict] = list(self._toolbox.specs()) if self._toolbox else []
+        memory_text = await self._read_memory(who)
+
+        if profile is not None and profile.kind == "openai":
+            async for text in self._stream_openai(
+                profile, messages, tools, memory_text, who, utterance, source
+            ):
+                yield text
+            return
+        # Défaut / Claude : boucle native Anthropic.
+        async for text in self._stream_anthropic(
+            profile, messages, tools, memory_text, who, utterance, source
+        ):
+            yield text
+
+    async def _stream_anthropic(
+        self, profile, messages: list[dict], tools: list[dict], memory_text: str,
+        who: Speaker, utterance: str, source: str,
+    ) -> AsyncIterator[str]:
+        """Boucle d'outils native Claude (SDK Anthropic) — cerveau de référence."""
         if self._client is None:
             raise LLMUnavailable(
                 "Aucune clé API Anthropic n'est configurée : renseigne "
                 "ANTHROPIC_API_KEY dans le fichier .env puis redémarre Sentinel."
             )
         s = self._settings
-        who = speaker or OWNER
-        messages: list[dict] = list(history)
-        tools: list[dict] = list(self._toolbox.specs()) if self._toolbox else []
+        model = profile.model if profile is not None else s.model
+        tools = list(tools)
         # Recherche web native (Phase 4) : outil serveur Anthropic, réservé aux
-        # personnes reconnues (owner + maisonnée) — un invité n'y a pas accès.
+        # personnes reconnues (owner + maisonnée) — un invité n'y a pas accès. Elle
+        # n'existe QUE pour Claude (aucun équivalent portable sur les autres modèles).
         if s.web_search_enabled and who.can_act:
             tools.append(_web_search_tool(s))
         tools = tools or None
         sources: list[dict] = []  # sources web citées, agrégées sur le tour
 
-        # Mémoire du locuteur courant, lue une fois pour tout le tour (stable entre
-        # les rounds d'outils). Un invité (subject None) n'a aucune mémoire injectée.
-        memory_text = ""
-        if self._memory_provider is not None:
-            try:
-                memory_text = await self._memory_provider(who.subject)
-            except Exception:
-                log.exception("Lecture de la mémoire impossible — tour sans profil")
-                memory_text = ""
-
         try:
             for round_no in range(MAX_TOOL_ROUNDS):
                 kwargs: dict = dict(
-                    model=s.model,
+                    model=model,
                     max_tokens=s.max_tokens,
                     system=_system_blocks(s, memory_text, who),
                     output_config={"effort": s.effort},
@@ -375,6 +458,30 @@ class Brain:
             raise LLMUnavailable(
                 "Impossible de joindre l'API Anthropic — vérifie l'accès Internet de Nebula."
             ) from exc
+
+    async def _stream_openai(
+        self, profile, messages: list[dict], tools: list[dict], memory_text: str,
+        who: Speaker, utterance: str, source: str,
+    ) -> AsyncIterator[str]:
+        """Fournisseur alternatif (compatible OpenAI) — mêmes outils, même sécurité.
+
+        Pas de recherche web (outil serveur propre à Anthropic) et donc pas de
+        sources citées. Tout appel d'outil passe par le même chemin que Claude."""
+        provider = self._openai_provider(profile)
+        system_text = _system_text(self._settings, memory_text, who)
+
+        async def run_tool(name: str, args: dict) -> tuple[str, bool]:
+            if self._toolbox is None:
+                return "Aucun outil n'est disponible.", True
+            return await self._toolbox.run(
+                name, args, utterance=utterance, source=source, speaker=who
+            )
+
+        async for text in provider.stream(
+            messages=messages, tools=tools, system_text=system_text,
+            settings=self._settings, notify_activity=self._notify_activity, run_tool=run_tool,
+        ):
+            yield text
 
     async def _notify_activity(self, tool_name: str) -> None:
         if self._on_activity:

@@ -197,6 +197,15 @@ CREATE TABLE IF NOT EXISTS reminders (
     fired_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_active ON reminders (status, due_at);
+
+-- Réglages d'exécution modifiables à chaud, persistés pour survivre à un
+-- redémarrage (ex. « llm_provider » : le fournisseur LLM actif choisi dans le
+-- cockpit). Simple clé/valeur texte — aucun secret n'y est stocké.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -918,3 +927,20 @@ class Store:
         )
         await self._db.commit()
         return await self.get_reminder(reminder_id)
+
+    # ── Réglages d'exécution (clé/valeur persistée) ──────────────────────────
+
+    async def get_setting(self, key: str, default: str | None = None) -> str | None:
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = await cursor.fetchone()
+        return row["value"] if row else default
+
+    async def set_setting(self, key: str, value: str) -> None:
+        assert self._db is not None, "Store non ouvert"
+        await self._db.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value, _now_iso()),
+        )
+        await self._db.commit()

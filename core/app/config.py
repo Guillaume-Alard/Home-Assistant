@@ -92,6 +92,21 @@ class Settings:
     # Agent conversationnel Assist (Phase 5B) — vide = endpoint /v1 désactivé
     assist_token: str = ""
 
+    # Multi-LLM — fournisseurs alternatifs (optionnels). Claude reste le cerveau de
+    # référence (ANTHROPIC_API_KEY / SENTINEL_MODEL). Chaque alternatif s'active en
+    # posant sa clé ; le modèle est préréglé mais surchargeable. Le fournisseur
+    # actif se choisit à chaud dans le cockpit ; `llm_default_provider` fixe le
+    # démarrage (id : claude | openai | gemini | groq | openrouter). Vide = claude.
+    openai_api_key: str = ""
+    openai_model: str = ""
+    gemini_api_key: str = ""
+    gemini_model: str = ""
+    groq_api_key: str = ""
+    groq_model: str = ""
+    openrouter_api_key: str = ""
+    openrouter_model: str = ""
+    llm_default_provider: str = ""
+
     # Mémoire persistante (Phase 1) — SENTINEL_MEMORY=off coupe l'injection du profil
     # dans le prompt (les souvenirs restent stockés) ; memory_window borne le nombre
     # de souvenirs les plus récents injectés à chaque tour.
@@ -186,6 +201,15 @@ class Settings:
             ha_url=os.environ.get("HA_URL", "").strip().rstrip("/"),
             ha_token=os.environ.get("HA_TOKEN", "").strip(),
             assist_token=os.environ.get("SENTINEL_ASSIST_TOKEN", "").strip(),
+            openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip(),
+            openai_model=os.environ.get("OPENAI_MODEL", "").strip(),
+            gemini_api_key=os.environ.get("GEMINI_API_KEY", "").strip(),
+            gemini_model=os.environ.get("GEMINI_MODEL", "").strip(),
+            groq_api_key=os.environ.get("GROQ_API_KEY", "").strip(),
+            groq_model=os.environ.get("GROQ_MODEL", "").strip(),
+            openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", "").strip(),
+            openrouter_model=os.environ.get("OPENROUTER_MODEL", "").strip(),
+            llm_default_provider=os.environ.get("SENTINEL_LLM_PROVIDER", "").strip().lower(),
             memory_enabled=os.environ.get("SENTINEL_MEMORY", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             memory_window=_int(os.environ.get("SENTINEL_MEMORY_WINDOW"), 60),

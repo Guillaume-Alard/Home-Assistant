@@ -248,6 +248,16 @@ sequenceDiagram
 - **Aucun outil** : le tool use arrive en Phase 2, exclusivement à travers le moteur
   « propose puis approuve » (PLAN §5).
 
+### Multi-LLM (`brain/providers.py`)
+
+Claude reste le cerveau de **référence** (piloté nativement, recherche web comprise).
+D'autres modèles — ChatGPT, Gemini, Groq, OpenRouter — se branchent via un **adaptateur
+compatible OpenAI** unique et se choisissent **à chaud** dans le cockpit. Le `Brain`
+**dispatche** selon le fournisseur actif ; le callback `run_tool` (Toolbox → moteur)
+est le **même** dans les deux chemins, donc les garde-fous sont identiques quel que
+soit le modèle (test statique + `test_providers.py`). Le fournisseur actif est
+persisté (`Store`, clé `llm_provider`). Voir `docs/MULTI-LLM.md`.
+
 ## Persistance
 
 SQLite (`data/sentinel.db`, WAL) via aiosqlite. Table unique `messages`

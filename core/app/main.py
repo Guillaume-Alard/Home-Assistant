@@ -9,9 +9,10 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
                             speakers, pages), la gestion de la mémoire (memoire_add,
                             memoire_delete), des profils vocaux (speaker_add,
                             speaker_delete, speaker_enroll_start/end), des pages
-                            web (page_get, page_publish, page_unpublish, page_delete)
-                            et des propositions d'évolution (evolutions, evolution_get,
-                            evolution_accept, evolution_reject, evolution_delete)
+                            web (page_get, page_publish, page_unpublish, page_delete),
+                            des propositions d'évolution (evolutions, evolution_get,
+                            evolution_accept, evolution_reject, evolution_delete) et
+                            des fournisseurs LLM (llm_providers, llm_select)
   Client → serveur (binaire) : PCM 16 bits mono (tour de parole, veille, ou
                                enrôlement d'une empreinte vocale)
   Serveur → clients (JSON) : hello, status, message, assistant_start,
@@ -22,7 +23,8 @@ Protocole WebSocket (résumé — détail dans docs/ARCHITECTURE.md) :
                              panneaux (dev_tasks, dev_log, dev_diff, sante,
                              historique, au seul client demandeur), memoires et
                              speakers (rediffusés à tous après un changement),
-                             speaker (locuteur reconnu), enroll_result
+                             speaker (locuteur reconnu), enroll_result, llm
+                             (fournisseur LLM actif, rediffusé après une bascule)
   Serveur → client d'origine (binaire) : PCM de la voix de Sentinel
 
 Le fil de conversation est unique et partagé : chaque événement de conversation
@@ -314,6 +316,25 @@ class Sentinel:
     async def _broadcast_sources(self, sources: list[dict]) -> None:
         """Sources web citées par Luna (Phase 4) — rattachées au dernier message."""
         await self.hub.broadcast({"type": "sources", "sources": sources})
+
+    # ── Fournisseurs LLM (multi-LLM) ─────────────────────────────────────
+
+    def _llm_payload(self) -> dict:
+        """État des fournisseurs LLM pour le cockpit (jamais de clé)."""
+        return {"type": "llm", **self.brain.providers_public()}
+
+    async def _broadcast_llm(self) -> None:
+        await self.hub.broadcast(self._llm_payload())
+
+    async def restore_active_provider(self) -> None:
+        """Réapplique le fournisseur LLM choisi au dernier démarrage (s'il tient encore)."""
+        try:
+            saved = await self.store.get_setting("llm_provider")
+        except Exception:
+            log.exception("Lecture du fournisseur LLM persistant impossible")
+            return
+        if saved and saved != self.brain.active_id:
+            self.brain.set_provider(saved)  # ignoré si indisponible (clé retirée…)
 
     async def _on_proposal_change(self, change: str, proposal: dict) -> None:
         kind = "proposal_new" if change == "new" else "proposal_update"
@@ -833,6 +854,7 @@ async def lifespan(app: FastAPI):
     await store.open()
     sentinel = Sentinel(settings, store)
     app.state.sentinel = sentinel
+    await sentinel.restore_active_provider()
     if sentinel.ha:
         await sentinel.ha.start()
     sentinel.start_proactive()
@@ -1001,6 +1023,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "media": sentinel._media_payload()["players"],
             # Minuteurs & rappels (Phase 10) — actifs
             "reminders": await sentinel.store.list_reminders("active"),
+            # Fournisseurs LLM (multi-LLM) — Paramètres › Connexions : modèle actif + bascule
+            "llm": sentinel.brain.providers_public(),
         },
     )
 
@@ -1213,8 +1237,44 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
         )
         await sentinel.hub.send(client, {"type": "notify_test", "ok": ok})
 
+    elif mtype == "llm_providers":
+        await sentinel.hub.send(client, sentinel._llm_payload())
+
+    elif mtype == "llm_select":
+        await _llm_select(sentinel, client, msg)
+
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
+
+
+# ── Fournisseurs LLM : bascule à chaud (Paramètres › Connexions) ─────────────
+#
+# Choisir le modèle actif est une action du COCKPIT (canal du propriétaire). La
+# bascule est purement une préférence de génération : elle ne change RIEN aux
+# garde-fous — quel que soit le modèle, tout appel d'outil repasse par la Toolbox
+# et le moteur d'actions (niveaux de confiance, « propose puis approuve »). Le
+# choix est persisté pour survivre à un redémarrage.
+
+
+async def _llm_select(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    provider_id = str(msg.get("id") or "").strip()
+    if not provider_id:
+        return
+    if sentinel.brain.set_provider(provider_id):
+        await sentinel.store.set_setting("llm_provider", provider_id)
+        await sentinel._broadcast_llm()
+        label = next(
+            (p["label"] for p in sentinel.brain.providers_public()["providers"]
+             if p["id"] == provider_id),
+            provider_id,
+        )
+        await sentinel.hub.send(client, {"type": "notice", "text": f"Modèle actif : {label}."})
+    else:
+        await sentinel.hub.send(
+            client,
+            {"type": "notice",
+             "text": "Ce fournisseur n'est pas disponible (clé API manquante ?)."},
+        )
 
 
 # ── Veille au mot d'éveil (Phase 5A) ─────────────────────────────────────

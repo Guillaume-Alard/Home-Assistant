@@ -414,6 +414,7 @@ ws.addEventListener('event', (e) => {
     case 'assistant_delta': thread.addDelta(msg.id, msg.text); updateTranscript(); break;
     case 'assistant_end': thread.endStream(msg.id, msg.message, msg.cancelled); updateChatMeta(); break;
     case 'sources': thread.addSources(msg.sources); break;
+    case 'llm': if (lastHello) { lastHello.llm = msg; renderSettings(); } break;
     case 'speak_start': if (player) player.begin(msg.rate); break;
     case 'speak_end': if (player) player.end(); break;
     case 'notice': thread.notice(msg.text); break;
@@ -1145,14 +1146,80 @@ function renderConnexions(h, cfg) {
     desc: 'Rappels et alertes de sécurité te suivent sur ton téléphone (app Home Assistant). Communication seule — jamais de pilotage.',
     action: { label: 'Envoyer un test', onClick: () => { ws.sendJSON({ type: 'notify_test' }); toast('Notification de test envoyée…'); } },
   });
-  if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées.' });
+  if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées (Claude seul).' });
   for (const s of real) grid.appendChild(svcCard(s));
 
+  // Modèle actif (multi-LLM) — bascule à chaud entre Claude et les modèles alternatifs.
+  grid.appendChild(providerCard(h.llm));
+
   const soon = [
-    { ic: 'LLM', name: 'Autres modèles', desc: 'Brancher Gemini, Groq, Ollama local… et choisir le modèle par défaut.' },
     { ic: 'HA', name: 'App Luna dans Home Assistant', desc: 'Un panneau Luna dans la barre latérale de HA.' },
   ];
   for (const s of soon) grid.appendChild(svcCard({ ...s, status: 'Bientôt', badge: 'bientôt', soon: true }));
+}
+
+// Carte « Modèle actif » : sélecteur des fournisseurs LLM disponibles (bascule
+// immédiate). Aucun secret n'est affiché ; un fournisseur sans clé est grisé,
+// avec l'indice pour l'activer. Le choix repart au serveur (llm_select) qui
+// journalise et rediffuse l'état à tous les appareils.
+function providerCard(llm) {
+  const providers = (llm && llm.providers) || [];
+  const active = (llm && llm.active) || 'claude';
+  const activeP = providers.find((p) => p.id === active);
+  const card = document.createElement('div');
+  card.className = 'svc';
+  const top = document.createElement('div');
+  top.className = 'svc-top';
+  const icon = document.createElement('div');
+  icon.className = 'svc-ic';
+  icon.textContent = 'LLM';
+  const mid = document.createElement('div');
+  mid.style.flex = '1';
+  mid.style.minWidth = '0';
+  const nm = document.createElement('div');
+  nm.className = 'svc-name';
+  nm.textContent = 'Modèle actif';
+  const status = document.createElement('div');
+  status.className = 'svc-status on';
+  status.textContent = activeP ? `${activeP.label} · ${activeP.model}` : '—';
+  mid.append(nm, status);
+  top.append(icon, mid);
+  card.appendChild(top);
+
+  const desc = document.createElement('div');
+  desc.className = 'svc-desc';
+  desc.textContent = 'Le cerveau de Luna. Claude est le plus fiable pour les outils ; les autres passent par une API compatible. Quel que soit le modèle, toute action reste soumise à ta validation.';
+  card.appendChild(desc);
+
+  if (!providers.length) return card;
+
+  const sel = document.createElement('select');
+  sel.className = 'svc-select';
+  sel.setAttribute('aria-label', 'Choisir le modèle actif');
+  for (const p of providers) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.available ? `${p.label} — ${p.model}` : `${p.label} — clé manquante`;
+    opt.disabled = !p.available;
+    if (p.id === active) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.disabled = !ws.alive;
+  sel.addEventListener('change', () => {
+    if (sel.value && sel.value !== active) ws.sendJSON({ type: 'llm_select', id: sel.value });
+  });
+  card.appendChild(sel);
+
+  const missing = providers.filter((p) => !p.available && p.hint);
+  if (missing.length) {
+    const note = document.createElement('div');
+    note.className = 'svc-desc';
+    note.style.opacity = '0.7';
+    note.textContent = 'Pour en activer un : pose sa clé API dans .env — ' +
+      missing.map((p) => `${p.label} (${p.hint})`).join(', ') + '.';
+    card.appendChild(note);
+  }
+  return card;
 }
 
 function setSettingsSection(name) {

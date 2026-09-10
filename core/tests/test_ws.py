@@ -153,6 +153,50 @@ def test_hello_et_sante(client):
                     "reminders", "notify"):
             assert key in hello["config"]
         assert hello["config"]["notify"] is False  # notifications mobiles non configurées
+        # Bloc « llm » (multi-LLM) : fournisseur actif + liste, jamais de clé
+        assert hello["llm"]["active"] and hello["llm"]["default"]
+        assert hello["llm"]["providers"][0]["id"] == "claude"
+        assert "api_key" not in hello["llm"]["providers"][0]
+
+
+def test_llm_select_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """Bascule de fournisseur LLM : refuse l'indisponible, diffuse le nouvel état,
+    et le choix survit à un redémarrage (persisté dans le Store)."""
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "clef")  # Claude disponible (défaut)
+    monkeypatch.setenv("GROQ_API_KEY", "g")          # Groq disponible ; OpenAI non
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            llm = hello["llm"]
+            assert llm["active"] == "claude"
+            by_id = {p["id"]: p for p in llm["providers"]}
+            assert by_id["groq"]["available"] is True
+            assert by_id["openai"]["available"] is False
+
+            # Bascule vers Groq → diffusion du nouvel état + accusé au demandeur.
+            ws.send_text(json.dumps({"type": "llm_select", "id": "groq"}))
+            got = {}
+            for _ in range(2):
+                m = json.loads(ws.receive()["text"])
+                got[m["type"]] = m
+            assert got["llm"]["active"] == "groq"
+            assert "Groq" in got["notice"]["text"]
+
+            # Un fournisseur sans clé est refusé (aucune bascule, juste un avis).
+            ws.send_text(json.dumps({"type": "llm_select", "id": "openai"}))
+            notice = json.loads(ws.receive()["text"])
+            assert notice["type"] == "notice" and "disponible" in notice["text"]
+
+    # Redémarrage : une nouvelle instance relit le choix persisté (Groq).
+    with TestClient(app) as tc2:
+        with tc2.websocket_connect("/ws") as ws2:
+            hello2 = json.loads(ws2.receive()["text"])
+            assert hello2["llm"]["active"] == "groq"
 
 
 def test_memoire_via_ws(client):
