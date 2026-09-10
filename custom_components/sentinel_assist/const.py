@@ -13,4 +13,4 @@ REQUEST_TIMEOUT = 60  # secondes — le cerveau peut réfléchir + utiliser des 
 # pour apparaître dans le sélecteur de cartes sans configuration manuelle.
 CARD_URL_BASE = "/sentinel_assist_www"
 CARD_FILENAME = "luna-card.js"
-CARD_VERSION = "3"  # bump = purge du cache navigateur (?v=…)
+CARD_VERSION = "4"  # bump = purge du cache navigateur (?v=…)

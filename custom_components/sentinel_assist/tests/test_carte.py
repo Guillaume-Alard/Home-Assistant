@@ -128,11 +128,17 @@ def test_voix_pipeline(sync_playwright):
         page.wait_for_function("() => window.__banc.etatOrbe() === 'listening'", timeout=4000)
         assert page.evaluate("() => window.__banc.microDesactive()") is False
 
+        # Une bulle « en écoute » apparaît aussitôt et son niveau réagit à la voix (live).
+        page.wait_for_function("() => window.__banc.aBulleEcoute()", timeout=4000)
+        page.wait_for_function("() => window.__banc.niveauActif()", timeout=4000)
+
         # La transcription devient ma bulle, la réponse de Luna suit.
         page.wait_for_function(
             "() => window.__banc.bulles().some(b => b.classe.includes('moi') && b.texte === window.__banc.TRANSCRIPT)",
             timeout=5000,
         )
+        # La bulle « en écoute » s'est résolue en texte : plus aucune bulle d'écoute.
+        assert page.evaluate("() => window.__banc.aBulleEcoute()") is False
         page.wait_for_function(
             "() => window.__banc.bulles().some(b => b.classe.includes('luna') && b.texte === window.__banc.REPONSE)",
             timeout=5000,

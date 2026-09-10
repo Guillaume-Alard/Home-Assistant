@@ -89,6 +89,13 @@ interne ; **rien ne sort du réseau local par la carte**. L'orbe suit : elle
 **écoute** (halo ouvert, micro rose), **réfléchit**, puis **parle** pendant que
 la voix joue.
 
+Pendant que tu parles, une **bulle « en écoute »** apparaît côté toi et **réagit
+à ta voix** — un niveau sonore vivant — puis se **résout en tes mots** dès que la
+transcription arrive. En toute honnêteté : une transcription de type *whisper*
+rend la phrase **d'un bloc, à la fin** ; voir tes mots s'écrire au fur et à mesure
+demanderait un moteur STT **en flux**, que le pipeline standard ne fournit pas. Si
+le tien en fournit un jour, la carte affiche le texte partiel automatiquement.
+
 Un appui lance l'écoute ; un second appui dit « j'ai fini de parler » (sinon la
 détection de silence d'HA s'en charge, si ton pipeline l'active).
 
@@ -133,17 +140,16 @@ texte final, l'orbe « parle » pendant le remplissage, puis revient au repos, v
 un abonnement à `sentinel_assist/converse`, jamais un `fetch` externe) ; **repli**
 (si la commande de streaming manque, la carte bascule sur `conversation/process`
 et affiche quand même la réponse) ; **erreur** (une bulle, l'orbe au repos) ; et
-la **voix** (le micro lance le pipeline Assist simulé — écoute, transcription en
-bulle, réponse, voix jouée, retour au repos ; le micro et l'audio sont stubés,
-on éprouve la machine à états). Le banc manuel est
-`custom_components/sentinel_assist/tests/banc.html`.
+la **voix** (le micro lance le pipeline Assist simulé — une bulle « en écoute »
+apparaît et son niveau réagit, puis se résout en transcription, réponse, voix
+jouée, retour au repos ; le micro et l'audio sont stubés, on éprouve la machine à
+états). Le banc manuel est `custom_components/sentinel_assist/tests/banc.html`.
 
 ## La suite (incréments futurs, indépendants)
 
-Le **streaming mot à mot** et la **voix** sont faits. Viendront ensuite, si tu
-le veux :
+Le **streaming mot à mot**, la **voix** et la **bulle d'écoute vivante** sont
+faits. Viendront ensuite, si tu le veux :
 
-- La **transcription en direct** dans la bulle (au lieu d'apparaître à la fin de
-  la phrase) et le **mot d'éveil**.
+- Le **mot d'éveil** (« Luna… ») pour parler sans toucher l'écran.
 - Les **propositions** à valider directement dans la carte (aujourd'hui : dans
   le cockpit).

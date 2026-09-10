@@ -121,6 +121,26 @@ const STYLES = `
   .points span:nth-child(3) { animation-delay: .4s; }
   @keyframes clignote { 0%,100% { opacity:.25 } 50% { opacity:.9 } }
 
+  /* Bulle « en écoute » : un niveau sonore VIVANT (piloté par le micro), qui se
+     résout en texte dès que la transcription arrive. */
+  .bulle.ecoute { min-width: 58px; }
+  .niveau { display: inline-flex; align-items: center; gap: 3px; height: 18px; color: #fff; --n: 0; }
+  .niveau i {
+    width: 3px; height: 100%; border-radius: 2px; background: currentColor;
+    transform-origin: center; transform: scaleY(.2);
+    animation: onde 1.1s ease-in-out infinite;
+  }
+  .niveau i:nth-child(2) { animation-delay: .15s; }
+  .niveau i:nth-child(3) { animation-delay: .3s; }
+  .niveau i:nth-child(4) { animation-delay: .45s; }
+  .niveau i:nth-child(5) { animation-delay: .6s; }
+  .niveau.actif i { animation: none; transition: transform .09s ease-out;
+                    transform: scaleY(calc(0.16 + var(--n) * 0.9)); }
+  .niveau.actif i:nth-child(2) { transform: scaleY(calc(0.16 + var(--n) * 1.3)); }
+  .niveau.actif i:nth-child(4) { transform: scaleY(calc(0.16 + var(--n) * 1.15)); }
+  @keyframes onde { 0%,100% { transform: scaleY(.2) } 50% { transform: scaleY(.75) } }
+  @media (prefers-reduced-motion: reduce) { .niveau i { animation: none; } }
+
   /* ── Barre de saisie ───────────────────────────────────────────────── */
   .saisie {
     display: flex;
@@ -492,9 +512,14 @@ class LunaCard extends HTMLElement {
     if (!this._voixSupportee()) { this._noticeVoix(); return; }
     this._busy = true;
     this._bouton.disabled = true;
-    this._voix = { microArrete: false, handlerId: null, finEnvoyee: false };
+    this._voix = {
+      microArrete: false, handlerId: null, finEnvoyee: false,
+      transcrit: { role: "moi", texte: "", ecoute: true },  // bulle « en écoute »
+    };
+    this._messages.push(this._voix.transcrit);
     this._majMicro();
     this._orbe("listening");
+    this._peindreFil();
     try {
       await this._demarrerPipeline();
     } catch (err) {
@@ -540,8 +565,18 @@ class LunaCard extends HTMLElement {
 
   _surChunk(data) {
     const v = this._voix;
+    if (!v) return;
+    if (data.type === "level") {
+      // Niveau sonore live → la bulle « en écoute » réagit à la voix.
+      if (v.niveauEl) {
+        v.niveauEl.classList.add("actif");
+        const n = Math.max(0, Math.min(1, (data.value || 0) * 5));
+        v.niveauEl.style.setProperty("--n", n.toFixed(3));
+      }
+      return;
+    }
     const socket = this._hass && this._hass.connection && this._hass.connection.socket;
-    if (!v || !socket || v.handlerId == null || v.finEnvoyee) return;
+    if (!socket || v.handlerId == null || v.finEnvoyee) return;
     if (data.type === "chunk") {
       const audio = new Uint8Array(data.buffer);
       const frame = new Uint8Array(audio.length + 1);
@@ -559,13 +594,18 @@ class LunaCard extends HTMLElement {
     if (!v) return;
     const t = evt.type;
     const d = evt.data || {};
+    // Transcription PARTIELLE si l'STT en fournit (whisper standard n'en donne
+    // pas : la bulle réagit alors au niveau sonore jusqu'au texte final).
+    if (t !== "stt-end" && v.transcrit && v.transcrit.ecoute && d.stt_output && d.stt_output.text) {
+      v.transcrit.texte = d.stt_output.text;
+      this._peindreFil();
+    }
     if (t === "run-start") {
       v.handlerId = d.runner_data && d.runner_data.stt_binary_handler_id;
       if (v.node && !v.microArrete) { try { v.node.port.postMessage("start"); } catch { /* rien */ } }
     } else if (t === "stt-end") {
       if (!v.microArrete) this._arreterMicro();
-      const texte = (d.stt_output && d.stt_output.text) || "";
-      if (texte) { this._messages.push({ role: "moi", texte }); this._peindreFil(); }
+      this._finaliserTranscription((d.stt_output && d.stt_output.text) || "");
       this._orbe("thinking");
     } else if (t === "intent-end") {
       const io = d.intent_output || {};
@@ -584,6 +624,23 @@ class LunaCard extends HTMLElement {
       this._peindreFil();
       this._finPipeline();
     }
+  }
+
+  // La bulle « en écoute » devient le texte transcrit (ou disparaît si rien).
+  _finaliserTranscription(texte) {
+    const v = this._voix;
+    if (v && v.transcrit) {
+      if (texte) { v.transcrit.texte = texte; v.transcrit.ecoute = false; }
+      else {
+        const i = this._messages.indexOf(v.transcrit);
+        if (i >= 0) this._messages.splice(i, 1);
+      }
+      v.transcrit = null;
+      v.niveauEl = null;
+    } else if (texte) {
+      this._messages.push({ role: "moi", texte });
+    }
+    this._peindreFil();
   }
 
   // « J'ai fini de parler » : on arrête la capture ; la fin d'audio (trame vide)
@@ -615,6 +672,11 @@ class LunaCard extends HTMLElement {
     const v = this._voix;
     this._voix = null;
     if (v) {
+      // Bulle « en écoute » jamais résolue (fin/erreur avant la transcription) : on l'ôte.
+      if (v.transcrit && v.transcrit.ecoute) {
+        const i = this._messages.indexOf(v.transcrit);
+        if (i >= 0) { this._messages.splice(i, 1); this._peindreFil(); }
+      }
       try { v.unsub && v.unsub(); } catch { /* rien */ }
       try { v.node && v.node.port.postMessage("stop"); } catch { /* rien */ }
       try { v.node && v.node.disconnect(); } catch { /* rien */ }
@@ -671,7 +733,17 @@ class LunaCard extends HTMLElement {
     for (const m of this._messages) {
       const bulle = document.createElement("div");
       bulle.className = "bulle " + (m.role === "moi" ? "moi" : m.role === "erreur" ? "erreur" : "luna");
-      bulle.textContent = m.texte;
+      if (m.ecoute && !m.texte) {
+        // En écoute, sans texte encore : un niveau sonore vivant à la place.
+        bulle.classList.add("ecoute");
+        const meter = document.createElement("span");
+        meter.className = "niveau";
+        meter.innerHTML = "<i></i><i></i><i></i><i></i><i></i>";
+        bulle.appendChild(meter);
+      } else {
+        if (m.ecoute) bulle.classList.add("ecoute"); // transcription partielle affichée
+        bulle.textContent = m.texte;
+      }
       this._fil.appendChild(bulle);
     }
     if (attente) {
@@ -680,6 +752,8 @@ class LunaCard extends HTMLElement {
       points.innerHTML = "<span></span><span></span><span></span>";
       this._fil.appendChild(points);
     }
+    // Réf. du niveau sonore pour le pilotage live (le cas échéant).
+    if (this._voix) this._voix.niveauEl = this._fil.querySelector(".bulle.ecoute .niveau");
     this._fil.scrollTop = this._fil.scrollHeight;
   }
 }
