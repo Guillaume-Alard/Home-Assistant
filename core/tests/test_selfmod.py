@@ -29,12 +29,8 @@ def test_refuse_les_fichiers_garde_fous():
         "core/app/actions/engine.py",
         "core/app/actions/executors.py",
         "core/app/ha/client.py",
-        "core/app/monitors/docker.py",
-        "core/app/mail/client.py",
-        "core/app/mail/authorize.py",
         "core/app/selfmod/policy.py",      # la politique ne se désarme pas elle-même
         "core/app/selfmod/source.py",
-        "worker/app.py",                   # l'isolation de l'atelier
         "docker-compose.yml",
         "core/Dockerfile",
         "entrypoint.sh",

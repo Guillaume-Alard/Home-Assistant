@@ -89,15 +89,6 @@ class Settings:
     ha_url: str = ""
     ha_token: str = ""
 
-    # Surveillance (Phase 3A) — vides = moniteurs correspondants désactivés
-    docker_proxy_url: str = ""
-    docker_restart_url: str = ""
-    # Atelier de développement (Phase 3B) — vide = désactivé
-    worker_url: str = ""
-    atrium_url: str = ""
-    daily_report: str = ""            # "HH:MM" heure locale, vide = pas de rapport
-    container_mem_mo: int = 1500      # seuil mémoire signalé dans les audits
-
     # Agent conversationnel Assist (Phase 5B) — vide = endpoint /v1 désactivé
     assist_token: str = ""
 
@@ -106,25 +97,6 @@ class Settings:
     # de souvenirs les plus récents injectés à chaque tour.
     memory_enabled: bool = True
     memory_window: int = 60
-
-    # Courriel Gmail en LECTURE SEULE (Phase 3) — OAuth2, portée gmail.readonly.
-    # Les trois champs vides = fonction désactivée. Le jeton de rafraîchissement
-    # s'obtient une fois via mail/authorize.py (voir docs/EMAIL.md). Aucun envoi ni
-    # suppression n'est jamais possible (la portée l'interdit côté Google).
-    gmail_client_id: str = ""
-    gmail_client_secret: str = ""
-    gmail_refresh_token: str = ""
-    mail_max: int = 10  # nombre de non-lus détaillés dans un résumé
-
-    # Agenda Google en LECTURE SEULE (Phase 12) — même client OAuth que Gmail
-    # (GMAIL_CLIENT_ID/SECRET), portée calendar.readonly, jeton dédié. Vide =
-    # désactivé. Aucune création ni modification possible (portée en lecture seule).
-    gcal_refresh_token: str = ""
-    gcal_calendar_id: str = "primary"
-    # Écriture agenda (Phase 13) — Luna PROPOSE des rendez-vous, jamais créés sans
-    # ton accord (moteur « propose puis approuve »). Nécessite un jeton de portée
-    # calendar.events (réautorisation `--write`). GCAL_WRITE=1 pour l'activer.
-    gcal_write: bool = False
 
     # Recherche web (Phase 4) — outil natif Anthropic (web_search), citations
     # intégrées. Contrôlée : plafond d'usages par tour ; réservée aux personnes
@@ -160,17 +132,13 @@ class Settings:
     # Minuteurs & rappels vocaux (Phase 10) — 100% local. Off = outils retirés.
     reminders_enabled: bool = True
 
-    # Briefing du matin (Phase 11) — entité météo de Nova (auto-détectée si vide).
-    weather_entity: str = ""
-
     # Notifications mobiles (Phase 14) — Luna te joint sur ton téléphone via l'app
     # Home Assistant. `notify_service` = le service Nova (« mobile_app_xxx »), vide
     # = désactivé. Les bascules disent QUOI pousser : rappels qui sonnent, alertes
-    # de sécurité, briefing du matin. Communication seule — jamais de pilotage.
+    # de sécurité. Communication seule — jamais de pilotage.
     notify_service: str = ""
     notify_reminders: bool = True
     notify_alerts: bool = True
-    notify_briefing: bool = False
 
     # Garde-fous
     max_utterance_seconds: int = 60
@@ -217,24 +185,10 @@ class Settings:
             log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
             ha_url=os.environ.get("HA_URL", "").strip().rstrip("/"),
             ha_token=os.environ.get("HA_TOKEN", "").strip(),
-            docker_proxy_url=os.environ.get("DOCKER_PROXY_URL", "").strip().rstrip("/"),
-            docker_restart_url=os.environ.get("DOCKER_RESTART_URL", "").strip().rstrip("/"),
-            worker_url=os.environ.get("WORKER_URL", "").strip().rstrip("/"),
-            atrium_url=os.environ.get("ATRIUM_URL", "").strip().rstrip("/"),
-            daily_report=os.environ.get("SENTINEL_DAILY_REPORT", "").strip(),
-            container_mem_mo=_int(os.environ.get("SENTINEL_CONTAINER_MEM_MO"), 1500),
             assist_token=os.environ.get("SENTINEL_ASSIST_TOKEN", "").strip(),
             memory_enabled=os.environ.get("SENTINEL_MEMORY", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             memory_window=_int(os.environ.get("SENTINEL_MEMORY_WINDOW"), 60),
-            gmail_client_id=os.environ.get("GMAIL_CLIENT_ID", "").strip(),
-            gmail_client_secret=os.environ.get("GMAIL_CLIENT_SECRET", "").strip(),
-            gmail_refresh_token=os.environ.get("GMAIL_REFRESH_TOKEN", "").strip(),
-            mail_max=_int(os.environ.get("MAIL_MAX"), 10),
-            gcal_refresh_token=os.environ.get("GCAL_REFRESH_TOKEN", "").strip(),
-            gcal_calendar_id=os.environ.get("GCAL_CALENDAR_ID", "primary").strip() or "primary",
-            gcal_write=os.environ.get("GCAL_WRITE", "").strip().lower()
-            in ("1", "on", "true", "yes", "oui"),
             web_search_enabled=os.environ.get("SENTINEL_WEB_SEARCH", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             web_search_max_uses=_int(os.environ.get("SENTINEL_WEB_SEARCH_MAX"), 5),
@@ -251,29 +205,12 @@ class Settings:
             not in ("off", "0", "false", "no", "non"),
             reminders_enabled=os.environ.get("SENTINEL_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
-            weather_entity=os.environ.get("SENTINEL_WEATHER_ENTITY", "").strip(),
             notify_service=os.environ.get("SENTINEL_NOTIFY_SERVICE", "").strip(),
             notify_reminders=os.environ.get("SENTINEL_NOTIFY_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             notify_alerts=os.environ.get("SENTINEL_NOTIFY_ALERTS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
-            notify_briefing=os.environ.get("SENTINEL_NOTIFY_BRIEFING", "").strip().lower()
-            in ("1", "on", "true", "yes", "oui"),
         )
-
-    @property
-    def mail_enabled(self) -> bool:
-        return bool(self.gmail_client_id and self.gmail_client_secret and self.gmail_refresh_token)
-
-    @property
-    def calendar_enabled(self) -> bool:
-        return bool(self.gmail_client_id and self.gmail_client_secret and self.gcal_refresh_token)
-
-    @property
-    def calendar_write_enabled(self) -> bool:
-        # L'écriture (proposition de rendez-vous) suppose l'agenda actif ET le flag
-        # explicite GCAL_WRITE — un opt-in délibéré, jeton en écriture requis.
-        return self.calendar_enabled and self.gcal_write
 
     @property
     def notify_enabled(self) -> bool:

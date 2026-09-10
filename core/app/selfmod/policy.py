@@ -32,21 +32,14 @@ _PROTECTED_SUFFIXES = (
     "app/actions/engine.py",      # « propose puis approuve » (le cœur)
     "app/actions/executors.py",   # seuls écrivains autorisés vers le monde réel
     "app/ha/client.py",           # définition de call_service (écriture Nova)
-    "app/monitors/docker.py",     # restart_container (écriture Docker)
-    "app/mail/authorize.py",      # OAuth / obtention de jetons
-    "app/mail/client.py",         # manipulation des jetons Gmail
     "healthcheck.py",             # sonde TLS
 )
 
-# Sous-arbres entiers qui SONT des garde-fous : le moteur d'actions, la gestion
-# du courriel (secrets), la politique d'auto-amélioration elle-même, et l'atelier
-# isolé (sa frontière d'isolation ne se réécrit pas depuis l'intérieur).
+# Sous-arbres entiers qui SONT des garde-fous : le moteur d'actions et la
+# politique d'auto-amélioration elle-même.
 _PROTECTED_MARKERS = (
     "app/actions/",
-    "app/mail/",
-    "app/agenda/",        # jetons OAuth + écriture agenda (create_event)
     "app/selfmod/",
-    "worker/",            # le conteneur Claude Code isolé
     "data/certs/",        # certificats TLS
     ".github/",           # chaîne d'intégration
 )

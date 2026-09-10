@@ -99,7 +99,7 @@ async def svc(tmp_path):
     proto.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
     store = Store(tmp_path / "routines.db")
     await store.open()
-    engine = ActionEngine(build_registry(ha, ProtocolBook.load(proto), None), store)
+    engine = ActionEngine(build_registry(ha, ProtocolBook.load(proto)), store)
     changes: list[int] = []
 
     async def announce(text, speak):

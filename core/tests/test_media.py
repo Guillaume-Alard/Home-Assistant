@@ -83,7 +83,7 @@ async def engine_media(tmp_path):
     proto.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
     store = Store(tmp_path / "media.db")
     await store.open()
-    engine = ActionEngine(build_registry(ha, ProtocolBook.load(proto), None), store)
+    engine = ActionEngine(build_registry(ha, ProtocolBook.load(proto)), store)
     from types import SimpleNamespace
     yield SimpleNamespace(engine=engine, ha=ha, calls=calls)
     await store.close()

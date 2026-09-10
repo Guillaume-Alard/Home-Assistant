@@ -1126,16 +1126,11 @@ function svcCard(o) {
 function renderConnexions(h, cfg) {
   const grid = els.setConnexions;
   grid.textContent = '';
-  const at = devAtelier || {};
   const real = [
     { ic: 'HA', name: 'Home Assistant (Nova)',
       status: h.ha_configured ? (h.ha_connected ? 'Connecté' : 'Déconnecté') : 'Non configuré',
       statusCls: h.ha_configured ? (h.ha_connected ? 'on' : 'warn') : '',
-      desc: 'Lumières, chauffage, volets, scènes, capteurs.' },
-    { ic: 'GH', name: 'GitHub (atelier de dev)',
-      status: h.dev_configured ? (at.push_possible ? `push prêt${at.auth ? ' · ' + at.auth : ''}` : 'jeton absent') : 'désactivé',
-      statusCls: h.dev_configured ? (at.push_possible ? 'on' : 'warn') : '',
-      desc: 'Branches, diffs, push après proposition approuvée.' },
+      desc: 'Lumières, chauffage, volets, scènes, capteurs — toutes tes entités.' },
     { ic: 'IA', name: 'Cerveau (Anthropic)',
       status: cfg.anthropic ? 'Actif' : 'Clé absente',
       statusCls: cfg.anthropic ? 'on' : 'warn',
@@ -1145,32 +1140,17 @@ function renderConnexions(h, cfg) {
       statusCls: cfg.assist ? 'on' : '',
       desc: 'Luna comme agent conversationnel de Home Assistant.' },
   ];
-  if (cfg.docker) real.push({ ic: 'DK', name: 'Surveillance Docker', status: 'Active · lecture', statusCls: 'on', desc: 'État des conteneurs, mémoire, redémarrage sur proposition.' });
-  if (cfg.atrium) real.push({ ic: 'AT', name: 'Atrium', status: 'Surveillé', statusCls: 'on', desc: 'Disponibilité et latence du service.' });
-  if (cfg.mail) real.push({ ic: 'GM', name: 'Gmail (lecture seule)', status: 'Connecté', statusCls: 'on', desc: 'Résumé de tes non-lus, pour toi seul. Aucun envoi ni suppression.' });
-  if (cfg.calendar) real.push({
-    ic: 'CA',
-    name: cfg.calendar_write ? 'Google Agenda (lecture + écriture)' : 'Google Agenda (lecture seule)',
-    status: 'Connecté', statusCls: 'on',
-    desc: cfg.calendar_write
-      ? 'Tes rendez-vous du jour et de la semaine. Luna peut préparer un rendez-vous — créé seulement après ton approbation.'
-      : 'Tes rendez-vous du jour et de la semaine. Aucune création ni modification.',
-  });
   if (cfg.notify) real.push({
     ic: 'NT', name: 'Notifications mobiles', status: 'Connecté', statusCls: 'on',
-    desc: 'Rappels, alertes de sécurité et briefing te suivent sur ton téléphone (app Home Assistant). Communication seule — jamais de pilotage.',
+    desc: 'Rappels et alertes de sécurité te suivent sur ton téléphone (app Home Assistant). Communication seule — jamais de pilotage.',
     action: { label: 'Envoyer un test', onClick: () => { ws.sendJSON({ type: 'notify_test' }); toast('Notification de test envoyée…'); } },
   });
   if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées.' });
   for (const s of real) grid.appendChild(svcCard(s));
 
   const soon = [
-    { ic: 'SP', name: 'Spotify', desc: 'Lecture, volume, transfert entre pièces.' },
-    ...(cfg.mail ? [] : [{ ic: 'GM', name: 'Gmail', desc: 'Résumés de tes non-lus (lecture seule).' }]),
-    { ic: 'CA', name: 'Google Agenda', desc: 'Créneaux, invitations, rappels vocaux.' },
-    { ic: 'DR', name: 'Google Drive', desc: 'Recherche documentaire et pièces jointes.' },
-    { ic: 'NO', name: 'Notion', desc: 'Notes de réunion et base de tâches.' },
-    { ic: 'ME', name: 'Météo & trafic', desc: 'Briefing du matin, alertes trajet.' },
+    { ic: 'LLM', name: 'Autres modèles', desc: 'Brancher Gemini, Groq, Ollama local… et choisir le modèle par défaut.' },
+    { ic: 'HA', name: 'App Luna dans Home Assistant', desc: 'Un panneau Luna dans la barre latérale de HA.' },
   ];
   for (const s of soon) grid.appendChild(svcCard({ ...s, status: 'Bientôt', badge: 'bientôt', soon: true }));
 }

@@ -83,18 +83,6 @@ def client_wake(fake_wyoming, tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def client_dev(fake_wyoming, fake_worker, tmp_path, monkeypatch):
-    _base_env(monkeypatch, tmp_path, fake_wyoming)
-    monkeypatch.setenv("HA_URL", "")
-    monkeypatch.setenv("WORKER_URL", f"http://127.0.0.1:{fake_worker.port}")
-
-    from app.main import app
-
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest.fixture()
 def fake_brain(monkeypatch):
     from app.brain.llm import Brain
 
@@ -160,18 +148,11 @@ def test_hello_et_sante(client):
         for key in ("effort", "whisper_model", "piper_voice", "wake_model", "tz"):
             assert key in hello["engine"]
         # Capacités booléennes pour les cartes Connexions
-        for key in ("ha", "worker", "assist", "anthropic", "memory", "speaker", "mail",
+        for key in ("ha", "assist", "anthropic", "memory", "speaker",
                     "web_search", "self_improve", "proactive", "routines", "music",
-                    "reminders", "calendar", "calendar_write", "notify"):
+                    "reminders", "notify"):
             assert key in hello["config"]
-        assert hello["config"]["calendar"] is False  # agenda non configuré dans ces tests
-        assert hello["config"]["calendar_write"] is False  # écriture agenda désactivée
         assert hello["config"]["notify"] is False  # notifications mobiles non configurées
-
-        # Agenda non configuré → réponse « désactivé », sans réseau
-        ws.send_text(json.dumps({"type": "agenda"}))
-        agenda = json.loads(ws.receive()["text"])
-        assert agenda["type"] == "agenda" and agenda["enabled"] is False
 
 
 def test_memoire_via_ws(client):
@@ -427,40 +408,6 @@ def test_reminders_via_ws(fake_wyoming, tmp_path, monkeypatch):
             events, _ = _drain(ws, {"reminders"})
             payload = next(e for e in events if e["type"] == "reminders")
             assert not any(r["id"] == rid for r in payload["reminders"])
-
-
-def test_page_publiee_servie_avec_csp(fake_wyoming, tmp_path, monkeypatch):
-    """Une page publiée est servie à /p/<slug> avec une CSP verrouillant le réseau ;
-    un brouillon ou un slug inconnu renvoie 404."""
-    import asyncio
-
-    from app.store import Store
-
-    _base_env(monkeypatch, tmp_path, fake_wyoming)
-    monkeypatch.setenv("HA_URL", "")
-    data = tmp_path / "data"
-    data.mkdir(parents=True, exist_ok=True)
-
-    async def seed():
-        store = Store(data / "sentinel.db")
-        await store.open()
-        pub = await store.add_page(title="Suivi Sport", html="<!doctype html><title>t</title><h1>Salut</h1>")
-        await store.publish_page(pub["id"])
-        draft = await store.add_page(title="Brouillon", html="<h1>secret</h1>")
-        await store.close()
-        return pub["slug"], draft["slug"]
-
-    published_slug, draft_slug = asyncio.run(seed())
-
-    from app.main import app
-
-    with TestClient(app) as tc:
-        ok = tc.get(f"/p/{published_slug}")
-        assert ok.status_code == 200 and "Salut" in ok.text
-        assert "connect-src 'none'" in ok.headers.get("content-security-policy", "")
-        # Un brouillon n'est jamais servi publiquement, ni un slug inconnu
-        assert tc.get(f"/p/{draft_slug}").status_code == 404
-        assert tc.get("/p/inexistant").status_code == 404
 
 
 def test_profils_vocaux_via_ws(client):
@@ -729,56 +676,7 @@ def test_assist_models(client_assist):
     assert any(m["id"] == "sentinel" for m in r.json()["data"])
 
 
-# ── Panneaux Phase 4 : atelier, santé, historique ────────────────────────
-
-
-def test_console_atelier_via_ws(client_dev, fake_worker):
-    import httpx
-
-    with client_dev.websocket_connect("/ws") as ws:
-        hello = json.loads(ws.receive()["text"])
-        assert hello["dev_configured"] is True
-        assert hello["dev_running"] is None  # état de la pastille ⚒ dès la connexion
-
-        # Liste + état de l'atelier (vide au départ)
-        ws.send_text(json.dumps({"type": "dev_tasks"}))
-        events, _ = _drain(ws, {"dev_tasks"})
-        reply = next(e for e in events if e["type"] == "dev_tasks")
-        assert reply["tasks"] == []
-        assert reply["atelier"]["auth"] == "clé API"
-        assert reply["atelier"]["repos"] == ["atrium", "loggia"]
-
-        # Une tâche démarre côté worker : journal en direct puis diff
-        task = httpx.post(
-            f"http://127.0.0.1:{fake_worker.port}/tasks",
-            json={"repo": "loggia", "instruction": "Corrige le README"},
-        ).json()
-        fake_worker.add_log(task["id"], "Clone de loggia…", "▸ modifie README.md")
-
-        ws.send_text(json.dumps({"type": "dev_log", "id": task["id"], "after": 0}))
-        events, _ = _drain(ws, {"dev_log"})
-        logmsg = next(e for e in events if e["type"] == "dev_log")
-        assert logmsg["id"] == task["id"] and logmsg["next"] == 2
-        assert logmsg["lines"][1]["line"] == "▸ modifie README.md"
-
-        # Lecture incrémentale : rien de neuf → aucune ligne
-        ws.send_text(json.dumps({"type": "dev_log", "id": task["id"], "after": 2}))
-        events, _ = _drain(ws, {"dev_log"})
-        assert next(e for e in events if e["type"] == "dev_log")["lines"] == []
-
-        ws.send_text(json.dumps({"type": "dev_diff", "id": task["id"]}))
-        events, _ = _drain(ws, {"dev_diff"})
-        diff = next(e for e in events if e["type"] == "dev_diff")
-        assert "+correctif" in diff["diff"]
-
-
-def test_atelier_non_configure(client):
-    with client.websocket_connect("/ws") as ws:
-        hello = json.loads(ws.receive()["text"])
-        assert hello["dev_configured"] is False
-        ws.send_text(json.dumps({"type": "dev_tasks"}))
-        events, _ = _drain(ws, {"dev_tasks"})
-        assert "WORKER_URL" in next(e for e in events if e["type"] == "dev_tasks")["error"]
+# ── Panneaux : santé (Nova), historique ──────────────────────────────────
 
 
 def test_panneau_sante_via_ws(client):
@@ -788,7 +686,6 @@ def test_panneau_sante_via_ws(client):
         events, _ = _drain(ws, {"sante"})
     sante = next(e for e in events if e["type"] == "sante")
     assert sante["data"]["nova"] == {"configuree": False}
-    assert "systeme" in sante["data"]
 
 
 def test_panneau_historique_via_ws(client_ha, fake_ha, brain_interdit):

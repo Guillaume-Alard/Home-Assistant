@@ -99,7 +99,7 @@ async def eng(tmp_path):
     proto.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
     store = Store(tmp_path / "proactive.db")
     await store.open()
-    engine = ActionEngine(build_registry(ha, ProtocolBook.load(proto), None), store)
+    engine = ActionEngine(build_registry(ha, ProtocolBook.load(proto)), store)
 
     said: list[tuple[str, bool]] = []
     changes: list[int] = []

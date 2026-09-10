@@ -40,17 +40,14 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .actions.engine import ActionEngine
-from .agenda import CalendarClient, CalendarError
 from .actions.executors import build_registry
 from .notify import Notifier
 from .brain.intents import LocalIntents
@@ -58,16 +55,13 @@ from .brain.llm import Brain, LLMUnavailable
 from .brain.memory import format_profile, normalize_category
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.toolbox import Toolbox
-from .briefing import BriefingService
 from .config import Settings, find_ui_dir
-from .devwork import DevWatcher, WorkerClient, WorkerError
 from .identity import OWNER, Speaker, identify
 from .ha.alerts import AlertEngine, load_rules
 from .ha.client import HAClient
 from .ha.media import load_config as load_media_config, snapshot as media_snapshot
 from .ha.protocols import ProtocolBook
-from .mail import GmailClient, MailError
-from .monitors import AtriumMonitor, DockerMonitor, HealthService
+from .monitors import HealthService
 from .proactive import ProactiveEngine
 from .reminders import ReminderScheduler
 from .routines import RoutineService
@@ -216,47 +210,11 @@ class Sentinel:
         else:
             log.warning("HA_URL/HA_TOKEN absents : domotique désactivée (conversation seule).")
 
-        self._docker = (
-            DockerMonitor(settings.docker_proxy_url, settings.docker_restart_url or None)
-            if settings.docker_proxy_url
-            else None
-        )
-        atrium = AtriumMonitor(settings.atrium_url) if settings.atrium_url else None
-        self.health = HealthService(settings, self.ha, self._docker, atrium)
-        self._worker = WorkerClient(settings.worker_url) if settings.worker_url else None
-        # Courriel en lecture seule (Phase 3) — désactivé si non configuré (OAuth2).
-        self.mail: GmailClient | None = (
-            GmailClient(
-                settings.gmail_client_id,
-                settings.gmail_client_secret,
-                settings.gmail_refresh_token,
-                max_results=settings.mail_max,
-            )
-            if settings.mail_enabled
-            else None
-        )
+        # Santé de Nova : version, entités indisponibles, mises à jour, hors-ligne.
+        self.health = HealthService(settings, self.ha)
 
-        # Agenda Google (Phase 12 lecture / Phase 13 écriture) — même client OAuth
-        # que Gmail. Le client d'écriture n'est passé au registre que si l'écriture
-        # est explicitement activée (GCAL_WRITE + jeton de portée calendar.events) :
-        # sinon l'action « agenda.creer » n'existe pas du tout.
-        try:
-            _cal_tz = ZoneInfo(settings.tz)
-        except Exception:
-            _cal_tz = None
-        self.calendar: CalendarClient | None = (
-            CalendarClient(
-                settings.gmail_client_id, settings.gmail_client_secret, settings.gcal_refresh_token,
-                tz=_cal_tz, calendar_id=settings.gcal_calendar_id,
-            )
-            if settings.calendar_enabled else None
-        )
-        _cal_writer = self.calendar if settings.calendar_write_enabled else None
-
-        if self.ha or self._docker or self._worker or _cal_writer:
-            registry = build_registry(
-                self.ha, self.protocols, self._docker, self._worker, calendar=_cal_writer
-            )
+        if self.ha:
+            registry = build_registry(self.ha, self.protocols)
             self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
         # Notifications mobiles (Phase 14) : Luna te joint sur ton téléphone via le
         # service notify de Nova. Communication seule, jamais de pilotage. Inactif
@@ -264,7 +222,6 @@ class Sentinel:
         self.notifier = Notifier(
             self.engine, settings.notify_service,
             reminders=settings.notify_reminders, alerts=settings.notify_alerts,
-            briefing=settings.notify_briefing,
         )
         if self.ha and self.engine:
             self.alerts = AlertEngine(
@@ -291,8 +248,6 @@ class Sentinel:
             if self.ha and settings.music_enabled else None
         )
         self._media_last = 0.0  # anti-rafale des diffusions d'état média
-        # Briefing du matin (Phase 11) : météo + maison + courriel + rappels + santé + agenda.
-        self.briefing = BriefingService(settings, self.ha, self.health, store, self.mail, self.calendar)
         # Minuteurs & rappels (Phase 10) : 100% local, indépendant de Nova.
         self.reminders: ReminderScheduler | None = (
             ReminderScheduler(
@@ -307,13 +262,10 @@ class Sentinel:
         self.source = SelfSource(Path(__file__).resolve().parent, settings.ui_dir)
         toolbox = Toolbox(
             self.ha, self.engine, self.protocols, store,
-            health=self.health, docker=self._docker, worker=self._worker,
-            mail=self.mail, source=self.source, self_improve=settings.self_improve_enabled,
+            health=self.health, source=self.source, self_improve=settings.self_improve_enabled,
             routines=self.routines, media=self.media_cfg,
-            reminders=settings.reminders_enabled, tz=settings.tz, briefing=self.briefing,
-            calendar=self.calendar, calendar_write=settings.calendar_write_enabled,
+            reminders=settings.reminders_enabled, tz=settings.tz,
             on_memory_change=self._broadcast_memoires,
-            on_pages_change=self._broadcast_pages,
             on_suggestions_change=self._broadcast_evolutions,
             on_reminders_change=self._broadcast_reminders,
         )
@@ -326,10 +278,7 @@ class Sentinel:
             on_activity=self._on_activity, memory_provider=self._memory_context,
             on_sources=self._broadcast_sources,
         )
-        self._report_task: asyncio.Task | None = None
-        self._devwatch_task: asyncio.Task | None = None
         self._proactive_task: asyncio.Task | None = None
-        self._dev_running: dict | None = None  # tâche de dev en cours (cache pour hello)
         self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
 
     def _spawn(self, coro) -> None:
@@ -430,15 +379,6 @@ class Sentinel:
     async def _broadcast_speakers(self) -> None:
         await self.hub.broadcast(await self._speakers_payload())
 
-    # ── Pages web (Phase 5) ──────────────────────────────────────────────
-
-    async def _pages_payload(self) -> dict:
-        return {"type": "pages", "pages": await self.store.list_pages()}
-
-    async def _broadcast_pages(self) -> None:
-        """Rafraîchit Paramètres › Pages web sur tous les appareils connectés."""
-        await self.hub.broadcast(await self._pages_payload())
-
     # ── Auto-amélioration encadrée (Phase 6) ─────────────────────────────
 
     async def _evolutions_payload(self) -> dict:
@@ -517,17 +457,6 @@ class Sentinel:
             titre = "Minuteur terminé" if kind == "timer" else "Rappel"
             self._spawn(self.notifier.push(label or "C'est l'heure.", title=f"{icon} {titre}"))
 
-    # ── Agenda Google (Phase 12) ─────────────────────────────────────────
-
-    async def _agenda_payload(self) -> dict:
-        if self.calendar is None:
-            return {"type": "agenda", "enabled": False, "events": []}
-        try:
-            events = await self.calendar.upcoming(7)
-        except CalendarError as exc:
-            return {"type": "agenda", "enabled": True, "error": str(exc), "events": []}
-        return {"type": "agenda", "enabled": True, "events": events}
-
     # ── Annonces proactives (alertes, à tous les appareils) ──────────────
 
     async def announce(self, text: str, severity: str = "info", speak: bool = True) -> None:
@@ -547,86 +476,24 @@ class Sentinel:
         if self.notifier.alerts:
             self._spawn(self.notifier.push(message, title=f"⚠️ {title}"))
 
-    # ── Rapport quotidien ────────────────────────────────────────────────
-
-    def start_daily_report(self) -> None:
-        hhmm = self.settings.daily_report
-        if not hhmm:
-            return
-        try:
-            hour, minute = (int(x) for x in hhmm.split(":", 1))
-            if not (0 <= hour < 24 and 0 <= minute < 60):
-                raise ValueError
-        except ValueError:
-            log.warning("SENTINEL_DAILY_REPORT invalide (%r) — rapport désactivé", hhmm)
-            return
-        self._report_task = asyncio.create_task(self._daily_report_loop(hour, minute))
-        log.info("Rapport quotidien planifié à %02d:%02d (%s)", hour, minute, self.settings.tz)
-
-    async def _daily_report_loop(self, hour: int, minute: int) -> None:
-        # Sondage à la minute plutôt que sleep-until : insensible aux changements
-        # d'heure (DST) et aux dérives d'horloge.
-        try:
-            tz = ZoneInfo(self.settings.tz)
-        except Exception:
-            tz = None
-        last_fired_on = None
-        while True:
-            await asyncio.sleep(30)
-            now = datetime.now(tz)
-            if now.hour != hour or now.minute != minute or last_fired_on == now.date():
-                continue
-            last_fired_on = now.date()
-            try:
-                pending = await self.store.list_proposals("pending")
-                deferred = await self.store.list_proposals("deferred")
-                text = await self.briefing.compose(pending=len(pending) + len(deferred))
-                await self.announce(text, "info", speak=True)
-                # Notification mobile (Phase 14) : le briefing du matin poussé (opt-in).
-                if self.notifier.briefing:
-                    self._spawn(self.notifier.push(text, title="Briefing du matin"))
-            except Exception:
-                log.exception("Rapport quotidien en échec")
-
-    def start_dev_watcher(self) -> None:
-        if self._worker is None:
-            return
-        watcher = DevWatcher(
-            self._worker, self.engine, self.announce,
-            on_running_change=self._on_dev_running,
-        )
-        self._devwatch_task = asyncio.create_task(watcher.run())
-        log.info("Veilleur des tâches de développement actif (%s)", self.settings.worker_url)
-
     def start_proactive(self) -> None:
         if self.proactive is None:
             return
         self._proactive_task = asyncio.create_task(self.proactive.run())
         log.info("Veilleur proactif actif (intervalle %ss)", self.settings.proactive_interval)
 
-    async def _on_dev_running(self, running: dict | None) -> None:
-        """Pastille « atelier au travail » de l'UI, mise à jour par le veilleur."""
-        self._dev_running = (
-            {"id": running.get("id"), "repo": running.get("repo")} if running else None
-        )
-        await self.hub.broadcast({"type": "dev_status", "running": self._dev_running})
-
     async def stop_background(self) -> None:
-        for task in (self._report_task, self._devwatch_task, self._proactive_task):
-            if task:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-        self._report_task = None
-        self._devwatch_task = None
+        task = self._proactive_task
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         self._proactive_task = None
         if self.routines:
             await self.routines.stop()
         if self.reminders:
             await self.reminders.stop()
         await self.health.close()
-        if self._worker:
-            await self._worker.close()
 
     async def _speak_announcement(self, text: str, severity: str) -> None:
         async with self._announce_lock:  # une annonce vocale à la fois
@@ -968,8 +835,6 @@ async def lifespan(app: FastAPI):
     app.state.sentinel = sentinel
     if sentinel.ha:
         await sentinel.ha.start()
-    sentinel.start_daily_report()
-    sentinel.start_dev_watcher()
     sentinel.start_proactive()
     if sentinel.routines:
         sentinel.routines.start_scanner()
@@ -1093,8 +958,6 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "history": await sentinel.store.recent_messages(50),
             "ha_connected": bool(sentinel.ha and sentinel.ha.connected),
             "ha_configured": sentinel.ha is not None,
-            "dev_configured": sentinel._worker is not None,
-            "dev_running": sentinel._dev_running,
             "wake_available": sentinel.wake_detector is not None,
             "wake_word": sentinel.settings.wake_model.replace("_", " "),
             "proposals": sorted(pending + deferred, key=lambda p: p["num"]),
@@ -1115,23 +978,16 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             },
             "config": {
                 "ha": bool(sentinel.settings.ha_url),
-                "worker": bool(sentinel.settings.worker_url),
-                "atrium": bool(sentinel.settings.atrium_url),
-                "docker": bool(sentinel.settings.docker_proxy_url),
                 "assist": bool(sentinel.settings.assist_token),
                 "anthropic": bool(sentinel.settings.anthropic_api_key),
-                "daily_report": sentinel.settings.daily_report,
                 "memory": sentinel.settings.memory_enabled,
                 "speaker": sentinel.speaker_embedder is not None,
-                "mail": sentinel.mail is not None,
                 "web_search": sentinel.settings.web_search_enabled and bool(sentinel.settings.anthropic_api_key),
                 "self_improve": sentinel.settings.self_improve_enabled,
                 "proactive": sentinel.proactive is not None,
                 "routines": sentinel.routines is not None,
                 "music": sentinel.media_cfg is not None,
                 "reminders": sentinel.reminders is not None,
-                "calendar": sentinel.calendar is not None,
-                "calendar_write": sentinel.settings.calendar_write_enabled,
                 "notify": sentinel.notifier.enabled,
             },
             # Profils vocaux (Phase 2) pour la page Paramètres › Profils vocaux
@@ -1276,23 +1132,11 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "wake_stop":
         await _stop_wake(client)
 
-    elif mtype == "dev_tasks":
-        await _reply_dev_tasks(sentinel, client)
-
-    elif mtype == "dev_log":
-        await _reply_dev_log(sentinel, client, msg)
-
-    elif mtype == "dev_diff":
-        await _reply_dev_diff(sentinel, client, msg)
-
     elif mtype == "sante":
         await _reply_sante(sentinel, client)
 
     elif mtype == "historique":
         await _reply_historique(sentinel, client)
-
-    elif mtype == "mail":
-        await _reply_mail(sentinel, client)
 
     elif mtype == "memoires":
         await sentinel.hub.send(client, await sentinel._memoires_payload())
@@ -1317,21 +1161,6 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "speaker_enroll_end":
         await _speaker_enroll_finish(sentinel, client)
-
-    elif mtype == "pages":
-        await sentinel.hub.send(client, await sentinel._pages_payload())
-
-    elif mtype == "page_get":
-        await _page_get(sentinel, client, msg)
-
-    elif mtype == "page_publish":
-        await _page_action(sentinel, msg, "publish")
-
-    elif mtype == "page_unpublish":
-        await _page_action(sentinel, msg, "unpublish")
-
-    elif mtype == "page_delete":
-        await _page_action(sentinel, msg, "delete")
 
     elif mtype == "evolutions":
         await sentinel.hub.send(client, await sentinel._evolutions_payload())
@@ -1376,9 +1205,6 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
         if rid and (r := await sentinel.store.get_reminder(rid)) and r["status"] == "active":
             await sentinel.store.set_reminder_status(rid, "cancelled")
             await sentinel._broadcast_reminders()
-
-    elif mtype == "agenda":
-        await sentinel.hub.send(client, await sentinel._agenda_payload())
 
     elif mtype == "notify_test":
         # Notification mobile de test (Phase 14) : vérifier le réglage depuis le cockpit.
@@ -1430,63 +1256,6 @@ async def _stop_wake(client: Client) -> None:
 
 # ── Requêtes de lecture des panneaux (réponse au seul client demandeur) ──
 
-_WORKER_ABSENT = "L'atelier de développement n'est pas configuré (WORKER_URL)."
-
-
-async def _reply_dev_tasks(sentinel: Sentinel, client: Client) -> None:
-    if sentinel._worker is None:
-        await sentinel.hub.send(client, {"type": "dev_tasks", "error": _WORKER_ABSENT})
-        return
-    try:
-        tasks, health = await asyncio.gather(
-            sentinel._worker.list_tasks(), sentinel._worker.health()
-        )
-    except WorkerError as exc:
-        await sentinel.hub.send(client, {"type": "dev_tasks", "error": str(exc)})
-        return
-    health = health or {}
-    await sentinel.hub.send(client, {
-        "type": "dev_tasks",
-        "tasks": tasks,
-        "atelier": {
-            "auth": health.get("auth"),
-            "push_possible": bool(health.get("push_possible")),
-            "repos": health.get("repos") or [],
-        },
-    })
-
-
-async def _reply_dev_log(sentinel: Sentinel, client: Client, msg: dict) -> None:
-    task_id = str(msg.get("id") or "")
-    if sentinel._worker is None or not task_id:
-        return
-    try:
-        after = max(0, int(msg.get("after") or 0))
-    except (TypeError, ValueError):
-        after = 0
-    try:
-        data = await sentinel._worker.get_log(task_id, after)
-    except WorkerError as exc:
-        await sentinel.hub.send(
-            client, {"type": "dev_log", "id": task_id, "error": str(exc)}
-        )
-        return
-    await sentinel.hub.send(client, {"type": "dev_log", "id": task_id, **data})
-
-
-async def _reply_dev_diff(sentinel: Sentinel, client: Client, msg: dict) -> None:
-    task_id = str(msg.get("id") or "")
-    if sentinel._worker is None or not task_id:
-        return
-    try:
-        diff = await sentinel._worker.get_diff(task_id)
-    except WorkerError as exc:
-        await sentinel.hub.send(
-            client, {"type": "dev_diff", "id": task_id, "error": str(exc)}
-        )
-        return
-    await sentinel.hub.send(client, {"type": "dev_diff", "id": task_id, "diff": diff})
-
 
 async def _reply_sante(sentinel: Sentinel, client: Client) -> None:
     try:
@@ -1499,22 +1268,6 @@ async def _reply_sante(sentinel: Sentinel, client: Client) -> None:
         )
         return
     await sentinel.hub.send(client, {"type": "sante", "data": snap})
-
-
-async def _reply_mail(sentinel: Sentinel, client: Client) -> None:
-    # Le cockpit est le canal du propriétaire : le relevé n'y est servi qu'au
-    # demandeur (pas de diffusion). Voix : passe par l'outil resume_mails (owner).
-    if sentinel.mail is None:
-        await sentinel.hub.send(
-            client, {"type": "mail", "error": "Le courriel n'est pas configuré (voir docs/EMAIL.md)."}
-        )
-        return
-    try:
-        data = await sentinel.mail.summary()
-    except MailError as exc:
-        await sentinel.hub.send(client, {"type": "mail", "error": str(exc)})
-        return
-    await sentinel.hub.send(client, {"type": "mail", "data": data})
 
 
 async def _reply_historique(sentinel: Sentinel, client: Client) -> None:
@@ -1553,37 +1306,6 @@ async def _memoire_delete(sentinel: Sentinel, msg: dict) -> None:
         return
     await sentinel.store.delete_memory(mem_id)
     await sentinel._broadcast_memoires()
-
-
-# ── Pages web : aperçu + publication/dépublication/suppression (cockpit) ──────
-#
-# Luna RÉDIGE (outils creer_page/modifier_page) ; publier, dépublier et supprimer
-# sont des actions du COCKPIT (canal du propriétaire) — la revue humaine avant
-# mise en ligne, jamais contournée. L'aperçu renvoie le HTML du brouillon au seul
-# demandeur, affiché dans une iframe cloisonnée (jamais servi à une URL publique).
-
-
-async def _page_get(sentinel: Sentinel, client: Client, msg: dict) -> None:
-    page = await sentinel.store.get_page(str(msg.get("id") or "").strip())
-    if page is None:
-        return
-    await sentinel.hub.send(client, {
-        "type": "page", "id": page["id"], "title": page["title"], "slug": page["slug"],
-        "html": page["html"], "published": page["published_html"] is not None,
-    })
-
-
-async def _page_action(sentinel: Sentinel, msg: dict, action: str) -> None:
-    page_id = str(msg.get("id") or "").strip()
-    if not page_id:
-        return
-    if action == "publish":
-        await sentinel.store.publish_page(page_id)
-    elif action == "unpublish":
-        await sentinel.store.unpublish_page(page_id)
-    elif action == "delete":
-        await sentinel.store.delete_page(page_id)
-    await sentinel._broadcast_pages()
 
 
 # ── Auto-amélioration : revue des propositions d'évolution (cockpit) ──────────
@@ -1780,33 +1502,6 @@ async def _speaker_enroll_finish(sentinel: Sentinel, client: Client) -> None:
         return
     await sentinel.hub.send(client, {"type": "enroll_result", "ok": True, "text": "Échantillon enregistré."})
     await sentinel._broadcast_speakers()
-
-
-# ── Pages web publiées (Phase 5) — servies sur le LAN à /p/<slug> ────────────
-#
-# Ne sert QUE la version publiée (jamais un brouillon). CSP stricte : la page peut
-# être interactive (styles/scripts en ligne) mais NE PEUT PAS contacter le réseau
-# (`connect-src 'none'`) — son JS ne peut donc jamais rappeler l'API/WS de Sentinel.
-_PAGE_CSP = (
-    "default-src 'self' 'unsafe-inline' data:; connect-src 'none'; "
-    "base-uri 'none'; form-action 'none'"
-)
-
-
-@app.get("/p/{slug}")
-async def serve_page(slug: str, request: Request) -> HTMLResponse:
-    sentinel: Sentinel = request.app.state.sentinel
-    page = await sentinel.store.get_published_page(slug)
-    if page is None:
-        return HTMLResponse(
-            "<!doctype html><meta charset='utf-8'><title>Introuvable</title>"
-            "<body style='font-family:sans-serif;background:#08090B;color:#E9E7E2;"
-            "display:grid;place-items:center;height:100vh;margin:0'>"
-            "<p>Cette page n'existe pas ou n'est pas publiée.</p>",
-            status_code=404,
-            headers={"Content-Security-Policy": _PAGE_CSP},
-        )
-    return HTMLResponse(page["published_html"], headers={"Content-Security-Policy": _PAGE_CSP})
 
 
 # L'UI statique en dernier : les routes déclarées avant restent prioritaires.

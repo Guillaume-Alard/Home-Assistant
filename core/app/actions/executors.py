@@ -12,10 +12,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from ..agenda import CalendarClient, CalendarError
-from ..devwork.worker_client import WorkerClient, WorkerError
 from ..ha.client import HAClient
-from ..monitors.docker import DockerError, DockerMonitor
 from .registry import ActionError, ActionRegistry, ActionSpec
 
 if TYPE_CHECKING:  # uniquement pour les annotations — pas d'import circulaire
@@ -50,105 +47,8 @@ def _friendly_list(ha: HAClient, entity_ids: list[str]) -> str:
 def build_registry(
     ha: HAClient | None,
     protocols: "ProtocolBook | None" = None,
-    docker: DockerMonitor | None = None,
-    worker: WorkerClient | None = None,
-    calendar: CalendarClient | None = None,
 ) -> ActionRegistry:
     reg = ActionRegistry()
-
-    # ── Agenda Google : ÉCRITURE (Phase 13) — jamais en ordre direct ─────────
-    # `direct=False` : cette action n'existe QUE par proposition approuvée. Luna
-    # prépare le rendez-vous, Guillaume valide, alors seulement il est créé.
-    # Le client n'est fourni ici que si l'écriture est activée (GCAL_WRITE + jeton
-    # de portée écriture) ; sinon l'action n'est pas au registre du tout.
-
-    if calendar is not None:
-
-        async def agenda_create(params: dict) -> str:
-            try:
-                event = await calendar.create_event(
-                    summary=str(params.get("titre") or ""),
-                    start=str(params.get("debut") or ""),
-                    end=(str(params.get("fin") or "").strip() or None),
-                    all_day=bool(params.get("toute_la_journee")),
-                    location=str(params.get("lieu") or ""),
-                    description=str(params.get("details") or ""),
-                )
-            except CalendarError as exc:
-                raise ActionError(str(exc)) from None
-            titre = event.get("summary") or "événement"
-            quand = event.get("when") or ""
-            lieu = f" — {event['location']}" if event.get("location") else ""
-            return f"« {titre} » ajouté à ton agenda ({quand}){lieu}."
-
-        reg.register(ActionSpec(
-            "agenda.creer",
-            "Créer un événement dans Google Agenda (réservé aux propositions approuvées)",
-            "medium", False, agenda_create,
-        ))
-
-    # ── Développement (Phase 3B) ─────────────────────────────────────────
-    # dev.task n'écrit QUE dans l'espace de travail jetable du worker : ordre
-    # direct autorisé (et journalisé). dev.push écrit sur GitHub : proposition.
-
-    if worker is not None:
-
-        async def dev_task(params: dict) -> str:
-            repo = str(params.get("repo") or "").strip()
-            instruction = str(params.get("instruction") or "").strip()
-            if not repo or not instruction:
-                raise ActionError("Dépôt et instruction sont obligatoires.")
-            try:
-                task = await worker.start_task(repo, instruction)
-            except WorkerError as exc:
-                raise ActionError(str(exc)) from None
-            return (
-                f"Tâche de développement {task['id']} lancée sur « {task['repo']} » "
-                f"(branche {task['branch']}). Je préviendrai quand elle sera terminée."
-            )
-
-        async def dev_push(params: dict) -> str:
-            task_id = str(params.get("task_id") or "").strip()
-            if not task_id:
-                raise ActionError("Identifiant de tâche manquant.")
-            try:
-                result = await worker.push_branch(task_id)
-            except WorkerError as exc:
-                raise ActionError(str(exc)) from None
-            return (
-                f"Branche {result['branch']} poussée sur GitHub. "
-                f"Comparer / ouvrir une PR : {result['compare_url']}"
-            )
-
-        reg.register(ActionSpec(
-            "dev.task",
-            "Lancer une tâche Claude Code dans l'atelier isolé (liste blanche de dépôts)",
-            "low", True, dev_task,
-        ))
-        reg.register(ActionSpec(
-            "dev.push",
-            "Pousser la branche d'une tâche sur GitHub (réservé aux propositions approuvées)",
-            "medium", False, dev_push,
-        ))
-
-    # ── Docker (Phase 3A) — jamais en ordre direct : proposition obligatoire ──
-
-    if docker is not None:
-
-        async def restart_docker(params: dict) -> str:
-            name = str(params.get("name") or "").strip()
-            if not name:
-                raise ActionError("Nom de conteneur manquant.")
-            try:
-                return await docker.restart_container(name)
-            except DockerError as exc:
-                raise ActionError(str(exc)) from None
-
-        reg.register(ActionSpec(
-            "docker.restart",
-            "Redémarrer un conteneur Docker de Nebula (réservé aux propositions approuvées)",
-            "medium", False, restart_docker,
-        ))
 
     if ha is None:
         return reg

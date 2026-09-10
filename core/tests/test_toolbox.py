@@ -16,20 +16,6 @@ from app.ha.protocols import ProtocolBook
 from app.store import Store
 
 
-class DockerStub:
-    """Moniteur Docker minimal pour les tests d'outils (lecture + restart tracé)."""
-
-    def __init__(self):
-        self.restarts: list[str] = []
-
-    async def restart_container(self, name: str) -> str:
-        self.restarts.append(name)
-        return f"Conteneur {name} redémarré."
-
-    async def logs(self, name: str, tail: int = 50) -> str:
-        return f"[{name}] ligne de log 1\n[{name}] ligne de log 2"
-
-
 @pytest.fixture()
 async def box(tmp_path, monkeypatch):
     monkeypatch.setenv("SENTINEL_DATA_DIR", str(tmp_path / "data"))
@@ -50,8 +36,7 @@ async def box(tmp_path, monkeypatch):
     protocols = ProtocolBook.load(proto_path)
     store = Store(tmp_path / "toolbox.db")
     await store.open()
-    docker = DockerStub()
-    engine = ActionEngine(build_registry(ha, protocols, docker), store)
+    engine = ActionEngine(build_registry(ha, protocols), store)
     health = HealthService(Settings.from_env(), ha)
     import app
     from app.selfmod import SelfSource
@@ -67,30 +52,12 @@ async def box(tmp_path, monkeypatch):
     from app.ha.media import MediaConfig
 
     media = MediaConfig(presets={"jazz": {"source": "Spotify"}}, default_room="Salon")
-    from app.briefing import BriefingService
-
-    briefing = BriefingService(Settings.from_env(), ha, health, store, mail=None)
-    import httpx
-    from zoneinfo import ZoneInfo
-    from app.agenda import CalendarClient
-
-    def _cal(request):
-        if "oauth2" in str(request.url):
-            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
-        return httpx.Response(200, json={"items": [
-            {"summary": "Point projet", "start": {"dateTime": "2026-09-07T10:00:00+02:00"},
-             "end": {"dateTime": "2026-09-07T11:00:00+02:00"}},
-        ]})
-
-    calendar = CalendarClient("id", "sec", "ref", tz=ZoneInfo("Europe/Paris"),
-                              transport=httpx.MockTransport(_cal))
     toolbox = Toolbox(
-        ha, engine, protocols, store, health=health, docker=docker,
+        ha, engine, protocols, store, health=health,
         source=source, routines=routines, media=media, reminders=True, tz="Europe/Paris",
-        briefing=briefing, calendar=calendar,
     )
     yield SimpleNamespace(
-        ha=ha, calls=calls, toolbox=toolbox, store=store, docker=docker, engine=engine
+        ha=ha, calls=calls, toolbox=toolbox, store=store, engine=engine
     )
     await store.close()
 
@@ -105,15 +72,12 @@ async def test_specs_stables_et_completes(box):
     assert names == [
         "etat_maison", "details_entite", "action_domotique", "lancer_protocole",
         "creer_proposition", "lister_propositions", "liste_pieces", "chercher_entites",
-        "sante_systemes", "logs_conteneur", "audit_systemes", "redemarrer_conteneur",
-        "lancer_tache_dev", "etat_taches_dev", "lire_diff_dev",
-        "memoriser", "lister_souvenirs", "oublier", "resume_mails",
-        "creer_page", "modifier_page", "lister_pages",
+        "sante_systemes", "audit_systemes",
+        "memoriser", "lister_souvenirs", "oublier",
         "lire_mon_code", "proposer_evolution", "lister_evolutions",
         "proposer_routine", "lancer_routine", "lister_routines",
         "etat_musique", "musique",
         "minuteur", "rappel", "lister_rappels", "annuler_rappel",
-        "briefing", "agenda",
     ]
     assert all(s["description"] for s in specs)
 
@@ -209,29 +173,9 @@ async def test_apercu_montre_les_portes(box):
     assert any("fermé" in v for v in (hors_piece.get("notable") or {}).values())
 
 
-async def test_sante_et_logs(box):
+async def test_sante_nova(box):
     content, is_error = await _run(box, "sante_systemes", {})
     assert not is_error and '"nova"' in content
-
-    content, is_error = await _run(box, "logs_conteneur", {"nom": "plex", "lignes": 10})
-    assert not is_error and "ligne de log" in content
-
-
-async def test_redemarrage_conteneur_est_une_proposition(box):
-    content, is_error = await _run(box, "redemarrer_conteneur", {
-        "nom": "plex", "justification": "Le conteneur ne répond plus.",
-    })
-    assert not is_error and "n°" in content
-    assert box.docker.restarts == []  # RIEN n'a redémarré : proposition seulement
-
-    pending = (await box.store.list_proposals("pending"))[0]
-    assert pending["action_id"] == "docker.restart"
-    assert pending["params"] == {"name": "plex"}
-
-    # L'approbation exécute réellement le redémarrage, journalisé
-    updated, msg = await box.engine.decide(pending["num"], "approve", via="ui")
-    assert updated["status"] == "done"
-    assert box.docker.restarts == ["plex"]
 
 
 async def test_proposition_de_service_sensible_escaladee(box):
@@ -353,9 +297,7 @@ async def test_maisonnee_agit_mais_pas_admin(box):
     assert not is_error and box.calls  # action passée au moteur
 
     # … mais pas les outils d'administration (réservés à Guillaume)
-    content, is_error = await _run_as(
-        box, "lancer_tache_dev", {"depot": "atrium", "instruction": "x"}, _HOUSEHOLD
-    )
+    content, is_error = await _run_as(box, "sante_systemes", {}, _HOUSEHOLD)
     assert not is_error and "réservé à guillaume" in content.lower()
 
 
@@ -375,75 +317,6 @@ async def test_oublier_ne_traverse_pas_les_profils(box):
     content, is_error = await _run_as(box, "oublier", {"id": mem_id}, _HOUSEHOLD)
     assert is_error and "pas trouvé" in content.lower()
     assert len(await box.store.list_memories(subject="guillaume")) == 1
-
-
-# ── Courriel (Phase 3) : lecture seule, réservée à Guillaume ──────────────────
-
-class _FakeMail:
-    async def summary(self):
-        return {"unread_total": 2, "messages": [
-            {"from_name": "Alice", "from_email": "a@x.fr", "subject": "Bonjour",
-             "date": "", "snippet": "coucou", "important": True},
-        ]}
-
-
-async def test_resume_mails_proprietaire(box):
-    box.toolbox._mail = _FakeMail()
-    content, is_error = await _run_as(box, "resume_mails", {}, OWNER)
-    assert not is_error
-    data = json.loads(content)
-    assert data["non_lus"] == 2 and data["messages"][0]["de"] == "Alice"
-
-
-async def test_resume_mails_refuse_a_la_maisonnee_et_invite(box):
-    box.toolbox._mail = _FakeMail()
-    for who in (_HOUSEHOLD, UNKNOWN):
-        content, is_error = await _run_as(box, "resume_mails", {}, who)
-        assert not is_error
-        # Réservé à Guillaume (owner) ou hors de portée d'un inconnu — jamais le résumé
-        assert "non_lus" not in content
-
-
-async def test_resume_mails_non_configure(box):
-    content, is_error = await _run(box, "resume_mails", {})  # _run = OWNER, mais _mail None
-    assert is_error and "configuré" in content.lower()
-
-
-# ── Pages web (Phase 5) : Luna rédige des brouillons, réservés au propriétaire ─
-
-async def test_creer_page_est_un_brouillon(box):
-    content, is_error = await _run_as(
-        box, "creer_page", {"titre": "Tableau de bord", "html": "<!doctype html><h1>Salut</h1>"}, OWNER
-    )
-    assert not is_error
-    data = json.loads(content)
-    assert data["slug"] == "tableau-de-bord" and "brouillon" in data["etat"].lower()
-
-    pages = await box.store.list_pages()
-    assert len(pages) == 1 and pages[0]["published"] is False
-    # Rien n'est en ligne : creer_page ne publie jamais
-    assert await box.store.get_published_page("tableau-de-bord") is None
-
-    listing, _ = await _run_as(box, "lister_pages", {}, OWNER)
-    assert json.loads(listing)[0]["etat"] == "brouillon"
-
-
-async def test_pages_reservees_au_proprietaire(box):
-    for who in (_HOUSEHOLD, UNKNOWN):
-        content, is_error = await _run_as(box, "creer_page", {"titre": "X", "html": "<h1>x</h1>"}, who)
-        assert not is_error and "réservé à guillaume" in content.lower()
-    assert await box.store.list_pages() == []
-
-
-async def test_modifier_page_ne_republie_pas(box):
-    await _run_as(box, "creer_page", {"titre": "Suivi", "html": "<h1>v1</h1>"}, OWNER)
-    page = (await box.store.list_pages())[0]
-    await box.store.publish_page(page["id"])  # Guillaume publie (hors LLM)
-
-    content, is_error = await _run_as(box, "modifier_page", {"id": page["id"], "html": "<h1>v2</h1>"}, OWNER)
-    assert not is_error and "attente" in content.lower()
-    # La version EN LIGNE reste l'ancienne tant que Guillaume ne republie pas
-    assert (await box.store.get_published_page(page["slug"]))["published_html"] == "<h1>v1</h1>"
 
 
 # ── Auto-amélioration encadrée (Phase 6) : Luna PROPOSE, jamais n'applique ─────
@@ -664,106 +537,3 @@ async def test_rappels_refuses_a_l_invite(box):
     content, is_error = await _run_as(box, "minuteur", {"minutes": 5}, UNKNOWN)
     assert not is_error and "reconnais pas" in content.lower()
     assert await box.store.list_reminders("active") == []
-
-
-# ── Briefing du matin (Phase 11) ─────────────────────────────────────────────
-
-async def test_briefing_a_la_demande(box):
-    content, is_error = await _run_as(box, "briefing", {}, _HOUSEHOLD)
-    assert not is_error
-    assert "Bonjour" in content or "Bonsoir" in content
-    assert "Maison" in content  # l'état de la maison figure dans le brief
-
-
-async def test_briefing_refuse_a_l_invite(box):
-    content, is_error = await _run_as(box, "briefing", {}, UNKNOWN)
-    assert not is_error and "reconnais pas" in content.lower()
-
-
-# ── Agenda Google en lecture seule (Phase 12) ────────────────────────────────
-
-async def test_agenda_proprietaire(box):
-    content, is_error = await _run_as(box, "agenda", {}, OWNER)
-    assert not is_error
-    data = json.loads(content)
-    assert data[0]["titre"] == "Point projet" and data[0]["quand"] == "10h"
-
-
-async def test_agenda_refuse_a_la_maisonnee_et_invite(box):
-    for who in (_HOUSEHOLD, UNKNOWN):
-        content, is_error = await _run_as(box, "agenda", {}, who)
-        assert "réservé à guillaume" in content.lower()
-
-
-# ── Agenda Google : ÉCRITURE par proposition (Phase 13) ──────────────────────
-
-@pytest.fixture()
-async def wbox(tmp_path, monkeypatch):
-    """Boîte à outils avec l'écriture agenda ACTIVÉE (client + registre + tool)."""
-    monkeypatch.setenv("SENTINEL_DATA_DIR", str(tmp_path / "data"))
-    import httpx
-    from zoneinfo import ZoneInfo
-    from app.agenda import CalendarClient
-
-    ha, _calls = make_ha_stub()
-    proto_path = tmp_path / "protocols.yml"
-    proto_path.write_text(PROTOCOLS_TEST_YML, encoding="utf-8")
-    protocols = ProtocolBook.load(proto_path)
-    store = Store(tmp_path / "wb.db")
-    await store.open()
-    posts: list = []
-
-    def _cal(request):
-        if "oauth2" in str(request.url):
-            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
-        posts.append(json.loads(request.content))         # capture le POST de création
-        return httpx.Response(200, json=posts[-1])          # Google renvoie l'événement
-
-    calendar = CalendarClient("id", "sec", "ref", tz=ZoneInfo("Europe/Paris"),
-                              transport=httpx.MockTransport(_cal))
-    engine = ActionEngine(build_registry(ha, protocols, None, calendar=calendar), store)
-    toolbox = Toolbox(ha, engine, protocols, store, calendar=calendar,
-                      calendar_write=True, tz="Europe/Paris")
-    yield SimpleNamespace(toolbox=toolbox, store=store, engine=engine, posts=posts)
-    await store.close()
-
-
-async def _run_w(wbox, args, speaker=OWNER):
-    return await wbox.toolbox.run("agenda_creer", args, utterance="ajoute un rdv",
-                                  source="voice", speaker=speaker)
-
-
-async def test_agenda_creer_depose_une_proposition_sans_rien_creer(wbox):
-    content, is_error = await _run_w(
-        wbox, {"titre": "Dentiste", "debut": "2026-09-08T14:00:00", "lieu": "12 rue des Lilas"})
-    assert not is_error
-    # Le cœur de la Phase 13 : RIEN n'est envoyé à Google — juste une proposition.
-    assert wbox.posts == []
-    pending = await wbox.store.list_proposals("pending")
-    assert len(pending) == 1
-    p = pending[0]
-    assert p["action_id"] == "agenda.creer" and p["risk"] == "medium"
-    assert p["params"]["titre"] == "Dentiste" and p["params"]["debut"] == "2026-09-08T14:00:00"
-
-
-async def test_agenda_creer_ne_cree_qu_apres_approbation(wbox):
-    await _run_w(wbox, {"titre": "Dentiste", "debut": "2026-09-08T14:00:00"})
-    num = (await wbox.store.list_proposals("pending"))[0]["num"]
-    proposal, _msg = await wbox.engine.decide(num, "approve", via="ui")
-    assert proposal["status"] == "done"
-    # Maintenant SEULEMENT l'événement part vers Google (un unique POST).
-    assert len(wbox.posts) == 1
-    assert wbox.posts[0]["summary"] == "Dentiste"
-    assert wbox.posts[0]["start"]["dateTime"] == "2026-09-08T14:00:00"
-
-
-async def test_agenda_creer_reserve_au_proprietaire(wbox):
-    for who in (_HOUSEHOLD, UNKNOWN):
-        content, _ = await _run_w(wbox, {"titre": "X", "debut": "2026-09-08T14:00:00"}, who)
-        assert "réservé à guillaume" in content.lower()
-    assert await wbox.store.list_proposals("pending") == []  # aucune proposition créée
-
-
-async def test_agenda_creer_present_seulement_si_ecriture(wbox, box):
-    assert "agenda_creer" in [s["name"] for s in wbox.toolbox.specs()]      # écriture ON
-    assert "agenda_creer" not in [s["name"] for s in box.toolbox.specs()]   # écriture OFF

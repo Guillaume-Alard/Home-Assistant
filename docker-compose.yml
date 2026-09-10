@@ -20,9 +20,6 @@ services:
       # Affichage seul dans les Paramètres (mêmes valeurs que les conteneurs Wyoming)
       WHISPER_MODEL: ${WHISPER_MODEL:-small-int8}
       PIPER_VOICE: ${PIPER_VOICE:-fr_FR-siwis-medium}
-      DOCKER_PROXY_URL: http://sentinel-dockerproxy:2375
-      DOCKER_RESTART_URL: http://sentinel-dockerproxy-restart:2375
-      WORKER_URL: http://sentinel-worker:8400
       WAKE_HOST: sentinel-openwakeword
       WAKE_PORT: 10400
       WAKEWORD_MODEL: ${WAKEWORD_MODEL:-hey_jarvis}
@@ -81,44 +78,6 @@ services:
     volumes:
       - piper-voices:/data
 
-  # Surveillance Docker (Phase 3A) : le socket n'est JAMAIS monté dans
-  # sentinel-core. Deux proxys aux rôles disjoints, aucun port publié sur le LAN :
-  #
-  # 1) Lecture pure — tous les POST sont refusés (liste, stats, logs).
-  sentinel-dockerproxy:
-    image: tecnativa/docker-socket-proxy:latest
-    container_name: sentinel-dockerproxy
-    restart: unless-stopped
-    environment:
-      CONTAINERS: 1
-      IMAGES: 1
-      INFO: 1
-      PING: 1
-      VERSION: 1
-      POST: 0
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
-  # 2) Redémarrage seul — CONTAINERS=0 : la SEULE route autorisée est celle
-  # d'ALLOW_RESTARTS (restart/stop/start), rien d'autre ne matche : pas de
-  # liste, pas de création, pas d'exec, pas de suppression. Côté Sentinel, un
-  # redémarrage n'existe que comme proposition que tu approuves.
-  sentinel-dockerproxy-restart:
-    image: tecnativa/docker-socket-proxy:latest
-    container_name: sentinel-dockerproxy-restart
-    restart: unless-stopped
-    environment:
-      CONTAINERS: 0
-      POST: 1
-      ALLOW_RESTARTS: 1
-      PING: 1
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
-  # Atelier de développement (Phase 3B) : Claude Code headless, ISOLÉ.
-  # Ne connaît ni Nova, ni le socket Docker, ni les jetons de sentinel-core.
-  # Clones jetables dans son volume dédié ; le push GitHub n'a lieu qu'après
-  # une proposition approuvée dans Sentinel.
   # Mot d'éveil (Phase 5A) : openWakeWord via Wyoming. « hey_jarvis » est fourni
   # avec l'image ; pour un mot personnalisé, déposer un .tflite dans
   # config/wakewords/ puis mettre son nom dans WAKEWORD_MODEL (.env).
@@ -162,25 +121,7 @@ services:
     container_name: sentinel-speaker
     restart: unless-stopped
 
-  sentinel-worker:
-    build:
-      context: .
-      dockerfile: worker/Dockerfile
-    container_name: sentinel-worker
-    restart: unless-stopped
-    environment:
-      TZ: ${TZ:-Europe/Paris}  # horodatage du journal en direct de la console
-      DEV_REPOS: ${DEV_REPOS:-https://github.com/Alardware/atrium https://github.com/Alardware/loggia}
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      DEV_TASK_TIMEOUT: ${DEV_TASK_TIMEOUT:-1800}
-    volumes:
-      - worker-workspace:/workspace
-    # aucun port publié : joignable uniquement par sentinel-core en interne
-
 volumes:
   whisper-models:
   piper-voices:
-  worker-workspace:
   xtts-cache:

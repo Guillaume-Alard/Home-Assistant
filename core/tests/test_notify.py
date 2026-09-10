@@ -107,8 +107,7 @@ def test_config_notify(monkeypatch):
     from app.config import Settings
 
     monkeypatch.setenv("SENTINEL_NOTIFY_SERVICE", "mobile_app_pixel")
-    monkeypatch.setenv("SENTINEL_NOTIFY_BRIEFING", "1")
     monkeypatch.setenv("SENTINEL_NOTIFY_ALERTS", "off")
     s = Settings.from_env()
     assert s.notify_enabled and s.notify_service == "mobile_app_pixel"
-    assert s.notify_reminders is True and s.notify_alerts is False and s.notify_briefing is True
+    assert s.notify_reminders is True and s.notify_alerts is False

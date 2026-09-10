@@ -13,11 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from ..actions.engine import RISK_FR, STATUS_FR, ActionEngine
-from ..agenda import CalendarClient, CalendarError
-from ..briefing import BriefingService
 from ..identity import OWNER, Speaker
-from ..devwork.worker_client import WorkerClient, WorkerError
-from ..mail import GmailClient, MailError
 from ..reminders import compute_due_iso
 from ..routines import RoutineError, RoutineService
 from ..selfmod import SelfSource, evaluate as evaluate_diff, summarize as summarize_diff
@@ -25,7 +21,6 @@ from ..ha.client import HAClient
 from ..ha import media as media_lib
 from ..ha.media import MediaConfig
 from ..ha.protocols import ProtocolBook
-from ..monitors.docker import DockerError, DockerMonitor
 from ..monitors.health import HealthService
 from ..store import Store
 
@@ -61,20 +56,11 @@ ACTIVITY_LABELS = {
     "creer_proposition": "rédige une proposition…",
     "lister_propositions": "relit ses propositions…",
     "chercher_entites": "consulte Nova…",
-    "sante_systemes": "ausculte les systèmes…",
-    "logs_conteneur": "lit des journaux…",
-    "audit_systemes": "audite les systèmes…",
-    "redemarrer_conteneur": "rédige une proposition…",
-    "lancer_tache_dev": "délègue à l'atelier de dev…",
-    "etat_taches_dev": "consulte l'atelier de dev…",
-    "lire_diff_dev": "relit un diff…",
+    "sante_systemes": "ausculte Nova…",
+    "audit_systemes": "audite Nova…",
     "memoriser": "note quelque chose…",
     "lister_souvenirs": "relit ce qu'elle sait…",
     "oublier": "met à jour sa mémoire…",
-    "resume_mails": "relève tes courriels…",
-    "creer_page": "rédige une page web…",
-    "modifier_page": "modifie une page web…",
-    "lister_pages": "relit tes pages web…",
     "lire_mon_code": "relit son propre code…",
     "proposer_evolution": "prépare une évolution d'elle-même…",
     "lister_evolutions": "relit ses évolutions proposées…",
@@ -87,34 +73,11 @@ ACTIVITY_LABELS = {
     "rappel": "note un rappel…",
     "lister_rappels": "relit tes rappels…",
     "annuler_rappel": "annule un rappel…",
-    "briefing": "prépare ton briefing…",
-    "agenda": "consulte ton agenda…",
-    "agenda_creer": "prépare un rendez-vous…",
 }
 
 
 def _compact(data) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-
-
-_JOURS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
-_MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-            "août", "septembre", "octobre", "novembre", "décembre")
-
-
-def _fmt_rdv_quand(debut: str, all_day: bool) -> str:
-    """Rend une date/heure ISO lisible en français pour la carte de proposition."""
-    from datetime import datetime
-
-    try:
-        d = datetime.strptime(debut[:10], "%Y-%m-%d") if all_day else datetime.fromisoformat(debut)
-    except (ValueError, TypeError):
-        return debut
-    jour = f"{_JOURS_FR[d.weekday()]} {d.day} {_MOIS_FR[d.month - 1]}"
-    if all_day:
-        return f"{jour} (toute la journée)"
-    heure = f"{d.hour}h{d.minute:02d}" if d.minute else f"{d.hour}h"
-    return f"{jour} à {heure}"
 
 
 class Toolbox:
@@ -125,20 +88,13 @@ class Toolbox:
         protocols: ProtocolBook,
         store: Store,
         health: HealthService | None = None,
-        docker: DockerMonitor | None = None,
-        worker: WorkerClient | None = None,
-        mail: GmailClient | None = None,
         source: SelfSource | None = None,
         self_improve: bool = True,
         routines: RoutineService | None = None,
         media: MediaConfig | None = None,
         reminders: bool = False,
         tz: str = "Europe/Paris",
-        briefing: BriefingService | None = None,
-        calendar: CalendarClient | None = None,
-        calendar_write: bool = False,
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
-        on_pages_change: Callable[[], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
         on_reminders_change: Callable[[], Awaitable[None]] | None = None,
     ):
@@ -147,9 +103,6 @@ class Toolbox:
         self._protocols = protocols
         self._store = store
         self._health = health
-        self._docker = docker
-        self._worker = worker
-        self._mail = mail
         # Lecteur (SEULE lecture) du propre code de Luna, pour rédiger des diffs
         # justes (Phase 6). `self_improve` retire les outils d'auto-amélioration.
         self._source = source
@@ -162,21 +115,14 @@ class Toolbox:
         self._reminders = reminders
         self._tz = tz
         self._on_reminders_change = on_reminders_change
-        # Briefing du matin (Phase 11).
-        self._briefing = briefing
-        # Agenda Google en lecture seule (Phase 12) ; écriture par proposition (Phase 13).
-        self._calendar = calendar
-        self._calendar_write = calendar_write
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
         # quelque chose. Optionnel : absent en test unitaire.
         self._on_memory_change = on_memory_change
-        # Rafraîchit la liste des pages web quand Luna en rédige/modifie une.
-        self._on_pages_change = on_pages_change
         # Rafraîchit Paramètres › Évolutions quand Luna propose une auto-amélioration.
         self._on_suggestions_change = on_suggestions_change
 
     _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
-    _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova/Docker non configurés)."
+    _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova non configurée)."
 
     # ── Déclarations (ordre STABLE : le cache de prompt en dépend) ───────
 
@@ -305,88 +251,20 @@ class Toolbox:
             {
                 "name": "sante_systemes",
                 "description": (
-                    "Instantané de santé des systèmes : Nova (entités indisponibles, mises à "
-                    "jour), Nebula (charge, RAM, conteneurs Docker, mémoire par conteneur), "
-                    "Atrium. À consulter AVANT tout diagnostic (« pourquoi X ne répond plus ? »)."
+                    "Instantané de santé de Nova (Home Assistant) : connexion, entités "
+                    "indisponibles, mises à jour en attente. À consulter AVANT tout diagnostic "
+                    "(« pourquoi X ne répond plus ? »)."
                 ),
                 "input_schema": {"type": "object", "properties": {}},
-            },
-            {
-                "name": "logs_conteneur",
-                "description": (
-                    "Lit les dernières lignes de journal d'un conteneur Docker de Nebula "
-                    "(lecture seule) — pour diagnostiquer un service en panne."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "nom": {"type": "string", "description": "Nom (ou partie du nom) du conteneur"},
-                        "lignes": {"type": "integer", "description": "Nombre de lignes (défaut 50, max 300)"},
-                    },
-                    "required": ["nom"],
-                },
             },
             {
                 "name": "audit_systemes",
                 "description": (
-                    "Audit de sécurité et de performance : constats classés par gravité "
+                    "Audit de Nova : constats classés par gravité "
                     "(critique/attention/info) avec actions suggérées. Présente les constats à "
                     "Guillaume et crée des propositions pour les actions qu'il souhaite."
                 ),
                 "input_schema": {"type": "object", "properties": {}},
-            },
-            {
-                "name": "redemarrer_conteneur",
-                "description": (
-                    "Crée une PROPOSITION de redémarrage d'un conteneur Docker (rien ne "
-                    "s'exécute avant l'approbation de Guillaume). À utiliser après diagnostic."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "nom": {"type": "string"},
-                        "justification": {"type": "string", "description": "Pourquoi ce redémarrage"},
-                    },
-                    "required": ["nom", "justification"],
-                },
-            },
-            {
-                "name": "lancer_tache_dev",
-                "description": (
-                    "Confie une tâche de développement à l'atelier Claude Code isolé, sur un "
-                    "dépôt de la liste blanche (« atrium », « loggia »). UNIQUEMENT sur demande "
-                    "explicite de Guillaume, avec une instruction précise et autonome (contexte, "
-                    "fichiers si connus, résultat attendu). Le travail se fait dans un clone "
-                    "jetable ; le résultat revient en diff, et le push sera une proposition. "
-                    "Une seule tâche à la fois."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "depot": {"type": "string", "description": "atrium ou loggia"},
-                        "instruction": {"type": "string"},
-                    },
-                    "required": ["depot", "instruction"],
-                },
-            },
-            {
-                "name": "etat_taches_dev",
-                "description": (
-                    "État de l'atelier de développement : tâches (statut, dépôt, "
-                    "branche) et configuration — authentification de Claude Code "
-                    "(abonnement/jeton OAuth ou clé API), push GitHub possible ou "
-                    "non, dépôts autorisés."
-                ),
-                "input_schema": {"type": "object", "properties": {}},
-            },
-            {
-                "name": "lire_diff_dev",
-                "description": "Lit le diff produit par une tâche de développement terminée.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"id": {"type": "string"}},
-                    "required": ["id"],
-                },
             },
             {
                 "name": "memoriser",
@@ -435,57 +313,6 @@ class Toolbox:
                     "properties": {"id": {"type": "string"}},
                     "required": ["id"],
                 },
-            },
-            {
-                "name": "resume_mails",
-                "description": (
-                    "Résume les courriels NON LUS de la boîte de Guillaume (Gmail, LECTURE "
-                    "SEULE) : expéditeur, objet, importance, court aperçu. Tu ne peux ni "
-                    "envoyer, ni supprimer, ni marquer comme lu — seulement lire. Réservé à "
-                    "Guillaume. Reste concise : cite les plus importants, donne le nombre total."
-                ),
-                "input_schema": {"type": "object", "properties": {}},
-            },
-            {
-                "name": "creer_page",
-                "description": (
-                    "Rédige une page web simple et autonome (tableau de bord, page de suivi, "
-                    "note partageable) sous forme d'un document HTML COMPLET et autonome "
-                    "(CSS et éventuel JS EN LIGNE ; aucune ressource ni appel réseau externe — "
-                    "la page ne peut pas contacter le réseau). C'est un BROUILLON : rien n'est "
-                    "publié. Guillaume la relit puis la publie lui-même depuis l'interface. "
-                    "Dis-lui que la page l'attend dans Paramètres › Pages web."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "titre": {"type": "string"},
-                        "html": {"type": "string", "description": "Document HTML complet (<!doctype html>…)."},
-                    },
-                    "required": ["titre", "html"],
-                },
-            },
-            {
-                "name": "modifier_page",
-                "description": (
-                    "Met à jour la copie de travail d'une page existante (son HTML et/ou son "
-                    "titre). N'affecte PAS la version en ligne : Guillaume republie après "
-                    "relecture. Donne l'`id` (via lister_pages)."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string"},
-                        "titre": {"type": "string"},
-                        "html": {"type": "string"},
-                    },
-                    "required": ["id"],
-                },
-            },
-            {
-                "name": "lister_pages",
-                "description": "Liste les pages web (id, titre, slug, publiée ou brouillon).",
-                "input_schema": {"type": "object", "properties": {}},
             },
         ]
         # Auto-amélioration encadrée (Phase 6) — outils réservés au propriétaire,
@@ -694,59 +521,6 @@ class Toolbox:
                     },
                 },
             ]
-        # Briefing du matin (Phase 11) — récapitulatif à la demande.
-        if self._briefing is not None:
-            specs.append({
-                "name": "briefing",
-                "description": (
-                    "Prépare le briefing : météo (via Nova), état de la maison, courriels non "
-                    "lus, rappels du jour, santé des systèmes. Sur demande (« fais-moi le "
-                    "briefing », « quoi de neuf ce matin ? »). Restitue-le tel quel, sans le "
-                    "réinventer."
-                ),
-                "input_schema": {"type": "object", "properties": {}},
-            })
-        # Agenda Google en lecture seule (Phase 12) — personnel, Guillaume seul.
-        if self._calendar is not None:
-            specs.append({
-                "name": "agenda",
-                "description": (
-                    "Consulte l'agenda Google de Guillaume (LECTURE SEULE) : rendez-vous du "
-                    "jour, ou des prochains jours avec `jours`. Tu ne peux ni créer ni modifier "
-                    "d'événement. Réservé à Guillaume. Donne l'heure et le titre, reste concis."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "jours": {"type": "integer", "description": "0 = aujourd'hui (défaut) ; N = les N prochains jours."},
-                    },
-                },
-            })
-        # Agenda — ÉCRITURE par proposition (Phase 13). Luna PRÉPARE, Guillaume valide.
-        if self._calendar is not None and self._calendar_write and self._engine is not None:
-            specs.append({
-                "name": "agenda_creer",
-                "description": (
-                    "PRÉPARE un rendez-vous pour l'agenda Google de Guillaume. Ne crée RIEN "
-                    "directement : dépose une proposition que Guillaume approuve dans le cockpit "
-                    "— alors seulement l'événement est ajouté. Réservé à Guillaume. "
-                    "Calcule `debut` (et `fin`) en ISO 8601 local à partir de la date/heure "
-                    "courante (« demain 14h », « lundi prochain »). Pour un événement sans heure "
-                    "précise, mets `toute_la_journee` à vrai et donne `debut` en AAAA-MM-JJ."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "titre": {"type": "string", "description": "Intitulé de l'événement."},
-                        "debut": {"type": "string", "description": "Début ISO 8601 (ex. 2026-09-08T14:00:00) ; ou AAAA-MM-JJ si toute la journée."},
-                        "fin": {"type": "string", "description": "Fin ISO 8601 (optionnel ; défaut : +1 h, ou le lendemain si toute la journée)."},
-                        "toute_la_journee": {"type": "boolean", "description": "Vrai pour un événement sans heure précise."},
-                        "lieu": {"type": "string", "description": "Lieu (optionnel)."},
-                        "details": {"type": "string", "description": "Note / description (optionnel)."},
-                    },
-                    "required": ["titre", "debut"],
-                },
-            })
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -761,11 +535,7 @@ class Toolbox:
         "action_domotique": "known", "lancer_protocole": "known",
         "creer_proposition": "known", "lister_propositions": "known",
         "memoriser": "known", "lister_souvenirs": "known", "oublier": "known",
-        "sante_systemes": "owner", "logs_conteneur": "owner", "audit_systemes": "owner",
-        "redemarrer_conteneur": "owner", "lancer_tache_dev": "owner",
-        "etat_taches_dev": "owner", "lire_diff_dev": "owner",
-        "resume_mails": "owner",  # courriel personnel : Guillaume seul
-        "creer_page": "owner", "modifier_page": "owner", "lister_pages": "owner",
+        "sante_systemes": "owner", "audit_systemes": "owner",
         # Auto-amélioration (Phase 6) : proposer des changements sur soi-même =
         # administration, réservée à Guillaume. La reconnaissance n'élève rien.
         "lire_mon_code": "owner", "proposer_evolution": "owner", "lister_evolutions": "owner",
@@ -778,13 +548,6 @@ class Toolbox:
         # Minuteurs & rappels (Phase 10) : personne reconnue (usage courant).
         "minuteur": "known", "rappel": "known",
         "lister_rappels": "known", "annuler_rappel": "known",
-        # Briefing du matin (Phase 11) : personne reconnue (contient mail/rappels).
-        "briefing": "known",
-        # Agenda (Phase 12) : agenda personnel → Guillaume seul (comme le courriel).
-        "agenda": "owner",
-        # Agenda écriture (Phase 13) : préparer un rdv → Guillaume seul ; et de toute
-        # façon rien n'est créé sans son approbation de la proposition.
-        "agenda_creer": "owner",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -957,91 +720,15 @@ class Toolbox:
 
     async def _tool_sante_systemes(self, args, _utt, _src):
         if self._health is None:
-            return "Aucun moniteur n'est configuré.", True
+            return "La santé de Nova n'est pas disponible.", True
         return _compact(await self._health.snapshot())[:6000], False
 
     async def _tool_audit_systemes(self, args, _utt, _src):
         if self._health is None:
-            return "Aucun moniteur n'est configuré.", True
+            return "La santé de Nova n'est pas disponible.", True
         return _compact(await self._health.audit())[:6000], False
 
-    async def _tool_logs_conteneur(self, args, _utt, _src):
-        if self._docker is None:
-            return "La surveillance Docker n'est pas configurée (DOCKER_PROXY_URL).", True
-        nom = str(args.get("nom") or "").strip()
-        if not nom:
-            return "Précise le nom du conteneur.", True
-        try:
-            lignes = int(args.get("lignes") or 50)
-        except (TypeError, ValueError):
-            lignes = 50
-        try:
-            logs = await self._docker.logs(nom, tail=lignes)
-        except DockerError as exc:
-            return str(exc), True
-        return (logs[-4000:] or "(journal vide)"), False
-
     # Écriture (via le moteur uniquement) ─────────────────────────────────
-
-    async def _tool_redemarrer_conteneur(self, args, _utt, _src):
-        if self._docker is None:
-            return "La surveillance Docker n'est pas configurée (DOCKER_PROXY_URL).", True
-        if self._engine is None:
-            return self._MOTEUR_ABSENT, True
-        nom = str(args.get("nom") or "").strip()
-        if not nom:
-            return "Précise le nom du conteneur.", True
-        proposal, message = await self._engine.propose(
-            title=f"Redémarrer le conteneur {nom}",
-            description=f"docker restart {nom} (via le proxy, arrêt propre en 10 s)",
-            justification=str(args.get("justification") or ""),
-            risk="medium",
-            rollback="Le conteneur redémarre avec sa configuration actuelle ; "
-                     "aucun changement persistant.",
-            action_id="docker.restart",
-            params={"name": nom},
-            created_by="sentinel (LLM)",
-        )
-        return message, proposal is None
-
-    async def _tool_lancer_tache_dev(self, args, utterance, source):
-        if self._worker is None:
-            return "L'atelier de développement n'est pas configuré (WORKER_URL).", True
-        if self._engine is None:
-            return self._MOTEUR_ABSENT, True
-        outcome = await self._engine.run_direct(
-            "dev.task",
-            {"repo": str(args.get("depot") or ""), "instruction": str(args.get("instruction") or "")},
-            utterance=utterance, source=f"{source} (via LLM)",
-        )
-        return outcome.text, not outcome.ok
-
-    async def _tool_etat_taches_dev(self, args, _utt, _src):
-        if self._worker is None:
-            return "L'atelier de développement n'est pas configuré (WORKER_URL).", True
-        try:
-            tasks = await self._worker.list_tasks()
-            health = await self._worker.health() or {}
-        except WorkerError as exc:
-            return str(exc), True
-        return _compact({
-            "authentification": health.get("auth"),
-            "push_possible": health.get("push_possible"),
-            "depots": health.get("repos"),
-            "taches": tasks[:10],
-        }), False
-
-    async def _tool_lire_diff_dev(self, args, _utt, _src):
-        if self._worker is None:
-            return "L'atelier de développement n'est pas configuré (WORKER_URL).", True
-        task_id = str(args.get("id") or "").strip()
-        if not task_id:
-            return "Précise l'identifiant de la tâche.", True
-        try:
-            diff = await self._worker.get_diff(task_id)
-        except WorkerError as exc:
-            return str(exc), True
-        return (diff[:6000] or "(aucun diff)"), False
 
     async def _tool_action_domotique(self, args, utterance, source):
         if self._ha is None or self._engine is None:
@@ -1171,78 +858,6 @@ class Toolbox:
         await self._store.delete_memory(mem_id)
         await self._notify_memory_change(subject)
         return "C'est oublié.", False
-
-    # Courriel (lecture seule — Phase 3) ──────────────────────────────────
-
-    async def _tool_resume_mails(self, _args, _utt, _src):
-        if self._mail is None:
-            return "Le courriel n'est pas configuré (voir docs/EMAIL.md).", True
-        try:
-            data = await self._mail.summary()
-        except MailError as exc:
-            return str(exc), True
-        msgs = data.get("messages") or []
-        return _compact({
-            "non_lus": data.get("unread_total", 0),
-            "messages": [
-                {
-                    "de": m["from_name"],
-                    "objet": m["subject"],
-                    "important": m["important"],
-                    "apercu": (m["snippet"] or "")[:200],
-                }
-                for m in msgs
-            ],
-        }), False
-
-    # Pages web (Phase 5 — Luna RÉDIGE ; Guillaume PUBLIE depuis l'UI) ─────
-
-    async def _notify_pages_change(self) -> None:
-        if self._on_pages_change is not None:
-            try:
-                await self._on_pages_change()
-            except Exception:
-                log.exception("Notification de changement de pages impossible")
-
-    async def _tool_creer_page(self, args, _utt, _src):
-        titre = str(args.get("titre") or "").strip()[:120]
-        html = str(args.get("html") or "")
-        if not titre or not html.strip():
-            return "Donne un titre et le contenu HTML de la page.", True
-        page = await self._store.add_page(title=titre, html=html)
-        await self._notify_pages_change()
-        return _compact({
-            "id": page["id"], "slug": page["slug"], "titre": page["title"],
-            "etat": "brouillon — à relire puis publier par Guillaume (Paramètres › Pages web)",
-        }), False
-
-    async def _tool_modifier_page(self, args, _utt, _src):
-        page_id = str(args.get("id") or "").strip()
-        page = await self._store.get_page(page_id)
-        if page is None:
-            return "Page introuvable — vérifie l'id avec lister_pages.", True
-        fields: dict = {}
-        if args.get("titre"):
-            fields["title"] = str(args["titre"])[:120]
-        if args.get("html") is not None:
-            fields["html"] = str(args["html"])
-        if not fields:
-            return "Rien à modifier (titre ou html attendu).", True
-        page = await self._store.update_page(page_id, **fields)
-        await self._notify_pages_change()
-        note = " (changements en attente de republication)" if page.get("published_html") else ""
-        return f"Brouillon mis à jour{note}.", False
-
-    async def _tool_lister_pages(self, _args, _utt, _src):
-        pages = await self._store.list_pages()
-        if not pages:
-            return "Aucune page pour l'instant.", False
-        return _compact([
-            {"id": p["id"], "titre": p["title"], "slug": p["slug"],
-             "etat": "publiée" if p["published"] else "brouillon",
-             "modifs_en_attente": p["dirty"]}
-            for p in pages
-        ]), False
 
     # Auto-amélioration encadrée (Phase 6 — Luna PROPOSE ; Guillaume applique) ──
     #
@@ -1519,66 +1134,3 @@ class Toolbox:
         await self._store.set_reminder_status(rid, "cancelled")
         await self._notify_reminders_change()
         return "C'est annulé.", False
-
-    # Briefing du matin (Phase 11) ────────────────────────────────────────
-
-    async def _tool_briefing(self, _args, _utt, _src):
-        if self._briefing is None:
-            return "Le briefing n'est pas disponible.", True
-        pending = len(await self._store.list_proposals("pending"))
-        return await self._briefing.compose(pending=pending), False
-
-    # Agenda Google en lecture seule (Phase 12 — Guillaume seul) ───────────
-
-    async def _tool_agenda(self, args, _utt, _src):
-        if self._calendar is None:
-            return "L'agenda n'est pas configuré (voir docs/AGENDA.md).", True
-        try:
-            jours = int(args.get("jours") or 0)
-        except (TypeError, ValueError):
-            jours = 0
-        try:
-            events = await (self._calendar.upcoming(jours) if jours > 0 else self._calendar.today())
-        except CalendarError as exc:
-            return str(exc), True
-        if not events:
-            return _compact({"quand": "aujourd'hui" if jours <= 0 else f"les {jours} prochains jours",
-                             "evenements": []}), False
-        return _compact([
-            {"titre": e["summary"], "quand": e["when"], "date": e["start_ts"][:10],
-             "lieu": e["location"] or None}
-            for e in events
-        ])[:4000], False
-
-    async def _tool_agenda_creer(self, args, _utt, _src):
-        # Luna ne crée JAMAIS l'événement elle-même : elle dépose une proposition
-        # que Guillaume approuve dans le cockpit. C'est là toute la garantie.
-        if self._calendar is None or not self._calendar_write:
-            return "L'écriture dans l'agenda n'est pas activée (voir docs/AGENDA.md).", True
-        if self._engine is None:
-            return self._MOTEUR_ABSENT, True
-        titre = str(args.get("titre") or "").strip()
-        debut = str(args.get("debut") or "").strip()
-        if not titre or not debut:
-            return "Il me faut au moins un titre et une date/heure de début.", True
-        all_day = bool(args.get("toute_la_journee"))
-        fin = str(args.get("fin") or "").strip()
-        lieu = str(args.get("lieu") or "").strip()
-        details = str(args.get("details") or "").strip()
-        quand = _fmt_rdv_quand(debut, all_day)
-        description = quand + (f" · {lieu}" if lieu else "")
-        proposal, message = await self._engine.propose(
-            title=f"Agenda : {titre}",
-            description=description,
-            justification=details,
-            risk="medium",
-            rollback="Rien n'est créé sans ton accord ; une fois ajouté, tu peux le "
-                     "supprimer directement dans Google Agenda.",
-            action_id="agenda.creer",
-            params={
-                "titre": titre, "debut": debut, "fin": fin or None,
-                "toute_la_journee": all_day, "lieu": lieu, "details": details,
-            },
-            created_by="sentinel (LLM)",
-        )
-        return message, proposal is None
