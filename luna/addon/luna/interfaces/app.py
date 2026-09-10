@@ -61,7 +61,11 @@ class Luna:
             profil_de_session=self._profil_de_session,
             noms=NOMS_PROFILS,
         )
-        self.arbitre = Arbitre(self.maison, self.memoire)
+        self.arbitre = Arbitre(
+            self.maison,
+            self.memoire,
+            delai_verification=reglages.delai_verification,
+        )
         self.orchestrateur = Orchestrateur(
             cerveau=self.cerveau,
             maison=self.maison,

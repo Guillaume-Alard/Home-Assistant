@@ -40,6 +40,7 @@ options:
       profil: "guillaume"
       presence: ""
   profil_par_defaut: "guest"
+  delai_verification: 1.5
 
   # ── Habitudes et veille (P4) ────────────────────────────────────────
   #
@@ -100,6 +101,7 @@ schema:
       profil: list(guillaume|clara|liam|guest)
       presence: str?
   profil_par_defaut: list(guillaume|clara|liam|guest|unknown)
+  delai_verification: float
   veille:
     - entite: str
       categorie: str?

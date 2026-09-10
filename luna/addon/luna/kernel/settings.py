@@ -189,6 +189,10 @@ class Reglages(BaseModel):
     journal: str = "info"
     profils: list[CorrespondanceProfil] = Field(default_factory=list)
     profil_par_defaut: str = "guest"
+    #: Le temps laissé à Home Assistant pour que l'état reflète une action, avant
+    #: que Luna dise « fait » (§8). `0` coupe la vérification et lui rend son
+    #: ancien comportement : annoncer l'appel plutôt que son effet.
+    delai_verification: float = 1.5
 
     # ── Habitudes et veille (P4) ─────────────────────────────────────────
     veille: list[RegleVeille] = Field(default_factory=list)

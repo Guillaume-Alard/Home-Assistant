@@ -43,6 +43,11 @@ class FauxMaison:
         self.connectee = True
         self.appels: list[ActionHA] = []
         self.echoue = False
+        #: Entités qui acceptent l'appel sans changer d'état — l'ampoule
+        #: retirée de sa douille. C'est le cas que §8 rendait invisible.
+        self.sourdes: set[str] = set()
+        #: Entités qui ne disent plus leur état après l'appel.
+        self.muettes: set[str] = set()
         self._entites = {
             "light.salon_plafond": ("Plafond du salon", "off", "sejour"),
             "light.salon_lampadaire": ("Lampadaire", "off", "sejour"),
@@ -118,9 +123,39 @@ class FauxMaison:
         )
 
     async def appeler_service(self, action: ActionHA) -> None:
+        """Accepte l'appel **et applique son effet**, comme le vrai.
+
+        Un faux qui enregistre sans agir ne peut pas distinguer « accepté » de
+        « fait » — la confusion même que la vérification traque. Les entités
+        `sourdes` acceptent sans obéir ; les `muettes` cessent de répondre.
+        """
         if self.echoue:
             raise MaisonIndisponible()
         self.appels.append(action)
+        vise = {
+            "turn_on": "on",
+            "turn_off": "off",
+        }.get(action.service)
+        cibles = action.target.get("entity_id") or []
+        if isinstance(cibles, str):
+            cibles = [cibles]
+        for identifiant in cibles:
+            if identifiant not in self._entites:
+                continue
+            nom, etat, area = self._entites[identifiant]
+            if identifiant in self.muettes:
+                self._entites[identifiant] = (nom, "unavailable", area)
+                continue
+            if identifiant in self.sourdes:
+                continue
+            if vise is not None:
+                self._entites[identifiant] = (nom, vise, area)
+            elif action.service == "toggle":
+                self._entites[identifiant] = (
+                    nom,
+                    "off" if etat == "on" else "on",
+                    area,
+                )
 
     # ── Ce que P5 demande en plus (lecture seule) ────────────────────────
 
@@ -318,7 +353,8 @@ def maison() -> FauxMaison:
 
 @pytest.fixture
 def arbitre(maison, memoire) -> Arbitre:
-    return Arbitre(maison, memoire)
+    # Le vrai délai est de 1,5 s ; la suite n'a pas à l'attendre.
+    return Arbitre(maison, memoire, delai_verification=0.001)
 
 
 class FauxEmetteur:

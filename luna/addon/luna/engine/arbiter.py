@@ -22,6 +22,7 @@ niveaux, ne les nomme pas, ne peut pas les contourner (§9.2).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -49,11 +50,23 @@ from ..kernel.schemas import (
     PropositionEnAttente,
     ResultatOutil,
 )
+from ..kernel.verification import (
+    Verdict,
+    attendu_de,
+    est_une_bascule,
+    juger,
+    verifiable,
+)
 from .tools import SERVICES
 
 log = logging.getLogger("luna.arbitre")
 
 DUREE_PROPOSITION = timedelta(minutes=5)
+
+#: Le temps laissé à Home Assistant pour que l'état reflète l'action (H89).
+#: Trop court, une ampoule Zigbee lente passerait pour muette ; trop long, la
+#: réponse traîne. Réglable, et `0` coupe la vérification.
+DELAI_VERIFICATION = 1.5
 
 Emetteur = Callable[[EvenementCarte], Awaitable[None]]
 
@@ -63,10 +76,52 @@ DOMAINES_SCENE = ("scene",)
 DOMAINES_THERMOSTAT = ("climate",)
 
 
+def _cibles(acte: ActionHA) -> list[str]:
+    """Les `entity_id` visés, que la cible soit une chaîne ou une liste."""
+    brut = acte.target.get("entity_id")
+    if isinstance(brut, str):
+        return [brut] if brut else []
+    return [str(identifiant) for identifiant in brut or []]
+
+
+def _dire(verdict: Verdict, libelle: str, detail: str) -> ResultatOutil:
+    """Ce que l'arbitre rend au cerveau : factuel, pas joli.
+
+    C'est le modèle qui met la phrase en français ; l'arbitre lui donne des
+    faits. Un « sans effet » et un « injoignable » ne se disent pas pareil et ne
+    se corrigent pas pareil — l'un désigne un appareil qui refuse, l'autre un
+    appareil qu'on n'entend plus.
+    """
+    if verdict in (Verdict.FAIT, Verdict.NON_VERIFIABLE):
+        return ResultatOutil(contenu=f"Fait : {libelle.lower()}.")
+    if verdict is Verdict.INJOIGNABLE:
+        return ResultatOutil(
+            contenu=(
+                f"{libelle} : l'appel est parti, mais {detail}. "
+                "Impossible de confirmer que ça a marché."
+            ),
+            erreur=True,
+        )
+    return ResultatOutil(
+        contenu=(
+            f"{libelle} : l'appel est parti et {detail}. "
+            "L'appareil répond mais n'a pas obéi."
+        ),
+        erreur=True,
+    )
+
+
 class Arbitre:
-    def __init__(self, maison: MaisonProvider, memoire: MemoireProvider) -> None:
+    def __init__(
+        self,
+        maison: MaisonProvider,
+        memoire: MemoireProvider,
+        *,
+        delai_verification: float = DELAI_VERIFICATION,
+    ) -> None:
         self._maison = maison
         self._memoire = memoire
+        self._delai_verification = delai_verification
         self._en_attente: dict[str, PropositionEnAttente] = {}
 
     # ── Point d'entrée depuis le cerveau ─────────────────────────────────
@@ -326,6 +381,8 @@ class Arbitre:
             return ResultatOutil(contenu=message, erreur=True)
 
         if peut_agir_seule(contexte.profile, niveau):
+            # Prise avant l'appel : une bascule ne se juge que par comparaison.
+            avant = await self._photo_avant(acte)
             try:
                 await self._maison.appeler_service(acte)
             except MaisonIndisponible as exc:
@@ -344,19 +401,33 @@ class Arbitre:
                     emettre, message_id, nom_outil, libelle, niveau, "error"
                 )
                 return ResultatOutil(contenu=exc.message, erreur=True)
+            verdict, detail = await self._verifier(acte, avant)
+            abouti = verdict in (Verdict.FAIT, Verdict.NON_VERIFIABLE)
             if doit_etre_journalise(niveau):
+                # `executed` cesse de vouloir dire « l'appel est parti » pour
+                # dire « l'état a suivi ». Le journal ne prétend plus qu'une
+                # action sans effet a eu lieu.
                 await self._journaliser(
                     acte,
                     niveau,
                     justification,
                     "accepted",
-                    True,
+                    abouti,
                     contexte,
                     message_id,
-                    None,
+                    detail or None,
                 )
-            await self._outil(emettre, message_id, nom_outil, libelle, niveau, "done")
-            return ResultatOutil(contenu=f"Fait : {libelle.lower()}.")
+            await self._outil(
+                emettre,
+                message_id,
+                nom_outil,
+                libelle,
+                niveau,
+                "done" if abouti else "error",
+            )
+            if not abouti:
+                log.info("%s : %s — %s", verdict.value, libelle, detail)
+            return _dire(verdict, libelle, detail)
 
         # Niveau 3 ou 4, ou niveau 2 qu'un profil sans scope ne peut pas déclencher.
         proposition = Proposition(
@@ -448,15 +519,25 @@ class Arbitre:
         resultats = []
         for acte in proposition.actions:
             erreur: str | None = None
+            avant = await self._photo_avant(acte)
             try:
                 await self._maison.appeler_service(acte)
             except LunaError as exc:
                 erreur = exc.message
+            abouti = erreur is None
+            if abouti:
+                # Une proposition validée par un humain mérite au moins autant
+                # de vérification qu'une action de confort : c'est même là que
+                # se jouent les niveaux 3 et 4.
+                verdict, detail = await self._verifier(acte, avant)
+                abouti = verdict in (Verdict.FAIT, Verdict.NON_VERIFIABLE)
+                if not abouti:
+                    erreur = detail
             resultats.append(
                 {
                     "domain": acte.domain,
                     "service": acte.service,
-                    "ok": erreur is None,
+                    "ok": abouti,
                     "error": erreur,
                 }
             )
@@ -465,7 +546,7 @@ class Arbitre:
                 niveau,
                 proposition.why,
                 "accepted",
-                erreur is None,
+                abouti,
                 contexte,
                 en_attente.message_id,
                 erreur,
@@ -512,6 +593,57 @@ class Arbitre:
                 status=statut,  # type: ignore[arg-type]
             )
         )
+
+    # ── La vérification (§8, « jamais d'échec silencieux ») ──────────────
+
+    async def _photo_avant(self, acte: ActionHA) -> dict[str, str]:
+        """L'état des cibles avant l'appel — seulement si une bascule l'exige.
+
+        Pour `turn_on` et `turn_off`, l'état visé est connu d'avance : relire
+        avant ne ferait que doubler le coût de chaque commande.
+        """
+        if self._delai_verification <= 0 or not est_une_bascule(
+            acte.domain, acte.service
+        ):
+            return {}
+        return await self._photo(_cibles(acte))
+
+    async def _verifier(
+        self, acte: ActionHA, avant: dict[str, str]
+    ) -> tuple[Verdict, str]:
+        """Relit l'état après l'appel et rend le verdict de L0."""
+        if self._delai_verification <= 0 or not verifiable(acte.domain, acte.service):
+            return Verdict.NON_VERIFIABLE, ""
+        cibles = _cibles(acte)
+        if not cibles:
+            return Verdict.NON_VERIFIABLE, ""
+        await asyncio.sleep(self._delai_verification)
+        try:
+            apres = await self._photo(cibles)
+        except MaisonIndisponible as exc:
+            return Verdict.INJOIGNABLE, exc.message
+        # Une entité qui a disparu de la lecture est muette, pas absente du
+        # jugement : l'oublier ferait passer sa disparition pour un succès.
+        for identifiant in cibles:
+            apres.setdefault(identifiant, "unavailable")
+        return juger(
+            attendu=attendu_de(acte.domain, acte.service), avant=avant, apres=apres
+        )
+
+    async def _photo(self, cibles: list[str]) -> dict[str, str]:
+        """L'état des entités visées.
+
+        Le contrat de lecture filtre par pièce ou par domaine, jamais par
+        identifiant : on lit donc les domaines concernés — un, rarement deux —
+        et on ne garde que ce qu'on cherchait.
+        """
+        voulues = set(cibles)
+        photo: dict[str, str] = {}
+        for domaine in sorted({id.split(".", 1)[0] for id in voulues}):
+            for etat in await self._maison.etats(domaine=domaine):
+                if etat.entity_id in voulues:
+                    photo[etat.entity_id] = etat.etat
+        return photo
 
     async def _journaliser(
         self,
