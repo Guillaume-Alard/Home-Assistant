@@ -176,7 +176,7 @@ const STYLES = `
   }
   .envoi:disabled { opacity: .5; cursor: default; }
 
-  .micro {
+  .micro, .veille {
     flex: 0 0 auto;
     align-self: flex-end;
     width: 40px; height: 40px;
@@ -188,9 +188,11 @@ const STYLES = `
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
-  .micro:hover:not(:disabled) { border-color: var(--luna-accent); }
-  .micro:disabled { opacity: 0.4; cursor: not-allowed; }
-  .carte[data-orbe="listening"] .micro {
+  .micro:hover:not(:disabled), .veille:hover:not(:disabled) { border-color: var(--luna-accent); }
+  .micro:disabled, .veille:disabled { opacity: 0.4; cursor: not-allowed; }
+  /* Micro actif pendant l'écoute d'un tour ; veille active quand elle est armée. */
+  .carte[data-orbe="listening"] .micro,
+  .veille.actif {
     background: var(--luna-accent); color: #fff; border-color: var(--luna-accent);
   }
 `;
@@ -257,8 +259,15 @@ class LunaCard extends HTMLElement {
     this._conversationId = null;
     this._busy = false;
     this._rendu = false;
-    this._voix = null;        // état d'un tour vocal en cours (null = aucun)
+    this._voix = null;        // état du RUN pipeline en cours (null = aucun)
+    this._audio = null;       // micro partagé (persistant en veille) : {stream,ctx,src,node}
+    this._enVeille = false;   // veille au mot d'éveil armée
     this._workletUrl = null;  // URL Blob du worklet micro (créée à la demande)
+  }
+
+  disconnectedCallback() {
+    // Carte retirée du DOM (édition du tableau de bord…) : on relâche le micro.
+    this._arreterTout();
   }
 
   // Lovelace appelle toujours setConfig ; on part de défauts, jamais d'un objet vide.
@@ -271,6 +280,7 @@ class LunaCard extends HTMLElement {
       stream: true,    // rendu « mot à mot » ; repli auto si indisponible
       entry_id: "",    // intégration Sentinel à interroger (vide = la première)
       voice: true,     // bouton micro (pipeline Assist d'HA) si l'appareil le permet
+      wake: true,      // bouton veille « mot d'éveil » (mains libres)
       pipeline: "",    // id du pipeline Assist ; vide = pipeline préféré d'HA
       ...(config || {}),
     };
@@ -305,6 +315,7 @@ class LunaCard extends HTMLElement {
       </header>
       <div class="fil"></div>
       <div class="saisie">
+        <button class="veille" type="button" title="Mains libres : écouter le mot d'éveil" aria-label="Écouter le mot d'éveil">👂</button>
         <button class="micro" type="button" title="Parler à Luna" aria-label="Parler à Luna">🎙</button>
         <textarea rows="1" placeholder="Écris à Luna…" aria-label="Message à Luna"></textarea>
         <button class="envoi" type="button" title="Envoyer" aria-label="Envoyer">➤</button>
@@ -316,9 +327,11 @@ class LunaCard extends HTMLElement {
     this._zone = carte.querySelector("textarea");
     this._bouton = carte.querySelector(".envoi");
     this._micro = carte.querySelector(".micro");
+    this._veilleBtn = carte.querySelector(".veille");
 
     this._bouton.addEventListener("click", () => this._envoyer());
     this._micro.addEventListener("click", () => this._ecouter());
+    this._veilleBtn.addEventListener("click", () => this._basculerVeille());
     this._zone.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._envoyer(); }
     });
@@ -354,9 +367,7 @@ class LunaCard extends HTMLElement {
     this._zone.value = "";
     this._autoTaille();
     this._messages.push({ role: "moi", texte });
-    this._busy = true;
-    this._bouton.disabled = true;
-    this._majMicro();
+    this._setBusy(true);
     this._orbe("thinking");
     this._peindreFil({ attente: true });
 
@@ -381,9 +392,7 @@ class LunaCard extends HTMLElement {
         console.error("luna-card:", err2);
       }
     } finally {
-      this._busy = false;
-      this._bouton.disabled = false;
-      this._majMicro();
+      this._setBusy(false);
     }
   }
 
@@ -494,64 +503,64 @@ class LunaCard extends HTMLElement {
     );
   }
 
-  _majMicro() {
-    if (!this._micro) return;
-    const actif = this._config.voice !== false;
-    this._micro.hidden = !actif;
-    if (!actif) return;
-    const ok = this._voixSupportee();
-    this._micro.disabled = !ok || (this._busy && !this._voix);
-    this._micro.title = ok ? "Parler à Luna" : "Voix indisponible (HTTPS + micro requis)";
+  _setBusy(v) {
+    this._busy = v;
+    if (this._bouton) this._bouton.disabled = v;
+    this._majMicro();
   }
 
-  async _ecouter() {
-    // Déjà en écoute → « j'ai fini de parler » : on clôt le micro ; le pipeline
-    // poursuit tout seul (transcription → réponse → voix).
-    if (this._voix && !this._voix.microArrete) { this._arreterMicro(); return; }
-    if (this._voix || this._busy) return;
-    if (!this._voixSupportee()) { this._noticeVoix(); return; }
-    this._busy = true;
-    this._bouton.disabled = true;
-    this._voix = {
-      microArrete: false, handlerId: null, finEnvoyee: false,
-      transcrit: { role: "moi", texte: "", ecoute: true },  // bulle « en écoute »
-    };
-    this._messages.push(this._voix.transcrit);
-    this._majMicro();
-    this._orbe("listening");
-    this._peindreFil();
-    try {
-      await this._demarrerPipeline();
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("luna-card voix:", err);
-      this._messages.push({
-        role: "erreur",
-        texte: "Micro indisponible ou refusé. Tu peux toujours écrire à Luna.",
-      });
-      this._peindreFil();
-      this._finPipeline();
+  _majMicro() {
+    const ok = this._voixSupportee();
+    if (this._micro) {
+      const on = this._config.voice !== false;
+      this._micro.hidden = !on;
+      // Micro « parler » : hors support, pendant la veille, ou pendant un autre tour.
+      this._micro.disabled = !ok || this._enVeille
+        || (this._busy && !(this._voix && this._voix.mode === "push"));
+      this._micro.title = ok ? "Parler à Luna" : "Voix indisponible (HTTPS + micro requis)";
+    }
+    if (this._veilleBtn) {
+      const on = this._config.voice !== false && this._config.wake !== false;
+      this._veilleBtn.hidden = !on;
+      this._veilleBtn.disabled = !ok || (this._busy && !this._enVeille);
+      this._veilleBtn.classList.toggle("actif", !!this._enVeille);
+      this._veilleBtn.title = !ok ? "Voix indisponible (HTTPS + micro requis)"
+        : this._enVeille ? "Arrêter l'écoute du mot d'éveil" : "Mains libres : écouter le mot d'éveil";
     }
   }
 
-  async _demarrerPipeline() {
+  // Micro partagé : persistant tant que la veille est armée, ouvert le temps d'un
+  // tour en push-to-talk. Ouvert sur un geste (le premier appui), donc audible.
+  async _ouvrirMicro() {
+    if (this._audio) return;
     const AC = window.AudioContext || window.webkitAudioContext;
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
-    if (!this._voix) { stream.getTracks().forEach((t) => t.stop()); return; } // annulé
     const ctx = new AC();
     await ctx.audioWorklet.addModule(this._urlWorklet());
-    if (!this._voix) { stream.getTracks().forEach((t) => t.stop()); ctx.close(); return; }
     const src = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, "luna-pcm", { processorOptions: { targetRate: 16000 } });
     node.port.onmessage = (e) => this._surChunk(e.data);
     src.connect(node); // pas relié à la sortie : on ne rejoue pas le micro
-    Object.assign(this._voix, { stream, ctx, src, node });
+    this._audio = { stream, ctx, src, node, actif: false };
+  }
 
+  _fermerMicro() {
+    const a = this._audio;
+    this._audio = null;
+    if (!a) return;
+    try { a.node.port.postMessage("stop"); } catch { /* rien */ }
+    try { a.node.disconnect(); } catch { /* rien */ }
+    try { a.src.disconnect(); } catch { /* rien */ }
+    try { a.stream.getTracks().forEach((t) => t.stop()); } catch { /* rien */ }
+    try { a.ctx.state !== "closed" && a.ctx.close(); } catch { /* rien */ }
+  }
+
+  async _demarrerRun(startStage) {
     const sub = {
       type: "assist_pipeline/run",
-      start_stage: "stt",
+      start_stage: startStage,
       end_stage: "tts",
       input: { sample_rate: 16000 },
     };
@@ -561,6 +570,69 @@ class LunaCard extends HTMLElement {
     );
     if (this._voix) this._voix.unsub = unsub;
     else unsub();
+  }
+
+  // Push-to-talk : appui sur le micro.
+  async _ecouter() {
+    if (this._enVeille) return; // pas de push-to-talk pendant la veille
+    if (this._voix && this._voix.mode === "push" && !this._voix.microArrete) { this._arreterMicro(); return; }
+    if (this._voix || this._busy) return;
+    if (!this._voixSupportee()) { this._noticeVoix(); return; }
+    this._voix = {
+      mode: "push", microArrete: false, handlerId: null, finEnvoyee: false,
+      transcrit: { role: "moi", texte: "", ecoute: true }, // bulle « en écoute »
+    };
+    this._messages.push(this._voix.transcrit);
+    this._setBusy(true); // le micro « parler » reste actionnable (mode push)
+    this._orbe("listening");
+    this._peindreFil();
+    try {
+      await this._ouvrirMicro();
+      if (!this._voix) { this._fermerMicro(); return; } // annulé pendant l'ouverture
+      await this._demarrerRun("stt");
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("luna-card voix:", err);
+      this._messages.push({ role: "erreur", texte: "Micro indisponible ou refusé. Tu peux toujours écrire à Luna." });
+      this._peindreFil();
+      this._arreterTout();
+    }
+  }
+
+  // Mot d'éveil : veille mains libres. Un run pipeline commençant à « wake_word » ;
+  // à la détection, on carillonne et on enchaîne sur la demande, puis on ré-arme.
+  async _basculerVeille() {
+    if (this._enVeille) { this._arreterTout(); return; }
+    if (this._voix || this._busy) return;
+    if (!this._voixSupportee()) { this._noticeVoix(); return; }
+    this._enVeille = true;
+    this._voix = { mode: "wake", handlerId: null, finEnvoyee: false, transcrit: null };
+    this._majMicro();
+    this._orbe("idle");
+    try {
+      await this._ouvrirMicro();
+      if (!this._enVeille) { this._fermerMicro(); return; }
+      await this._demarrerRun("wake_word");
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("luna-card veille:", err);
+      this._messages.push({
+        role: "erreur",
+        texte: "Le mot d'éveil demande le micro (HTTPS) et un pipeline Assist avec détection de mot d'éveil.",
+      });
+      this._peindreFil();
+      this._arreterTout();
+    }
+  }
+
+  _reArmer() {
+    if (!this._enVeille) { this._fermerMicro(); return; }
+    this._voix = { mode: "wake", handlerId: null, finEnvoyee: false, transcrit: null };
+    this._demarrerRun("wake_word").catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("luna-card veille (ré-armement) :", err);
+      this._arreterTout();
+    });
   }
 
   _surChunk(data) {
@@ -602,9 +674,21 @@ class LunaCard extends HTMLElement {
     }
     if (t === "run-start") {
       v.handlerId = d.runner_data && d.runner_data.stt_binary_handler_id;
-      if (v.node && !v.microArrete) { try { v.node.port.postMessage("start"); } catch { /* rien */ } }
+      // Le micro n'est démarré qu'une fois ; il reste actif en veille (ré-armements).
+      if (this._audio && !this._audio.actif) {
+        try { this._audio.node.port.postMessage("start"); this._audio.actif = true; } catch { /* rien */ }
+      }
+    } else if (t === "wake_word-end") {
+      // « Luna » entendu : carillon, puis on écoute la demande.
+      this._chime();
+      this._setBusy(true);
+      v.transcrit = { role: "moi", texte: "", ecoute: true };
+      this._messages.push(v.transcrit);
+      this._orbe("listening");
+      this._peindreFil();
     } else if (t === "stt-end") {
-      if (!v.microArrete) this._arreterMicro();
+      if (v.mode === "push" && !v.microArrete) this._arreterMicro();
+      else if (v.mode === "wake") v.finEnvoyee = true; // on cesse d'alimenter ce run
       this._finaliserTranscription((d.stt_output && d.stt_output.text) || "");
       this._orbe("thinking");
     } else if (t === "intent-end") {
@@ -618,11 +702,11 @@ class LunaCard extends HTMLElement {
       this._orbe("speaking");
       if (url) this._jouerTts(url);
     } else if (t === "run-end") {
-      if (!(v.audio && !v.audio.ended)) this._finPipeline(); // laisse la voix finir
+      if (!(v.audio && !v.audio.ended)) this._terminerEchange(); // laisse la voix finir
     } else if (t === "error") {
       this._messages.push({ role: "erreur", texte: d.message || "La voix a échoué." });
       this._peindreFil();
-      this._finPipeline();
+      this._arreterTout();
     }
   }
 
@@ -643,51 +727,84 @@ class LunaCard extends HTMLElement {
     this._peindreFil();
   }
 
-  // « J'ai fini de parler » : on arrête la capture ; la fin d'audio (trame vide)
-  // part sur le message 'flushed' du worklet, pour ne rien tronquer.
+  // Push-to-talk : « j'ai fini de parler ». La fin d'audio (trame vide) part sur
+  // le message 'flushed' du worklet, pour ne rien tronquer.
   _arreterMicro() {
     const v = this._voix;
-    if (!v || v.microArrete) return;
+    if (!v || v.mode !== "push" || v.microArrete) return;
     v.microArrete = true;
     this._orbe("thinking");
-    try { v.node && v.node.port.postMessage("stop"); } catch { /* rien */ }
-    try { v.stream && v.stream.getTracks().forEach((t) => t.stop()); } catch { /* rien */ }
-    if (v.handlerId == null) this._finPipeline(); // rien n'a démarré : on referme
+    try { this._audio && this._audio.node.port.postMessage("stop"); } catch { /* rien */ }
+    if (this._audio) this._audio.actif = false;
+    if (v.handlerId == null) this._arreterTout(); // rien n'a démarré : on referme
   }
 
   _jouerTts(url) {
     try {
       const audio = new Audio(url);
       if (this._voix) this._voix.audio = audio;
-      audio.addEventListener("ended", () => this._finPipeline());
-      audio.addEventListener("error", () => this._finPipeline());
+      audio.addEventListener("ended", () => this._terminerEchange());
+      audio.addEventListener("error", () => this._terminerEchange());
       const p = audio.play();
-      if (p && p.catch) p.catch(() => this._finPipeline());
+      if (p && p.catch) p.catch(() => this._terminerEchange());
     } catch {
-      this._finPipeline();
+      this._terminerEchange();
     }
   }
 
-  _finPipeline() {
+  // Petit carillon (deux notes) sur le contexte audio déjà ouvert — donc audible
+  // (créé lors du geste d'armement de la veille).
+  _chime() {
+    try {
+      const ctx = this._audio && this._audio.ctx;
+      if (!ctx || ctx.state === "closed") return;
+      const now = ctx.currentTime;
+      for (const [f, dt] of [[880, 0], [1175, 0.09]]) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine"; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, now + dt);
+        g.gain.exponentialRampToValueAtTime(0.16, now + dt + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + dt + 0.15);
+        o.connect(g).connect(ctx.destination);
+        o.start(now + dt); o.stop(now + dt + 0.17);
+      }
+    } catch { /* pas de carillon, tant pis */ }
+  }
+
+  // Fin d'un run : ré-armer la veille si toujours armée, sinon tout arrêter.
+  _terminerEchange() {
+    const v = this._voix;
+    const reArmer = !!(v && v.mode === "wake" && this._enVeille);
+    this._finRunCourant();
+    if (reArmer) {
+      this._setBusy(false);
+      this._orbe("idle");
+      this._reArmer();
+    } else {
+      this._arreterTout();
+    }
+  }
+
+  // Ferme le RUN courant (abonnement + bulle d'écoute non résolue), pas le micro.
+  _finRunCourant() {
     const v = this._voix;
     this._voix = null;
-    if (v) {
-      // Bulle « en écoute » jamais résolue (fin/erreur avant la transcription) : on l'ôte.
-      if (v.transcrit && v.transcrit.ecoute) {
-        const i = this._messages.indexOf(v.transcrit);
-        if (i >= 0) { this._messages.splice(i, 1); this._peindreFil(); }
-      }
-      try { v.unsub && v.unsub(); } catch { /* rien */ }
-      try { v.node && v.node.port.postMessage("stop"); } catch { /* rien */ }
-      try { v.node && v.node.disconnect(); } catch { /* rien */ }
-      try { v.src && v.src.disconnect(); } catch { /* rien */ }
-      try { v.stream && v.stream.getTracks().forEach((t) => t.stop()); } catch { /* rien */ }
-      try { v.ctx && v.ctx.state !== "closed" && v.ctx.close(); } catch { /* rien */ }
+    if (!v) return;
+    if (v.transcrit && v.transcrit.ecoute) {
+      const i = this._messages.indexOf(v.transcrit);
+      if (i >= 0) { this._messages.splice(i, 1); this._peindreFil(); }
     }
-    this._busy = false;
-    this._bouton.disabled = false;
+    try { v.unsub && v.unsub(); } catch { /* rien */ }
+  }
+
+  // Tout arrêter : run + micro + veille, retour au repos.
+  _arreterTout() {
+    this._finRunCourant();
+    this._fermerMicro();
+    this._enVeille = false;
+    this._setBusy(false);
     this._orbe("idle");
-    this._majMicro();
   }
 
   _noticeVoix() {

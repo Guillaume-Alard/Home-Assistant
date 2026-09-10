@@ -69,6 +69,7 @@ height: 460                    # hauteur en pixels
 stream: true                   # rendu « mot à mot » (défaut) ; false = un bloc
 agent: conversation.sentinel   # agent de conversation (chemin non-streamé / repli)
 voice: true                    # bouton micro (défaut) ; false = clavier seul
+wake: true                     # bouton veille « mot d'éveil » (défaut) ; false = caché
 pipeline: ""                   # id d'un pipeline Assist ; vide = pipeline préféré
 ```
 
@@ -98,6 +99,16 @@ le tien en fournit un jour, la carte affiche le texte partiel automatiquement.
 
 Un appui lance l'écoute ; un second appui dit « j'ai fini de parler » (sinon la
 détection de silence d'HA s'en charge, si ton pipeline l'active).
+
+**Mains libres — le mot d'éveil (👂).** Le bouton oreille **arme la veille** : la
+carte écoute en continu le **mot d'éveil** (« Luna… », selon ton moteur). À la
+détection, elle **carillonne**, écoute ta demande, répond et **prononce** — puis
+se **ré-arme** toute seule pour la fois suivante. Un second appui désarme. Le
+micro reste ouvert tout du long (ouvert sur ton appui, donc autorisé), et le
+carillon comme la voix passent par ce même contexte audio. La veille exige, en
+plus des conditions ci-dessous, un **moteur de mot d'éveil** dans ton pipeline
+Assist (openWakeWord, par ex.) ; sans lui, HA renvoie une erreur et la carte
+désarme en le disant.
 
 Trois conditions, sinon le micro reste grisé (le clavier, lui, marche partout) :
 
@@ -143,13 +154,14 @@ et affiche quand même la réponse) ; **erreur** (une bulle, l'orbe au repos) ; 
 la **voix** (le micro lance le pipeline Assist simulé — une bulle « en écoute »
 apparaît et son niveau réagit, puis se résout en transcription, réponse, voix
 jouée, retour au repos ; le micro et l'audio sont stubés, on éprouve la machine à
-états). Le banc manuel est `custom_components/sentinel_assist/tests/banc.html`.
+états) ; et le **mot d'éveil** (la veille s'arme, le mot d'éveil est « entendu »,
+l'échange se fait, la veille se ré-arme, puis on désarme). Le banc manuel est
+`custom_components/sentinel_assist/tests/banc.html`.
 
 ## La suite (incréments futurs, indépendants)
 
-Le **streaming mot à mot**, la **voix** et la **bulle d'écoute vivante** sont
-faits. Viendront ensuite, si tu le veux :
+Le **streaming mot à mot**, la **voix**, la **bulle d'écoute vivante** et le
+**mot d'éveil** sont faits. Viendra ensuite, si tu le veux :
 
-- Le **mot d'éveil** (« Luna… ») pour parler sans toucher l'écran.
 - Les **propositions** à valider directement dans la carte (aujourd'hui : dans
   le cockpit).

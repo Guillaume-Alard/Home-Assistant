@@ -163,6 +163,38 @@ def test_voix_erreur(sync_playwright):
         page.wait_for_function("() => window.__banc.etatOrbe() === 'idle'", timeout=4000)
 
 
+def test_veille_mot_eveil(sync_playwright):
+    """Le bouton veille arme le mot d'éveil : à la détection, transcription →
+    réponse → voix, puis la veille se RÉ-ARME toute seule pour la prochaine fois."""
+    with _serveur(ROOT) as base, _page(sync_playwright) as page:
+        _ouvrir(page, base)
+        page.evaluate("() => window.__banc.parlerVeille()")
+        # Armé : le bouton veille est actif, et un run pipeline « wake_word » est lancé.
+        page.wait_for_function("() => window.__banc.veilleActive()", timeout=4000)
+
+        # Mot d'éveil « entendu » → ma demande transcrite, puis la réponse + la voix.
+        page.wait_for_function(
+            "() => window.__banc.bulles().some(b => b.classe.includes('moi') && b.texte === window.__banc.TRANSCRIPT)",
+            timeout=6000,
+        )
+        page.wait_for_function(
+            "() => window.__banc.bulles().some(b => b.classe.includes('luna') && b.texte === window.__banc.REPONSE)",
+            timeout=6000,
+        )
+        page.wait_for_function(
+            "() => window.__banc.audioJoue().includes('/api/tts_proxy/luna.mp3')", timeout=6000
+        )
+        # Après l'échange, la veille s'est RÉ-ARMÉE (toujours active) sans nouvel appui.
+        page.wait_for_function("() => window.__banc.veilleActive()", timeout=6000)
+        subs = page.evaluate("() => window.__banc.abonnements()")
+        wake = [s for s in subs if s["type"] == "assist_pipeline/run" and s["start_stage"] == "wake_word"]
+        assert wake
+
+        # Second appui : on désarme.
+        page.evaluate("() => window.__banc.parlerVeille()")
+        page.wait_for_function("() => window.__banc.veilleActive() === false", timeout=4000)
+
+
 def main() -> int:
     try:
         from playwright.sync_api import sync_playwright
@@ -174,7 +206,8 @@ def main() -> int:
     test_erreur_affiche_une_bulle(sync_playwright)
     test_voix_pipeline(sync_playwright)
     test_voix_erreur(sync_playwright)
-    print("OK — carte Luna : streaming, repli, erreur, et voix (pipeline Assist).")
+    test_veille_mot_eveil(sync_playwright)
+    print("OK — carte Luna : streaming, repli, erreur, voix, et mot d'éveil.")
     return 0
 
 
