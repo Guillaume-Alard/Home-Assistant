@@ -47,6 +47,9 @@ Sentinel** (l'intégration `sentinel_assist`). Donc :
 
 ## Installation
 
+> Guide pas à pas (copie des fichiers, add-ons voix, openWakeWord, HTTPS) :
+> **`docs/INSTALL-HA.md`**. En bref :
+
 1. **L'intégration** `sentinel_assist` doit être installée (Paramètres →
    Appareils et services → Ajouter → « Sentinel ») : renseigne l'URL de Sentinel
    et le jeton `SENTINEL_ASSIST_TOKEN`. C'est elle qui fournit l'agent de
