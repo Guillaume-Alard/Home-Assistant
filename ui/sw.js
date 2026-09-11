@@ -1,6 +1,6 @@
 /* Service worker Sentinel — réseau d'abord, cache en secours (usage hors ligne
    limité à l'UI ; la conversation exige évidemment le serveur). */
-const CACHE = 'sentinel-v48';
+const CACHE = 'sentinel-v49';
 const ASSETS = [
   './', 'index.html', 'orb.html', 'css/fonts.css', 'css/icons.css', 'css/main.css',
   'manifest.webmanifest', 'icons/icon.svg',

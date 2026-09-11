@@ -42,6 +42,18 @@ i[class*=" fi-rr-"]::before {
 /* Chips d'action rapide */
 .fi-rr-sun::before           { content: "\f8bb"; }   /* briefing du matin */
 
+/* Navigation des Paramètres (une icône par section) */
+.fi-rr-link-alt::before        { content: "\f61f"; }  /* Connexions */
+.fi-rr-fingerprint::before     { content: "\f4cf"; }  /* Profils vocaux */
+.fi-rr-brain::before           { content: "\f241"; }  /* Mémoire */
+.fi-rr-globe::before           { content: "\f520"; }  /* Pages web */
+.fi-rr-code-branch::before     { content: "\f37a"; }  /* Évolutions */
+.fi-rr-bulb::before            { content: "\f256"; }  /* Proactivité */
+.fi-rr-magic-wand::before      { content: "\f63d"; }  /* Routines */
+.fi-rr-microchip::before       { content: "\f679"; }  /* Moteur */
+.fi-rr-chart-histogram::before { content: "\f2c8"; }  /* Consommation */
+.fi-rr-shield-check::before    { content: "\f7e6"; }  /* Confidentialité */
+
 /* Composer (voix / envoi) */
 .fi-rr-microphone::before    { content: "\f67c"; }   /* parler */
 .fi-rr-square::before        { content: "\f890"; }   /* arrêter (écoute) */
