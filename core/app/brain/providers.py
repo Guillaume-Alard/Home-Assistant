@@ -96,6 +96,23 @@ PRESETS: tuple[Preset, ...] = (
 )
 
 
+# Suggestions de modèles par fournisseur, pour la liste déroulante du cockpit.
+# Point de départ RAISONNABLE (les catalogues bougent, cf. le retrait des Gemini
+# flash) — le champ reste libre : on peut toujours saisir un modèle « perso ».
+SUGGESTED_MODELS: dict[str, tuple[str, ...]] = {
+    ANTHROPIC_ID: ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"),
+    "openai": ("gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o1-mini"),
+    "gemini": ("gemini-3.6-flash", "gemini-2.5-pro"),
+    "groq": ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"),
+    "openrouter": (
+        "meta-llama/llama-3.3-70b-instruct",
+        "openai/gpt-4o-mini",
+        "google/gemini-2.5-flash",
+        "anthropic/claude-sonnet-5",
+    ),
+}
+
+
 @dataclass(frozen=True)
 class ProviderProfile:
     """Un fournisseur configurable : identité, modèle, accès.
@@ -199,6 +216,7 @@ def public_view(profiles: list[ProviderProfile], active_id: str, default_id: str
                 "label": p.label,
                 "kind": p.kind,
                 "model": p.model,
+                "suggested": list(SUGGESTED_MODELS.get(p.id, ())),  # liste déroulante (indicatif)
                 "configured": bool(p.api_key),  # une clé est posée (jamais la clé elle-même)
                 "available": p.available,
                 "web_search": p.web_search,

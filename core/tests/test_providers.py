@@ -111,7 +111,9 @@ def test_public_view_ne_fuit_jamais_la_cle(monkeypatch, tmp_path):
     blob = repr(view)
     assert "secret" not in blob and "aussi-secret" not in blob
     for p in view["providers"]:
-        assert set(p) == {"id", "label", "kind", "model", "available", "web_search", "hint", "configured"}
+        assert set(p) == {"id", "label", "kind", "model", "suggested",
+                          "available", "web_search", "hint", "configured"}
+        assert isinstance(p["suggested"], list)  # liste déroulante de modèles
         # `configured` = une clé est présente, SANS jamais révéler laquelle ni sa valeur.
         assert isinstance(p["configured"], bool)
     by_id = {p["id"]: p for p in view["providers"]}

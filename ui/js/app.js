@@ -1399,28 +1399,58 @@ function llmProviderRow(p, active) {
   }
   row.appendChild(keyField);
 
-  // Modèle — libre. Vide = modèle par défaut du fournisseur.
+  // Modèle — liste déroulante de suggestions + « Autre… » pour un id perso.
   const modelField = document.createElement('div');
   modelField.className = 'llm-field';
   const lab = document.createElement('label');
   lab.className = 'llm-lab';
   lab.textContent = 'Modèle';
-  const model = document.createElement('input');
-  model.type = 'text';
-  model.className = 'llm-input';
-  model.value = p.model || '';
-  model.placeholder = 'modèle par défaut';
-  model.spellcheck = false;
-  model.setAttribute('aria-label', `Modèle — ${p.label}`);
-  const saveModel = () => {
-    const v = model.value.trim();
-    if (v === (p.model || '')) return;  // rien de neuf
-    model.blur();
-    ws.sendJSON({ type: 'llm_set_model', id: p.id, model: v });
+  modelField.appendChild(lab);
+
+  const currentModel = p.model || '';
+  const suggestions = (p.suggested || []).slice();
+  const CUSTOM = '__custom__';
+  const applyModel = (v) => { if (v !== currentModel) ws.sendJSON({ type: 'llm_set_model', id: p.id, model: v }); };
+  const customInput = (val) => {
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'llm-input'; inp.spellcheck = false;
+    inp.value = val;
+    inp.placeholder = 'identifiant exact (ex. gpt-4o-mini)';
+    inp.setAttribute('aria-label', `Modèle — ${p.label}`);
+    const save = () => { inp.blur(); applyModel(inp.value.trim()); };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+    inp.addEventListener('blur', save);
+    return inp;
   };
-  model.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveModel(); } });
-  model.addEventListener('blur', saveModel);
-  modelField.append(lab, model);
+  if (suggestions.length) {
+    const sel = document.createElement('select');
+    sel.className = 'llm-input';
+    sel.setAttribute('aria-label', `Modèle — ${p.label}`);
+    const opts = suggestions.slice();
+    if (currentModel && !opts.includes(currentModel)) opts.unshift(currentModel);  // valeur courante visible
+    for (const m of opts) {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      if (m === currentModel) o.selected = true;
+      sel.appendChild(o);
+    }
+    const oc = document.createElement('option');
+    oc.value = CUSTOM; oc.textContent = '✏️ Autre modèle…';
+    sel.appendChild(oc);
+    sel.addEventListener('change', () => {
+      if (sel.value === CUSTOM) {
+        const inp = customInput('');
+        modelField.replaceChild(inp, sel);
+        inp.focus();
+      } else {
+        sel.blur();
+        applyModel(sel.value);
+      }
+    });
+    modelField.appendChild(sel);
+  } else {
+    modelField.appendChild(customInput(currentModel));
+  }
   row.appendChild(modelField);
 
   // Pied : activer (si dispo) ou raison de l'indisponibilité.
