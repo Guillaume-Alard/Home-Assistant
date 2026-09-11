@@ -384,6 +384,26 @@ def test_wake_model_editable_via_ws(fake_wyoming, tmp_path, monkeypatch):
             assert json.loads(ws2.receive()["text"])["wake_word"] == "ok nabu"
 
 
+def test_wake_start_mot_absent_previent(fake_wyoming, tmp_path, monkeypatch):
+    """Armer la veille sur un mot NON chargé (« luna ») renvoie une erreur claire,
+    au lieu d'écouter dans le vide (le cas de Guillaume)."""
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("WAKE_HOST", "127.0.0.1")
+    monkeypatch.setenv("WAKE_PORT", str(fake_wyoming.wake_port))
+    monkeypatch.setenv("WAKEWORD_MODEL", "luna")  # absent du faux serveur
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            assert json.loads(ws.receive()["text"])["wake_word"] == "luna"
+            ws.send_text(json.dumps({"type": "wake_start", "rate": 16000}))
+            err = json.loads(ws.receive()["text"])
+            assert err["type"] == "wake_error"
+            assert "luna" in err["text"] and "chargé" in err["text"]
+
+
 def test_memoire_via_ws(client):
     """Ajout / lecture / suppression de souvenirs par l'UI, rediffusés à tous."""
     with client.websocket_connect("/ws") as ws:

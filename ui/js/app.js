@@ -85,6 +85,7 @@ const els = {
   alertText: document.getElementById('alert-text'),
   alertClose: document.getElementById('alert-close'),
   // paramètres
+  brandTag: document.getElementById('brand-tag'),
   setConnexions: document.getElementById('set-connexions'),
   setWakeword: document.getElementById('set-wakeword'),
   setWakeavail: document.getElementById('set-wakeavail'),
@@ -360,6 +361,7 @@ ws.addEventListener('event', (e) => {
   switch (msg.type) {
     case 'hello':
       lastHello = msg;
+      if (els.brandTag) els.brandTag.textContent = `v${msg.version || '0.1'} · ${msg.build || 'LOCAL'}`;
       thread.clear();
       turnCount = 0;
       (msg.history || []).forEach((m) => { thread.addMessage(m); if (m.role === 'user') turnCount += 1; });

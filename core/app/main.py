@@ -38,6 +38,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import secrets
 import time
 import uuid
@@ -85,6 +86,23 @@ from .voice.wyoming import (
 )
 
 log = logging.getLogger("sentinel")
+
+
+def _build_marker() -> str:
+    """Repère de build montré dans l'UI : vérifier d'un coup d'œil QUELLE version du
+    code tourne réellement (après un `git pull` + rebuild sur Nebula). Priorité à
+    SENTINEL_BUILD (ex. un SHA git injecté au build), sinon la date du code déployé."""
+    env = os.environ.get("SENTINEL_BUILD", "").strip()
+    if env:
+        return env[:40]
+    with contextlib.suppress(Exception):
+        from datetime import datetime as _dt
+        mtime = Path(__file__).resolve().stat().st_mtime
+        return _dt.fromtimestamp(mtime).strftime("%d/%m %H:%M")
+    return "?"
+
+
+BUILD = _build_marker()
 
 # Mots d'éveil openWakeWord pré-entraînés (repli si le serveur ne les annonce pas
 # via Describe). Il n'existe PAS de « Luna » d'origine : pour ce mot, il faut
@@ -1102,7 +1120,7 @@ app = FastAPI(title="Sentinel", version=__version__, lifespan=lifespan)
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "service": "sentinel", "version": __version__}
+    return {"status": "ok", "service": "sentinel", "version": __version__, "build": BUILD}
 
 
 # ── Agent conversationnel Assist : API compatible OpenAI (Phase 5B) ──────────
@@ -1226,6 +1244,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         {
             "type": "hello",
             "version": __version__,
+            "build": BUILD,
             "state": sentinel.state,
             "history": await sentinel.store.recent_messages(50),
             "ha_connected": bool(sentinel.ha and sentinel.ha.connected),
@@ -1579,7 +1598,8 @@ async def _llm_set_key(sentinel: Sentinel, client: Client, msg: dict) -> None:
     await sentinel.hub.send(
         client,
         {"type": "notice",
-         "text": ("Clé enregistrée." if key else "Clé effacée (retour à l'environnement).")},
+         "text": ("Clé enregistrée côté serveur (dans la base, pas dans .env)."
+                  if key else "Clé effacée (retour à la valeur du .env, s'il y en a une).")},
     )
 
 
@@ -1637,9 +1657,29 @@ async def _wake_start(sentinel: Sentinel, client: Client, msg: dict) -> None:
         log.info("Mot d'éveil détecté (%s) par le client %s", name or "?", client.id)
         await sentinel.hub.send(client, {"type": "wake", "name": name})
 
+    # Garde-fou : si le mot choisi n'est PAS chargé sur le serveur, la veille
+    # écouterait dans le vide (cause n°1 d'une veille « qui n'entend rien » —
+    # typiquement « luna », absent d'openWakeWord). On le dit clairement plutôt
+    # que de laisser le micro tourner sans jamais rien détecter.
+    model = sentinel._wake_model or None
+    if model:
+        available: list[dict] = []
+        with contextlib.suppress(Exception):
+            available = await sentinel.wake_detector.describe()
+        names = {m["name"] for m in available}
+        if available and model not in names:
+            loaded = ", ".join(sorted(n.replace("_", " ") for n in names)) or "aucun"
+            await sentinel.hub.send(client, {
+                "type": "wake_error",
+                "text": (f"Le mot « {model.replace('_', ' ')} » n'est pas chargé sur le "
+                         f"serveur openWakeWord (chargés : {loaded}). Choisis un mot chargé "
+                         f"dans Paramètres › Voix & réveil, ou installe son modèle .tflite."),
+            })
+            return
+
     try:
         client.wake = await sentinel.wake_detector.open(
-            client.wake_rate, on_detection, model=sentinel._wake_model or None,
+            client.wake_rate, on_detection, model=model,
         )
     except VoiceServiceError as exc:
         await sentinel.hub.send(client, {"type": "wake_error", "text": str(exc)})
