@@ -60,13 +60,22 @@ Le dossier `config/wakewords/` du dépôt est monté dans le conteneur openWakeW
 
 ### 3. Poser le même modèle sur Home Assistant (pour la carte)
 
-La carte HA utilise l'openWakeWord **de HA**, séparé de celui de Sentinel. Pour
-que « Luna » marche aussi dans la carte :
+La carte HA utilise l'openWakeWord **de HA** (l'add-on « openWakeWord »), séparé de
+celui de Sentinel. Le chemin exact (donné par l'add-on lui-même) :
 
-1. Dépose `luna.tflite` dans le dossier des **modèles personnalisés de l'add-on
-   openWakeWord** de HA (selon l'add-on : un dossier `custom` de sa config).
-2. Redémarre l'add-on, puis sélectionne « luna » comme mot d'éveil dans ton
-   **pipeline Assist** (Paramètres › Assistants vocaux).
+1. **Add-on Samba share** installé → copie `luna.tflite` dans le dossier partagé
+   **`/share/openwakeword/`** (crée-le s'il n'existe pas). C'est là que l'add-on
+   openWakeWord charge automatiquement les modèles personnalisés.
+2. **Recharge l'intégration Wyoming** d'openWakeWord : Paramètres › Appareils et
+   services › **Wyoming Protocol** → l'entrée openWakeWord → menu ⋮ → **Recharger**.
+   (Un redémarrage de l'add-on marche aussi.)
+3. Le mot « luna » devient **sélectionnable** dans ton **pipeline Assist** :
+   Paramètres › Assistants vocaux → ton assistant → *Mot d'éveil* → « luna ».
+
+> **L'entité `wake_word.openwakeword` à l'état « unknown » n'est PAS une panne** :
+> c'est son état **au repos** (aucune détection encore). La preuve que l'add-on
+> tourne est dans ses **logs** (« Ready », « Successfully sent discovery… »). Ce
+> qui compte, c'est le **mot choisi dans le pipeline** et que tu le prononces.
 
 ---
 
