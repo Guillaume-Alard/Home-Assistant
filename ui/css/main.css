@@ -1,32 +1,40 @@
-/* Sentinel — Cockpit. Thème sombre unique, accent cyan assorti à l'orbe.
-   Polices : Space Grotesk (UI) + JetBrains Mono (technique), avec repli système. */
+/* Sentinel — Cockpit. Thème sombre, design « Sentinel Cockpit » (Alardware) :
+   accent BLEU « loggia » (#5b8cff) pour l'UI, cyan #4FD8EB réservé à la VOIX.
+   Polices : Manrope (UI) + IBM Plex Mono (technique), avec repli système.
+   Refonte progressive : les NOMS de variables sont conservés, seules les valeurs
+   changent — tout le cockpit adopte la nouvelle palette d'un coup. */
 
 :root {
-  --bg: #08090B;
-  --bg-2: #0C0E12;
-  --panel: #0E1014;
-  --panel-2: #121620;
+  --bg: #0a0d13;
+  --bg-2: #0c1016;
+  --panel: #12171f;
+  --panel-2: #161c26;
   --edge: rgba(255, 255, 255, 0.07);
-  --edge-2: rgba(255, 255, 255, 0.12);
-  --text: #E9E7E2;
-  --muted: #8A8F98;
-  --muted-2: #9BA1AA;
+  --edge-2: rgba(255, 255, 255, 0.11);
+  --text: #e9eef5;
+  --muted: #98a2b3;
+  --muted-2: #c6cedb;
 
-  --accent: #4FD8EB;            /* cyan, assorti au Noyau Synaptique */
-  --accent-soft: rgba(79, 216, 235, 0.13);
-  --accent-line: rgba(79, 216, 235, 0.35);
-  --accent-ink: #052027;        /* texte sombre sur fond accent */
+  --accent: #5b8cff;            /* bleu « loggia » — accent général de l'UI */
+  --accent-soft: rgba(91, 140, 255, 0.14);
+  --accent-line: rgba(91, 140, 255, 0.36);
+  --accent-ink: #06101f;        /* texte sombre sur fond accent */
 
-  --ok: #56E0A0;
-  --warn: #EFA83C;
-  --danger: #FF5F52;
+  /* Voix : le cyan du Noyau Synaptique, pour les états d'écoute et de parole. */
+  --voix: #4FD8EB;
+  --voix-soft: rgba(79, 216, 235, 0.13);
+  --voix-line: rgba(79, 216, 235, 0.38);
+
+  --ok: #34d399;
+  --warn: #f5a524;
+  --danger: #f0685a;
 
   /* Couleur d'état (pilotée par body[data-state]) */
   --state: #6B7280;
 
-  --radius: 15px;
-  --font: 'Space Grotesk', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 14px;
+  --font: 'Manrope', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -35,7 +43,7 @@ html, body { height: 100%; }
 
 body {
   margin: 0;
-  background: radial-gradient(1200px 700px at 50% -20%, #14161C 0%, var(--bg) 70%) fixed, var(--bg);
+  background: radial-gradient(1200px 700px at 50% -20%, #161c26 0%, var(--bg) 70%) fixed, var(--bg);
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
@@ -47,10 +55,10 @@ body {
 }
 
 body[data-state="idle"]         { --state: #8FA6C0; }
-body[data-state="listening"]    { --state: var(--accent); }
+body[data-state="listening"]    { --state: var(--voix); }
 body[data-state="thinking"],
 body[data-state="transcribing"] { --state: var(--warn); }
-body[data-state="speaking"]     { --state: var(--ok); }
+body[data-state="speaking"]     { --state: var(--voix); }
 body[data-state="offline"]      { --state: #4A5060; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -71,7 +79,7 @@ body[data-state="offline"]      { --state: #4A5060; }
 .brand-dot {
   width: 24px; height: 24px; border-radius: 8px;
   background: radial-gradient(circle at 32% 28%, #fff 0%, var(--accent) 45%, #0c5560 100%);
-  box-shadow: 0 0 16px rgba(79, 216, 235, 0.4);
+  box-shadow: 0 0 16px rgba(91, 140, 255, 0.4);
 }
 .brand-name { font-size: 14px; font-weight: 700; letter-spacing: 0.22em; }
 .brand-tag {
@@ -238,7 +246,7 @@ body.online.nova-on .conn-dot.nova { background: var(--ok); box-shadow: 0 0 8px 
 .icon-btn.send { border: 0; background: var(--accent); color: var(--accent-ink); }
 .icon-btn.send:hover { transform: scale(1.06); }
 .mic .icon-stop { display: none; }
-body[data-state="listening"] .mic { color: var(--accent); border-color: var(--accent-line); }
+body[data-state="listening"] .mic { color: var(--voix); border-color: var(--voix-line); }
 body[data-state="listening"] .mic .icon-mic { display: none; }
 body[data-state="listening"] .mic .icon-stop { display: block; }
 /* Interrupteur « Luna répond à voix haute » (état porté par aria-checked) */
@@ -285,7 +293,7 @@ body[data-state="listening"] .mic .icon-stop { display: block; }
   border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent);
   font-family: inherit; font-size: 13px; font-weight: 600; transition: all 0.18s;
 }
-.btn-primary:hover { background: rgba(79, 216, 235, 0.2); }
+.btn-primary:hover { background: rgba(91, 140, 255, 0.2); }
 .btn-primary svg { width: 15px; height: 15px; }
 body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out infinite; }
 @keyframes pulsering { 0%, 100% { box-shadow: 0 0 0 0 rgba(79,216,235,.3); } 70% { box-shadow: 0 0 0 9px rgba(79,216,235,0); } }
@@ -473,7 +481,7 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
 .svc-badge { margin-left: auto; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent-line); border-radius: 999px; padding: 2px 7px; flex: 0 0 auto; }
 .svc.soon .svc-badge { color: var(--muted); border-color: var(--edge-2); }
 .svc-action { align-self: flex-start; font-size: 11px; color: var(--accent); background: transparent; border: 1px solid var(--accent-line); border-radius: 8px; padding: 5px 11px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
-.svc-action:hover { background: rgba(79, 216, 235, 0.10); border-color: var(--accent); }
+.svc-action:hover { background: rgba(91, 140, 255, 0.10); border-color: var(--accent); }
 .svc-select { width: 100%; font-size: 12px; color: var(--text); background: var(--bg); border: 1px solid var(--edge); border-radius: 8px; padding: 7px 9px; cursor: pointer; transition: border-color 0.15s; }
 .svc-select:hover:not(:disabled) { border-color: var(--accent-line); }
 .svc-select:focus-visible { outline: none; border-color: var(--accent); }
@@ -574,7 +582,7 @@ select.llm-input { cursor: pointer; }
 .mail-head .lbl { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .mail-item { display: flex; gap: 11px; border: 1px solid var(--edge); background: var(--panel); border-radius: 12px; padding: 11px 13px; }
 .mail-item.important { border-color: var(--accent-line); }
-.mail-ava { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; text-transform: uppercase; color: var(--accent); background: rgba(79, 216, 235, 0.1); border: 1px solid var(--accent-line); }
+.mail-ava { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; text-transform: uppercase; color: var(--accent); background: rgba(91, 140, 255, 0.1); border: 1px solid var(--accent-line); }
 .mail-item.important .mail-ava { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 .mail-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .mail-l1 { display: flex; align-items: baseline; gap: 8px; }
@@ -675,7 +683,7 @@ select.llm-input { cursor: pointer; }
 .media-now { font-size: 12.5px; color: var(--accent); margin: 4px 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-transport { display: flex; align-items: center; gap: 6px; }
 .media-t { flex: 1; border: 1px solid var(--edge-2); background: rgba(255, 255, 255, 0.03); color: var(--text); cursor: pointer; font-size: 15px; line-height: 1; border-radius: 8px; padding: 7px 0; transition: border-color 0.15s, background 0.15s; }
-.media-t:hover { border-color: var(--accent-line); background: rgba(79, 216, 235, 0.08); }
+.media-t:hover { border-color: var(--accent-line); background: rgba(91, 140, 255, 0.08); }
 .media-vol { margin-top: 10px; }
 .media-vol input[type="range"] { width: 100%; accent-color: var(--accent); height: 4px; }
 .media-source, .media-transfer { width: 100%; margin-top: 8px; background: var(--panel-2, #14171C); color: var(--text); border: 1px solid var(--edge-2); border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: var(--font); }
