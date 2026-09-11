@@ -18,8 +18,9 @@ import httpx
 from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.client import AsyncTcpClient
+from wyoming.info import Describe, Info
 from wyoming.tts import Synthesize
-from wyoming.wake import Detection
+from wyoming.wake import Detect, Detection
 
 log = logging.getLogger("sentinel.voice")
 
@@ -102,15 +103,56 @@ class WakeWordDetector(_WyomingService):
         super().__init__(host, port, "Le service du mot d'éveil (openwakeword)", timeout)
 
     async def open(
-        self, rate: int, on_detection: Callable[[str], Awaitable[None]]
+        self, rate: int, on_detection: Callable[[str], Awaitable[None]],
+        model: str | None = None,
     ) -> "WakeStream":
+        """Ouvre une session d'écoute. `model` (nom d'un modèle openWakeWord) limite
+        la détection à CE mot ; None = tous les modèles chargés (comportement d'origine)."""
         client = await self._connect()
         try:
+            if model:
+                # Ne déclenche que sur ce mot précis (sinon le serveur écoute tout).
+                await client.write_event(Detect(names=[model]).event())
             await client.write_event(AudioStart(rate=rate, width=2, channels=1).event())
         except OSError as exc:
             await client.disconnect()
             raise VoiceServiceError(f"{self._label} — connexion interrompue.") from exc
         return WakeStream(client, self._label, on_detection)
+
+    async def describe(self) -> list[dict]:
+        """Modèles de mot d'éveil disponibles sur le serveur (handshake Describe→Info).
+
+        Renvoie une liste de {name, phrase}. Best-effort : `[]` si le serveur est
+        injoignable ou ne les annonce pas — l'appelant complète alors avec une liste
+        de repli. Ne lève jamais : lister les modèles ne doit pas casser l'UI."""
+        try:
+            client = await self._connect()
+        except VoiceServiceError:
+            return []
+        try:
+            async with asyncio.timeout(10):
+                await client.write_event(Describe().event())
+                while True:
+                    event = await client.read_event()
+                    if event is None:
+                        return []
+                    if Info.is_type(event.type):
+                        info = Info.from_event(event)
+                        out: list[dict] = []
+                        for program in (info.wake or []):
+                            for m in (getattr(program, "models", None) or []):
+                                if getattr(m, "name", None):
+                                    out.append({
+                                        "name": m.name,
+                                        "phrase": (getattr(m, "phrase", None)
+                                                   or getattr(m, "description", None) or ""),
+                                    })
+                        return out
+        except (TimeoutError, OSError):
+            return []
+        finally:
+            with contextlib.suppress(Exception):
+                await client.disconnect()
 
 
 class WakeStream:

@@ -510,6 +510,7 @@ select.llm-input { cursor: pointer; }
 .llm-params-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
 .llm-param { display: flex; flex-direction: column; gap: 5px; }
 .llm-param .llm-lab { min-width: 0; }
+.wake-picker { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 
 /* ── Consommation (Paramètres) ────────────────────────────────────────────── */
 .conso { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }

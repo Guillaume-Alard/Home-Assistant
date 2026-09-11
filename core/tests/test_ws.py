@@ -320,6 +320,70 @@ def test_llm_usage_via_ws(fake_wyoming, tmp_path, monkeypatch):
     assert "clef-secrete" not in json.dumps(payload)
 
 
+async def test_wake_describe_et_detect_du_modele_choisi(fake_wyoming):
+    """Le détecteur liste les modèles du serveur (Describe) et, avec un modèle
+    précisé, envoie un Detect qui ne déclenche QUE sur ce mot."""
+    import asyncio
+
+    from app.voice.wyoming import WakeWordDetector
+
+    det = WakeWordDetector("127.0.0.1", fake_wyoming.wake_port)
+    models = await det.describe()
+    assert {m["name"] for m in models} == {"hey_jarvis", "ok_nabu"}
+
+    seen: list[str] = []
+
+    async def on_det(name):
+        seen.append(name)
+
+    stream = await det.open(16000, on_det, model="ok_nabu")
+    for _ in range(fake_wyoming.WAKE_AFTER_CHUNKS):
+        await stream.send(b"\x00\x00" * 512, 16000)
+    for _ in range(100):  # laisse la détection remonter
+        if stream.closed:
+            break
+        await asyncio.sleep(0.02)
+    await stream.close()
+    assert fake_wyoming.last_detect_names == ["ok_nabu"]  # Detect bien transmis
+    assert seen == ["ok_nabu"]                              # ne déclenche que ce mot
+
+
+def test_wake_model_editable_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """Le mot d'éveil se choisit depuis le cockpit (liste serveur + repli), la
+    bascule est diffusée (wake_config) et survit à un redémarrage."""
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("WAKE_HOST", "127.0.0.1")
+    monkeypatch.setenv("WAKE_PORT", str(fake_wyoming.wake_port))
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            assert hello["wake_available"] is True
+            assert hello["wake_word"] == "hey jarvis"  # défaut .env
+
+            ws.send_text(json.dumps({"type": "wake_models"}))
+            models = json.loads(ws.receive()["text"])
+            assert models["type"] == "wake_models" and models["available"] is True
+            by = {m["name"]: m for m in models["models"]}
+            assert {"hey_jarvis", "ok_nabu"} <= set(by)   # annoncés par le serveur
+            assert by["hey_jarvis"]["server"] is True
+            assert "alexa" in by and by["alexa"]["server"] is False  # repli
+            assert models["current"] == "hey_jarvis"
+
+            ws.send_text(json.dumps({"type": "wake_set_model", "model": "ok_nabu"}))
+            cfg = json.loads(ws.receive()["text"])
+            assert cfg["type"] == "wake_config"
+            assert cfg["model"] == "ok_nabu" and cfg["word"] == "ok nabu"
+
+    # Redémarrage : une nouvelle instance relit le mot choisi.
+    with TestClient(app) as tc2:
+        with tc2.websocket_connect("/ws") as ws2:
+            assert json.loads(ws2.receive()["text"])["wake_word"] == "ok nabu"
+
+
 def test_memoire_via_ws(client):
     """Ajout / lecture / suppression de souvenirs par l'UI, rediffusés à tous."""
     with client.websocket_connect("/ws") as ws:

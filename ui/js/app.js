@@ -89,6 +89,7 @@ const els = {
   setWakeword: document.getElementById('set-wakeword'),
   setWakeavail: document.getElementById('set-wakeavail'),
   setWakeToggle: document.getElementById('set-wake-toggle'),
+  wakePicker: document.getElementById('wake-picker'),
   setVoice: document.getElementById('set-voice'),
   setVoiceEngine: document.getElementById('set-voice-engine'),
   setLLM: document.getElementById('set-llm'),
@@ -416,6 +417,13 @@ ws.addEventListener('event', (e) => {
     case 'sources': thread.addSources(msg.sources); break;
     case 'llm': if (lastHello) { lastHello.llm = msg; renderSettings(); } break;
     case 'llm_usage': renderUsage(msg); break;
+    case 'wake_models': renderWakePicker(msg); break;
+    case 'wake_config':
+      wakeWord = msg.word || wakeWord;
+      if (lastHello) lastHello.wake_word = msg.word;
+      renderWakeBtn(); renderSettings(); rearmWake();
+      toast(`Mot d'éveil : ${wakeWord}.`);
+      break;
     case 'speak_start': if (player) player.begin(msg.rate); break;
     case 'speak_end': if (player) player.end(); break;
     case 'notice': thread.notice(msg.text); break;
@@ -1546,6 +1554,7 @@ function setSettingsSection(name) {
   if (name === 'proactivite' && ws.alive) ws.sendJSON({ type: 'proactive' });
   if (name === 'routines' && ws.alive) ws.sendJSON({ type: 'routines' });
   if (name === 'conso' && ws.alive) { if (els.conso) els.conso.innerHTML = '<span class="set-note">Chargement…</span>'; ws.sendJSON({ type: 'llm_usage' }); }
+  if (name === 'voix' && ws.alive) ws.sendJSON({ type: 'wake_models' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 
@@ -2393,6 +2402,79 @@ function onWakeError(text) {
   if (st.wakeStreaming) { st.wakeStreaming = false; if (capture && !st.listening) capture.stop(); }
   if (st.wakeArmed) { toast(text); clearTimeout(wakeRetryTimer); wakeRetryTimer = setTimeout(syncWake, 8000); }
   refreshUi();
+}
+
+// Sélecteur de mot d'éveil (Paramètres › Voix & réveil). Choix parmi les modèles
+// réellement chargés (marqués « chargé ») + mots pré-entraînés + un champ « perso »
+// pour un .tflite maison (ex. « luna »). Live : wake_set_model → wake_config → réarme.
+function renderWakePicker(msg) {
+  const box = els.wakePicker;
+  if (!box) return;
+  box.textContent = '';
+  if (!msg.available) {
+    const s = document.createElement('span');
+    s.className = 'set-note';
+    s.textContent = "Détecteur non configuré (WAKE_HOST vide) : le choix du mot d'éveil s’activera dès qu’openWakeWord est relié à Sentinel.";
+    box.appendChild(s);
+    return;
+  }
+  const current = msg.current || '';
+  const sel = document.createElement('select');
+  sel.className = 'llm-input';
+  sel.setAttribute('aria-label', "Choisir le mot d'éveil");
+  const optAll = document.createElement('option');
+  optAll.value = '';
+  optAll.textContent = 'Tous les mots chargés';
+  if (current === '') optAll.selected = true;
+  sel.appendChild(optAll);
+  let known = current === '';
+  for (const m of (msg.models || [])) {
+    const o = document.createElement('option');
+    o.value = m.name;
+    const label = m.phrase ? `${m.phrase} — ${m.name}` : m.name;
+    o.textContent = m.server ? `${label} (chargé)` : label;
+    if (m.name === current) { o.selected = true; known = true; }
+    sel.appendChild(o);
+  }
+  if (!known && current) {  // modèle courant pas (encore) annoncé par le serveur
+    const o = document.createElement('option');
+    o.value = current; o.textContent = `${current} (perso)`; o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.disabled = !ws.alive;
+  sel.addEventListener('change', () => { sel.blur(); ws.sendJSON({ type: 'wake_set_model', model: sel.value }); });
+  const row = document.createElement('div');
+  row.className = 'llm-field';
+  row.appendChild(sel);
+  box.appendChild(row);
+
+  const custom = document.createElement('div');
+  custom.className = 'llm-field';
+  const lab = document.createElement('label');
+  lab.className = 'llm-lab';
+  lab.textContent = 'Perso';
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'llm-input';
+  inp.placeholder = 'modèle .tflite (ex. « luna »)';
+  inp.spellcheck = false;
+  const setCustom = () => {
+    const v = inp.value.trim();
+    if (!v) return;
+    inp.blur(); inp.value = '';
+    ws.sendJSON({ type: 'wake_set_model', model: v });
+  };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); setCustom(); } });
+  custom.append(lab, inp, mkBtn('Poser', 'llm-btn', setCustom));
+  box.appendChild(custom);
+}
+
+// Le mot d'éveil a changé : si la veille est active, on referme la session et on
+// la rouvre pour qu'openWakeWord écoute le nouveau mot immédiatement.
+function rearmWake() {
+  if (!st.wakeArmed) return;
+  if (st.wakeStreaming) { st.wakeStreaming = false; ws.sendJSON({ type: 'wake_stop' }); }
+  syncWake();
 }
 
 function chime() {

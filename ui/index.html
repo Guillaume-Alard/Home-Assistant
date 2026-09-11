@@ -219,13 +219,14 @@
         <div class="set-cards">
           <div class="set-card">
             <div class="set-card-h">Mot de réveil</div>
-            <div class="set-row"><span class="set-k">Mot</span><span class="set-v" id="set-wakeword">—</span></div>
+            <div class="set-row"><span class="set-k">Mot actuel</span><span class="set-v" id="set-wakeword">—</span></div>
             <div class="set-row"><span class="set-k">Détecteur</span><span class="set-v" id="set-wakeavail">—</span></div>
+            <div id="wake-picker" class="wake-picker"><span class="set-note">Chargement des mots…</span></div>
             <div class="set-toggle-row">
               <span>Veille sur cet appareil</span>
               <button id="set-wake-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-label="Veille au mot d'éveil"></button>
             </div>
-            <p class="set-note">Bientôt : « Luna » (prononcé « Louna ») comme mot de réveil.</p>
+            <p class="set-note">openWakeWord ne fournit pas « Luna » d'origine : entraîne un modèle <code>.tflite</code>, pose-le sur le serveur openWakeWord (voir <code>docs/INSTALL-HA.md</code>), puis choisis-le ci-dessus. Ce réglage vaut pour le cockpit ; la carte HA garde le mot choisi dans son pipeline Assist.</p>
           </div>
           <div class="set-card">
             <div class="set-card-h">Voix de Luna</div>

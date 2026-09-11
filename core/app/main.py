@@ -86,6 +86,17 @@ from .voice.wyoming import (
 
 log = logging.getLogger("sentinel")
 
+# Mots d'éveil openWakeWord pré-entraînés (repli si le serveur ne les annonce pas
+# via Describe). Il n'existe PAS de « Luna » d'origine : pour ce mot, il faut
+# entraîner un modèle .tflite et le déposer sur le serveur (voir docs/INSTALL-HA.md).
+_WAKE_PRESETS: tuple[tuple[str, str], ...] = (
+    ("hey_jarvis", "Hey Jarvis"),
+    ("ok_nabu", "OK Nabu"),
+    ("alexa", "Alexa"),
+    ("hey_mycroft", "Hey Mycroft"),
+    ("hey_rhasspy", "Hey Rhasspy"),
+)
+
 
 class Client:
     """Un appareil connecté (onglet de navigateur, téléphone…)."""
@@ -189,6 +200,9 @@ class Sentinel:
             if settings.wake_host
             else None
         )
+        # Mot d'éveil actif (réglable à chaud depuis le cockpit ; défaut = .env).
+        # "" = tous les mots chargés par le serveur openWakeWord.
+        self._wake_model: str = settings.wake_model
         # Reconnaissance de locuteur (Phase 2) — désactivée si SPEAKER_HOST vide.
         self.speaker_embedder: SpeakerEmbedder | None = (
             SpeakerEmbedder(
@@ -450,6 +464,51 @@ class Sentinel:
         except Exception:
             log.warning("Solde OpenRouter injoignable", exc_info=True)
             return {"kind": "unavailable", "note": "Solde OpenRouter injoignable pour l'instant."}
+
+    # ── Mot d'éveil réglable (Paramètres › Voix & réveil) ────────────────────
+
+    def wake_word_display(self) -> str:
+        """Libellé du mot d'éveil courant pour l'UI ("" = tous les mots chargés)."""
+        return self._wake_model.replace("_", " ") if self._wake_model else "tous les mots"
+
+    async def restore_wake_model(self) -> None:
+        """Recharge le mot d'éveil choisi dans le cockpit (défaut = .env)."""
+        with contextlib.suppress(Exception):
+            saved = await self.store.get_setting("wake_model")
+            if saved is not None:  # "" est un choix valide (tous les mots)
+                self._wake_model = saved
+
+    async def wake_models_payload(self) -> dict:
+        """Modèles de mot d'éveil proposés : ceux réellement chargés par le serveur
+        (via Describe) fusionnés avec une liste de repli de mots pré-entraînés."""
+        server: list[dict] = []
+        if self.wake_detector is not None:
+            with contextlib.suppress(Exception):
+                server = await self.wake_detector.describe()
+        on_server = {m["name"] for m in server}
+        models = [{"name": m["name"], "phrase": m.get("phrase") or "", "server": True}
+                  for m in server]
+        for name, phrase in _WAKE_PRESETS:
+            if name not in on_server:
+                models.append({"name": name, "phrase": phrase, "server": False})
+        return {
+            "type": "wake_models",
+            "models": models,
+            "current": self._wake_model,
+            "available": self.wake_detector is not None,
+        }
+
+    async def set_wake_model(self, model: str) -> None:
+        """Change le mot d'éveil à chaud, le persiste, et prévient tous les appareils
+        (ils réarment leur veille avec le nouveau mot)."""
+        self._wake_model = (model or "").strip()
+        with contextlib.suppress(Exception):
+            await self.store.set_setting("wake_model", self._wake_model)
+        await self.hub.broadcast({
+            "type": "wake_config",
+            "model": self._wake_model,
+            "word": self.wake_word_display(),
+        })
 
     async def _on_proposal_change(self, change: str, proposal: dict) -> None:
         kind = "proposal_new" if change == "new" else "proposal_update"
@@ -1014,6 +1073,7 @@ async def lifespan(app: FastAPI):
     sentinel = Sentinel(settings, store)
     app.state.sentinel = sentinel
     await sentinel.restore_llm_config()
+    await sentinel.restore_wake_model()
     if sentinel.ha:
         await sentinel.ha.start()
     sentinel.start_proactive()
@@ -1171,7 +1231,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "ha_connected": bool(sentinel.ha and sentinel.ha.connected),
             "ha_configured": sentinel.ha is not None,
             "wake_available": sentinel.wake_detector is not None,
-            "wake_word": sentinel.settings.wake_model.replace("_", " "),
+            "wake_word": sentinel.wake_word_display(),
             "proposals": sorted(pending + deferred, key=lambda p: p["num"]),
             "protocols": [
                 {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
@@ -1345,6 +1405,12 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "wake_stop":
         await _stop_wake(client)
+
+    elif mtype == "wake_models":
+        await sentinel.hub.send(client, await sentinel.wake_models_payload())
+
+    elif mtype == "wake_set_model":
+        await sentinel.set_wake_model(str(msg.get("model") or ""))
 
     elif mtype == "sante":
         await _reply_sante(sentinel, client)
@@ -1572,7 +1638,9 @@ async def _wake_start(sentinel: Sentinel, client: Client, msg: dict) -> None:
         await sentinel.hub.send(client, {"type": "wake", "name": name})
 
     try:
-        client.wake = await sentinel.wake_detector.open(client.wake_rate, on_detection)
+        client.wake = await sentinel.wake_detector.open(
+            client.wake_rate, on_detection, model=sentinel._wake_model or None,
+        )
     except VoiceServiceError as exc:
         await sentinel.hub.send(client, {"type": "wake_error", "text": str(exc)})
 

@@ -19,8 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # core/ → import
 from wyoming.asr import Transcript
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.event import async_read_event, async_write_event
+from wyoming.info import Attribution, Describe, Info, WakeModel, WakeProgram
 from wyoming.tts import Synthesize
-from wyoming.wake import Detection
+from wyoming.wake import Detect, Detection
 
 FAKE_TRANSCRIPT = "allume la lumière du salon"
 FAKE_TTS_CHUNKS = [b"\x00\x01" * 512, b"\x02\x03" * 512]
@@ -29,10 +30,14 @@ FAKE_TTS_CHUNKS = [b"\x00\x01" * 512, b"\x02\x03" * 512]
 class FakeWyoming:
     WAKE_AFTER_CHUNKS = 3  # le « mot d'éveil » est détecté au 3e chunk audio
 
+    # Modèles de mot d'éveil « chargés » annoncés par le faux serveur (Describe→Info).
+    WAKE_MODELS = ("hey_jarvis", "ok_nabu")
+
     def __init__(self) -> None:
         self.whisper_port: int | None = None
         self.piper_port: int | None = None
         self.wake_port: int | None = None
+        self.last_detect_names: list[str] | None = None  # dernier Detect reçu
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
@@ -77,16 +82,38 @@ class FakeWyoming:
 
     async def _handle_wake(self, reader, writer) -> None:
         chunks = 0
+        detected = "hey_jarvis"  # mot renvoyé à la détection (le 1er demandé, sinon défaut)
         try:
             while True:
                 event = await async_read_event(reader)
                 if event is None:
                     return
-                if AudioChunk.is_type(event.type):
+                if Describe.is_type(event.type):
+                    attr = Attribution(name="fake", url="")
+                    models = [
+                        WakeModel(
+                            name=name, description=name.replace("_", " "),
+                            phrase=name.replace("_", " "), attribution=attr,
+                            installed=True, languages=["fr"], version=None,
+                        )
+                        for name in self.WAKE_MODELS
+                    ]
+                    info = Info(wake=[WakeProgram(
+                        name="openwakeword", description="fake", attribution=attr,
+                        installed=True, version=None, models=models,
+                    )])
+                    await async_write_event(info.event(), writer)
+                    await writer.drain()
+                elif Detect.is_type(event.type):
+                    names = Detect.from_event(event).names or []
+                    self.last_detect_names = names
+                    if names:
+                        detected = names[0]  # ne « détecte » que le mot demandé
+                elif AudioChunk.is_type(event.type):
                     chunks += 1
                     if chunks == self.WAKE_AFTER_CHUNKS:
                         await async_write_event(
-                            Detection(name="hey_jarvis", timestamp=0).event(), writer
+                            Detection(name=detected, timestamp=0).event(), writer
                         )
                         await writer.drain()
         except (ConnectionError, asyncio.IncompleteReadError):

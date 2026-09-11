@@ -121,6 +121,16 @@ de « Luna » prêt à l'emploi.**
 > HA** (ce doc). Le 👂 du **cockpit** autonome utilise l'openWakeWord **de
 > Sentinel** (sur Nebula). Les deux sont séparés ; règle celui de HA pour la carte.
 
+> **Choisir le mot depuis le cockpit.** Pour la veille **du cockpit**, le mot se
+> règle désormais **dans l'app** : Paramètres › **Voix & réveil** › *Mot de
+> réveil*. La liste montre les modèles **réellement chargés** par ton serveur
+> openWakeWord (marqués « chargé ») plus les mots pré-entraînés courants ; un champ
+> **« perso »** accepte le nom d'un `.tflite` maison (p.ex. « luna ») une fois
+> déposé sur le serveur. Le changement est **immédiat** et mémorisé. (Ceci ne
+> touche pas la carte HA : son mot reste celui de son pipeline Assist.) Rappel : si
+> tu **dis « Luna » alors que le mot réglé est « hey jarvis »**, rien ne se
+> déclenche — c'est la cause la plus fréquente d'une veille « qui n'entend pas ».
+
 ---
 
 ## Ça ne marche pas ?
