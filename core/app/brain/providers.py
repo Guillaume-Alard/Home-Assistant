@@ -67,10 +67,10 @@ PRESETS: tuple[Preset, ...] = (
         id="gemini",
         label="Google Gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        # gemini-2.0-flash a été retiré par Google (404) ; 2.5-flash est stable et
-        # largement disponible. Les catalogues bougent : ce modèle reste éditable
-        # dans le cockpit (Paramètres › Moteur).
-        default_model="gemini-2.5-flash",
+        # Google retire vite ses anciens flash (2.0 puis 2.5 → 404 « no longer
+        # available »). Son API recommande gemini-3.6-flash. Les catalogues bougent :
+        # ce modèle reste éditable dans le cockpit (Paramètres › Moteur).
+        default_model="gemini-3.6-flash",
         key_attr="gemini_api_key",
         model_attr="gemini_model",
         hint="aistudio.google.com/apikey",
