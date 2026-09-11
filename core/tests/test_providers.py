@@ -341,6 +341,32 @@ def test_translate_error_messages():
     assert "(500)" in msg and "boom interne" in msg
 
 
+def test_translate_error_indices_actionnables():
+    """Les codes fréquents deviennent des messages qui disent QUOI corriger —
+    crédit épuisé (402), modèle introuvable (404) — et jamais un « (4xx) » nu."""
+    prof = _openai_profile()
+
+    def status_error(code, body=None, message=""):
+        exc = openai.APIStatusError.__new__(openai.APIStatusError)
+        exc.status_code = code
+        exc.body = body
+        exc.message = message
+        return exc
+
+    # 402 : crédit — l'indice mentionne le crédit et renvoie au cockpit.
+    m402 = str(_translate_error(prof, status_error(402, body=None, message="")))
+    assert "(402)" in m402 and "crédit" in m402.lower()
+
+    # 404 : modèle introuvable — l'indice parle du modèle et de Paramètres › Moteur.
+    m404 = str(_translate_error(prof, status_error(404)))
+    assert "(404)" in m404 and "modèle" in m404.lower() and "Moteur" in m404
+
+    # Détail récupéré même quand il n'est PAS dans body["error"] (cas Guillaume :
+    # message vide auparavant) — on retombe sur exc.message.
+    m400 = str(_translate_error(prof, status_error(400, body=None, message="bad model id")))
+    assert "(400)" in m400 and "bad model id" in m400
+
+
 # ── Bascule de fournisseur (Brain) ────────────────────────────────────────────
 
 def test_set_provider_refuse_indisponible(monkeypatch, tmp_path):

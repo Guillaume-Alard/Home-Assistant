@@ -389,13 +389,50 @@ class OpenAICompatProvider:
                 await on_usage(total_in, total_out)
 
 
+# Indices par code HTTP : transforment un « erreur (4xx) » opaque en action concrète.
+# La plupart de ces échecs ne sont PAS des bugs de Sentinel mais de la configuration
+# du fournisseur (crédit, identifiant de modèle) — désormais réglable dans le cockpit.
+_STATUS_HINTS: dict[int, str] = {
+    400: "requête refusée — le plus souvent un identifiant de modèle invalide. "
+         "Vérifie le modèle dans Paramètres › Moteur.",
+    402: "paiement requis — le crédit de ce compte est épuisé. Recharge-le, ou "
+         "choisis un modèle gratuit (sur OpenRouter, un id suffixé « :free ») "
+         "dans Paramètres › Moteur.",
+    404: "modèle introuvable — vérifie l'identifiant exact du modèle dans "
+         "Paramètres › Moteur (p.ex. « gemini-2.5-flash », « gpt-4o-mini »).",
+    413: "requête trop longue — réduis « Tokens max » ou « Mémoire de "
+         "conversation » dans Paramètres › Moteur.",
+}
+
+
+def _error_detail(exc: Exception) -> str:
+    """Message d'erreur du fournisseur, quel que soit le format (dict, str, .message)."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"]).strip()
+        if isinstance(err, str) and err.strip():
+            return err.strip()
+        if body.get("message"):
+            return str(body["message"]).strip()
+    return str(getattr(exc, "message", "") or "").strip()
+
+
 def _translate_error(profile: ProviderProfile, exc: Exception) -> LLMUnavailable:
-    """Erreur d'un fournisseur compatible OpenAI → message français, sans rien cacher."""
+    """Erreur d'un fournisseur compatible OpenAI → message français ACTIONNABLE.
+
+    On dit non seulement *quoi* (code + détail brut du fournisseur) mais *comment
+    corriger* (indice par code), car ces échecs sont souvent de la config (clé,
+    crédit, modèle) que Guillaume peut régler lui-même dans le cockpit."""
     label = profile.label
     if openai is None:  # pragma: no cover - openai importé dès qu'on stream
         return LLMUnavailable(f"{label} : erreur inattendue ({exc}).")
     if isinstance(exc, openai.AuthenticationError):
-        return LLMUnavailable(f"La clé API de {label} est invalide ou révoquée.")
+        return LLMUnavailable(
+            f"La clé API de {label} est invalide ou révoquée — repose-la dans "
+            f"Paramètres › Moteur."
+        )
     if isinstance(exc, openai.PermissionDeniedError):
         return LLMUnavailable(f"{label} refuse l'accès (droits ou quota du compte).")
     if isinstance(exc, openai.RateLimitError):
@@ -408,13 +445,13 @@ def _translate_error(profile: ProviderProfile, exc: Exception) -> LLMUnavailable
         )
     if isinstance(exc, openai.APIStatusError):
         status = getattr(exc, "status_code", "?")
-        detail = ""
-        body = getattr(exc, "body", None)
-        if isinstance(body, dict):
-            err = body.get("error")
-            if isinstance(err, dict):
-                detail = str(err.get("message") or "").strip()
-        base = f"{label} a renvoyé une erreur ({status})"
-        return LLMUnavailable(f"{base} : {detail}" if detail else f"{base}.")
+        hint = _STATUS_HINTS.get(status if isinstance(status, int) else -1, "")
+        detail = _error_detail(exc)
+        msg = f"{label} a renvoyé une erreur ({status})."
+        if hint:
+            msg += f" {hint}"
+        if detail:
+            msg += f" (détail : {detail})"
+        return LLMUnavailable(msg)
     log.exception("Erreur %s inattendue", label)
     return LLMUnavailable(f"{label} : erreur inattendue ({exc}).")
