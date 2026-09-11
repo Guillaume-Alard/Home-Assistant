@@ -35,6 +35,28 @@
   --radius: 14px;
   --font: 'Manrope', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Alias : noms de tokens du design « Sentinel Cockpit » (réglages .rg-*),
+     mappés sur la palette Sentinel — permet de reprendre sa CSS telle quelle. */
+  --rail: var(--bg-2);
+  --surf: var(--panel);
+  --surf2: var(--panel-2);
+  --well: #0d1117;
+  --line: var(--edge);
+  --line2: var(--edge-2);
+  --t1: var(--text);
+  --t2: var(--muted-2);
+  --t3: var(--muted);
+  --t4: #7d8798;
+  --acc: var(--accent);
+  --acc-h: #8fb0ff;
+  --acc-soft: var(--accent-soft);
+  --acc-line: var(--accent-line);
+  --on-acc: var(--accent-ink);
+  --bad: var(--danger);
+  --ok-soft: rgba(52, 211, 153, 0.12);
+  --warn-soft: rgba(245, 165, 36, 0.12);
+  --bad-soft: rgba(240, 104, 90, 0.12);
 }
 
 * { box-sizing: border-box; }

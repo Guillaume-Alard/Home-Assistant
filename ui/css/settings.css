@@ -1,0 +1,183 @@
+/* Paramètres — restylage FIDÈLE au réglages (.rg-*) de « Sentinel Cockpit.html »
+   du dossier de design. Plutôt que de réécrire les vues (et risquer de casser
+   des fonctions vivantes : éditeur LLM, connexion HA, consommation, réveil…),
+   on rehabille les classes existantes de Sentinel avec les composants EXACTS du
+   design — mêmes surfaces .bloc, lignes .ln, interrupteurs .sw, choix .opt,
+   curseurs, listes .liste, badges. Chargé après main.css : il gagne le cascade. */
+
+/* ══ coquille : rail de sections (212 px) + contenu, comme .rg-c ══ */
+.settings {
+  display: grid; grid-template-columns: 212px minmax(0, 1fr);
+  gap: 0; padding: 0; min-height: 0; overflow: hidden; background: var(--bg);
+}
+.set-nav {
+  background: var(--rail); border: 0; border-right: 1px solid var(--line);
+  border-radius: 0; padding: 12px 10px; gap: 2px; min-height: 0;
+}
+.set-nav-title {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--t4); font-weight: 600; padding: 6px 11px 10px;
+}
+.set-navitem {
+  display: flex; align-items: center; gap: 10px; border: 1px solid transparent;
+  background: transparent; text-align: left; color: var(--t3); border-radius: 9px;
+  padding: 9px 11px; font-family: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: background .16s, color .16s;
+}
+.set-navitem i { font-size: 14px; width: 18px; text-align: center; color: inherit; flex: none; }
+.set-navitem:hover { background: var(--surf); color: var(--t1); }
+.set-navitem[aria-selected="true"] {
+  background: var(--acc-soft); border-color: var(--acc-line); color: var(--acc-h); font-weight: 600;
+  box-shadow: none;
+}
+.set-navitem[aria-selected="true"] i { color: var(--acc-h); }
+.set-nav-note {
+  margin-top: auto; border-top: 1px solid var(--line); padding: 12px 8px 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--t4); line-height: 1.6;
+}
+
+.set-content {
+  background: var(--bg); border: 0; border-radius: 0;
+  padding: 22px 26px 30px; overflow-y: auto; min-height: 0;
+  scrollbar-width: thin; scrollbar-color: var(--line2) transparent;
+}
+.set-content::-webkit-scrollbar { width: 8px; }
+.set-content::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 99px; }
+
+/* ══ section : h3 + intro + regroupements ══ */
+.set-title { font-size: 19px; font-weight: 800; letter-spacing: -.02em; color: var(--t1); }
+.set-sub { font-size: 13.5px; line-height: 1.6; color: var(--t3); margin-top: 6px; max-width: 62ch; text-wrap: pretty; }
+.set-count { font-family: var(--mono); font-size: 9.5px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); letter-spacing: 0; }
+
+/* les grilles multi-colonnes du cockpit deviennent des blocs empilés pleine
+   largeur, comme dans le design (une colonne qui respire) */
+.set-grid, .set-cards { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; }
+.set-card--wide { grid-column: auto; }
+
+/* ══ carte = .bloc du design ══ */
+.set-card, .svc {
+  border: 1px solid var(--line); background: var(--surf); border-radius: 13px;
+  padding: 14px 15px; box-shadow: none;
+}
+.set-card-h {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--t4); margin-bottom: 12px;
+}
+
+/* lignes clé/valeur → .ln */
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.set-row:last-child { border-bottom: 0; }
+.set-k { color: var(--t4); font-weight: 500; }
+.set-v { text-align: right; font-family: var(--mono); font-size: 12px; color: var(--t2); overflow-wrap: anywhere; }
+.set-note { font-size: 11.5px; color: var(--t4); line-height: 1.5; margin: 10px 0 0; font-style: normal; }
+
+/* interrupteur → .sw */
+.set-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 2px; font-size: 13px; color: var(--t2); }
+.switch {
+  width: 38px; height: 22px; border-radius: 99px; border: 1px solid var(--line2); background: var(--well);
+  position: relative; cursor: pointer; flex: none; padding: 0; transition: background .18s, border-color .18s;
+}
+.switch::before, .switch::after { content: ''; }
+.switch::after {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--t4); transition: transform .18s, background .18s;
+}
+.switch[aria-checked="true"] { background: var(--acc-soft); border-color: var(--acc-line); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); background: var(--acc); }
+
+/* listes à puces → .liste */
+.set-list { margin: 12px 0 0; padding-left: 15px; display: flex; flex-direction: column; gap: 9px; font-size: 13px; line-height: 1.55; color: var(--t2); list-style: none; }
+.set-list li { position: relative; padding-left: 0; }
+.set-list b { color: var(--t1); font-weight: 600; }
+.lock { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: var(--bad-soft); color: var(--bad); border: 1px solid rgba(240,104,90,.3); }
+.mono-chip, .puce { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--well); border: 1px solid var(--line); color: var(--t3); }
+.set-protos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.set-proto { font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; color: var(--t3); background: var(--well); }
+.set-proto.sensitive { color: var(--bad); border-color: rgba(240,104,90,.4); }
+.set-proto.medium { color: var(--warn); border-color: rgba(245,165,36,.4); }
+.set-proto.low { color: var(--ok); border-color: rgba(52,211,153,.4); }
+
+/* petits boutons → .mini-bt */
+.mini-btn {
+  padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line2); background: transparent;
+  color: var(--t3); font-family: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: background .16s, color .16s, border-color .16s;
+}
+.mini-btn:hover { background: var(--surf2); color: var(--t1); }
+.mini-btn.ghost:hover { border-color: rgba(240,104,90,.5); color: var(--bad); }
+
+/* ══ cartes de service (Connexions) : entête façon .ln ══ */
+.svc { gap: 11px; }
+.svc-top { display: flex; align-items: center; gap: 11px; }
+.svc-ic {
+  width: 32px; height: 32px; border-radius: 9px; font-size: 12px; font-weight: 700; flex: none;
+  display: grid; place-items: center; background: var(--surf2); border: 1px solid var(--line); color: var(--t3);
+}
+.svc-name { font-size: 13.5px; font-weight: 600; color: var(--t1); }
+.svc-status { font-size: 11.5px; color: var(--t4); margin-top: 1px; }
+.svc-status.on { color: var(--ok); } .svc-status.warn { color: var(--warn); }
+.svc-desc { font-size: 12px; color: var(--t4); line-height: 1.5; }
+.svc-badge { margin-left: auto; font-family: var(--mono); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--acc-h); border: 1px solid var(--acc-line); background: var(--acc-soft); border-radius: 6px; padding: 2px 7px; flex: none; }
+.svc.soon .svc-badge { color: var(--t4); border-color: var(--line2); background: transparent; }
+.svc-action { align-self: flex-start; font-size: 11.5px; font-weight: 600; color: var(--on-acc); background: var(--acc); border: 1px solid transparent; border-radius: 8px; padding: 7px 13px; cursor: pointer; }
+.svc-action:hover { background: var(--acc-h); }
+.svc-select { width: 100%; font-size: 12.5px; color: var(--t1); background: var(--well); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; cursor: pointer; }
+.svc-select:focus-visible { outline: none; border-color: var(--acc-line); }
+.svc-field { width: 100%; background: var(--well); border: 1px solid var(--line); border-radius: 9px; color: var(--t1); font: inherit; font-size: 13px; padding: 9px 11px; }
+.svc-field:focus { outline: none; border-color: var(--acc-line); }
+.svc-field::placeholder { color: var(--t4); }
+.svc-k { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--t4); }
+
+/* ══ mémoire ══ */
+.memoire-form, .ajout { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.memoire-form input, .memoire-cat, .ajout input, .ajout select {
+  height: 38px; padding: 0 12px; border-radius: 10px; background: var(--well); border: 1px solid var(--line);
+  color: var(--t1); font: inherit; font-size: 13px; outline: none;
+}
+.memoire-form input { flex: 1 1 150px; min-width: 0; }
+.memoire-cat { flex: 0 0 auto; }
+.memoire-form input:focus, .memoire-cat:focus { border-color: var(--acc-line); }
+.memoire-form input::placeholder { color: var(--t4); }
+.memoire-list { display: flex; flex-direction: column; gap: 0; margin-top: 4px; max-height: 360px; overflow-y: auto; }
+.mem-cat { font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--t4); margin: 14px 0 4px; font-weight: 700; }
+.mem-cat:first-child { margin-top: 0; }
+.mem-row { display: flex; align-items: center; gap: 10px; padding: 11px 2px; border-bottom: 1px solid var(--line); border-radius: 0; }
+.mem-row:hover { background: transparent; border-color: var(--line); }
+.mem-text { flex: 1 1 auto; font-size: 13.5px; line-height: 1.5; color: var(--t1); overflow-wrap: anywhere; }
+.mem-src { flex: none; font-family: var(--mono); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--t4); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+.mem-del { flex: none; width: 26px; height: 26px; border-radius: 7px; border: 1px solid transparent; background: transparent; color: var(--t4); cursor: pointer; font-size: 12px; display: grid; place-items: center; }
+.mem-del:hover { color: var(--bad); border-color: rgba(240,104,90,.45); background: var(--bad-soft); }
+.mem-badge { flex: none; font-family: var(--mono); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--acc-h); border: 1px solid var(--acc-line); background: var(--acc-soft); border-radius: 999px; padding: 1px 7px; }
+.mem-enroll { flex: none; height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: transparent; color: var(--t3); cursor: pointer; font-size: 11px; display: inline-flex; align-items: center; gap: 5px; }
+.mem-enroll:hover { color: var(--acc-h); border-color: var(--acc-line); }
+.mem-enroll.rec { color: var(--bad); border-color: rgba(240,104,90,.5); }
+.spk-owner { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--t4); white-space: nowrap; }
+.spk-owner input { accent-color: var(--acc); }
+
+/* ══ moteur / éditeur LLM ══ */
+.llm-editor { display: flex; flex-direction: column; gap: 9px; }
+.llm-prov { border: 1px solid var(--line); border-radius: 12px; background: var(--well); padding: 12px 13px; }
+.llm-row, .llm-head { display: flex; align-items: center; gap: 10px; }
+.llm-name { font-size: 13.5px; font-weight: 600; color: var(--t1); }
+.llm-input, select.llm-input { background: var(--surf); border: 1px solid var(--line); border-radius: 9px; color: var(--t1); font: inherit; font-size: 12.5px; padding: 8px 10px; outline: none; }
+.llm-input:focus { border-color: var(--acc-line); }
+.llm-guard { font-size: 11.5px; color: var(--t4); line-height: 1.5; }
+
+/* ══ consommation ══ */
+.conso { display: flex; flex-direction: column; gap: 9px; }
+.conso-row, .conso-head { border-bottom: 1px solid var(--line); }
+.conso-num { font-family: var(--mono); color: var(--t2); }
+
+/* ══ curseurs (débit, sensibilité…) génériques ══ */
+input[type="range"].cur, .set-card input[type="range"] { accent-color: var(--acc); }
+
+/* ══ picker de mot d'éveil ══ */
+.wake-picker { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 0 2px; }
+.wake-opt { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--well); color: var(--t3); font-size: 12px; font-weight: 600; cursor: pointer; }
+.wake-opt[aria-pressed="true"] { background: var(--voix-soft); border-color: var(--voix-line); color: var(--voix); }
+
+@media (max-width: 760px) {
+  .settings { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  .set-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+  .set-nav-note { display: none; }
+}
