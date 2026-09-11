@@ -202,6 +202,7 @@
       <button class="set-navitem" type="button" data-sec="proactivite" aria-selected="false" id="nav-proactivite">Proactivité</button>
       <button class="set-navitem" type="button" data-sec="routines" aria-selected="false" id="nav-routines">Routines</button>
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false">Moteur</button>
+      <button class="set-navitem" type="button" data-sec="conso" aria-selected="false">Consommation</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false">Confidentialité</button>
       <div class="set-nav-note">Sentinel tourne en local.<br>Aucune donnée n'est envoyée sans ton accord.</div>
     </nav>
@@ -358,6 +359,12 @@
             <div class="set-row"><span class="set-k">Fuseau</span><span class="set-v" id="set-tz">—</span></div>
           </div>
         </div>
+      </section>
+
+      <section class="set-sec" data-sec="conso" hidden>
+        <div class="set-title">Consommation <span class="set-count" id="conso-period"></span></div>
+        <div class="set-sub">Ce que Luna a consommé, par modèle — tokens comptés en local, coût <b>estimé</b> (facturé en USD), et solde restant quand le fournisseur l'expose.</div>
+        <div id="conso" class="conso"><span class="set-note">Chargement…</span></div>
       </section>
 
       <section class="set-sec" data-sec="securite" hidden>

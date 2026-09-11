@@ -276,6 +276,50 @@ def test_llm_config_editable_via_ws(fake_wyoming, tmp_path, monkeypatch):
                 raise AssertionError("trame llm non reçue après effacement")
 
 
+def test_llm_usage_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """La commande llm_usage renvoie un résumé (tokens comptés localement + coût
+    estimé) et un solde honnête par fournisseur — jamais une clé API."""
+    import asyncio
+
+    from app.store import Store
+
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "clef-secrete")  # Claude configuré
+    data = tmp_path / "data"
+    data.mkdir(parents=True, exist_ok=True)
+
+    async def seed():
+        store = Store(data / "sentinel.db")
+        await store.open()
+        await store.add_usage("claude", "claude-opus-5", 2000, 400)
+        await store.add_usage("claude", "claude-opus-5", 1000, 100)  # même seau → cumul
+        await store.close()
+
+    asyncio.run(seed())
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            ws.receive()  # hello
+            ws.send_text(json.dumps({"type": "llm_usage"}))
+            payload = json.loads(ws.receive()["text"])
+
+    assert payload["type"] == "llm_usage" and payload["period_days"] == 30
+    rows = {r["model"]: r for r in payload["rows"]}
+    opus = rows["claude-opus-5"]
+    assert opus["turns"] == 2 and opus["input_tokens"] == 3000 and opus["output_tokens"] == 500
+    # Coût estimé pour Claude Opus (prix connu) : 3000/1e6*15 + 500/1e6*75 = 0.0825.
+    assert abs(opus["cost_usd"] - 0.0825) < 1e-6
+    tot = payload["totals"]
+    assert tot["input_tokens"] == 3000 and tot["cost_complete"] is True
+    # Solde : l'API Anthropic n'expose pas de crédit → note honnête, jamais de clé.
+    claude_credit = next(c for c in payload["credits"] if c["provider"] == "claude")
+    assert claude_credit["kind"] == "unavailable"
+    assert "clef-secrete" not in json.dumps(payload)
+
+
 def test_memoire_via_ws(client):
     """Ajout / lecture / suppression de souvenirs par l'UI, rediffusés à tous."""
     with client.websocket_connect("/ws") as ws:

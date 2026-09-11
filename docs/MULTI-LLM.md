@@ -93,6 +93,28 @@ appliqués sans redémarrage et mémorisés :
 Les valeurs sont **bornées côté serveur** : une saisie absurde est ramenée dans les
 limites, jamais une erreur.
 
+## Consommation & crédit restant
+
+**Paramètres › Consommation.** Luna compte, en local, les **tokens** réellement
+renvoyés par chaque API — par **modèle**, sur les **30 derniers jours** — et en
+déduit un **coût estimé**. Un tableau montre, par modèle : tours, tokens entrée /
+sortie, coût estimé. Rien du contenu échangé n'est stocké : **seulement des
+compteurs**.
+
+**Honnêteté, en toutes lettres :**
+
+- Le **coût** est une **estimation** à partir d'une grille de prix **indicative**
+  (USD par million de tokens, `core/app/brain/pricing.py`, éditable). Les tarifs
+  bougent ; la **facture réelle** du fournisseur fait foi. Un modèle sans prix connu
+  apparaît sans coût (`—`), et le total est marqué **partiel** (`+`).
+- Le **solde restant** n'est un **vrai chiffre** que là où le fournisseur l'expose
+  par API. C'est le cas d'**OpenRouter** (crédits − usage, affiché en direct). Pour
+  **Claude/Anthropic**, il **n'existe pas d'API de solde** : Sentinel le dit et
+  renvoie à `console.anthropic.com` (la carte montre alors la dépense **estimée**,
+  pas un solde). **Groq** est gratuit. Les autres : « à vérifier sur la console ».
+- Les **clés API** ne quittent jamais le serveur — le solde OpenRouter est
+  interrogé **depuis Nebula**, la clé n'apparaît dans aucune réponse à l'UI.
+
 ## Bon à savoir
 
 - **Fiabilité des outils.** Si un modèle gratuit se montre approximatif pour piloter
@@ -121,3 +143,9 @@ limites, jamais une erreur.
   premier démarrage. Les messages WS `llm_set_key` / `llm_set_model` /
   `llm_set_params` / `llm_select` écrivent cette config ; le serveur ne renvoie
   **jamais** de clé (vue publique : un booléen `configured`).
+- **Consommation** : chaque tour rapporte ses tokens réels (`usage` de l'API — natif
+  Claude et `stream_options.include_usage` côté compatible OpenAI) via le callback
+  `on_usage` du `Brain` → `Store.add_usage` (table `llm_usage`, seaux par jour /
+  fournisseur / modèle). La commande WS `llm_usage` agrège sur 30 jours, estime le
+  coût (`brain/pricing.py`, prix indicatifs éditables) et joint le **solde** —
+  réel pour OpenRouter (`/api/v1/credits`, interrogé côté serveur), honnête sinon.

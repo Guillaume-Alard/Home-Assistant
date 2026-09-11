@@ -206,6 +206,17 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS llm_usage (
+    day           TEXT NOT NULL,      -- 'AAAA-MM-JJ' (UTC)
+    provider      TEXT NOT NULL,      -- id du fournisseur (claude, openai, …)
+    model         TEXT NOT NULL,
+    turns         INTEGER NOT NULL DEFAULT 0,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (day, provider, model)
+);
 """
 
 
@@ -944,3 +955,42 @@ class Store:
             (key, value, _now_iso()),
         )
         await self._db.commit()
+
+    # ── Consommation LLM (compteur local de tokens) ──────────────────────────
+
+    async def add_usage(
+        self, provider: str, model: str, input_tokens: int, output_tokens: int,
+        *, turns: int = 1,
+    ) -> None:
+        """Comptabilise un tour LLM (tokens réels renvoyés par l'API) dans le seau
+        du jour (UTC). Ne stocke que des compteurs — jamais le contenu échangé."""
+        assert self._db is not None, "Store non ouvert"
+        if not provider or not model:
+            return
+        day = datetime.now(timezone.utc).date().isoformat()
+        await self._db.execute(
+            "INSERT INTO llm_usage (day, provider, model, turns, input_tokens, output_tokens, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(day, provider, model) DO UPDATE SET"
+            "   turns = turns + excluded.turns,"
+            "   input_tokens = input_tokens + excluded.input_tokens,"
+            "   output_tokens = output_tokens + excluded.output_tokens,"
+            "   updated_at = excluded.updated_at",
+            (day, provider, model, int(turns), int(input_tokens or 0),
+             int(output_tokens or 0), _now_iso()),
+        )
+        await self._db.commit()
+
+    async def usage_rows(self, since_day: str) -> list[dict]:
+        """Consommation agrégée par (fournisseur, modèle) depuis `since_day` inclus
+        ('AAAA-MM-JJ'). Trié par volume de tokens décroissant."""
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT provider, model, SUM(turns) AS turns,"
+            "       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens"
+            "  FROM llm_usage WHERE day >= ?"
+            " GROUP BY provider, model"
+            " ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC",
+            (since_day,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]

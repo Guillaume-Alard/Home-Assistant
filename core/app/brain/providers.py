@@ -260,15 +260,19 @@ class OpenAICompatProvider:
         return self._client
 
     async def _create(self, client, **kwargs):
-        """Ouvre le flux ; repli max_tokens → max_completion_tokens si l'API l'exige.
+        """Ouvre le flux ; replis propres si l'API refuse une option, AVANT tout
+        streaming (aucun texte n'a encore été émis) :
 
-        Certains modèles récents (OpenAI o1/gpt-5…) refusent `max_tokens` et
-        réclament `max_completion_tokens`. On bascule proprement AVANT tout
-        streaming (aucun texte n'a encore été émis)."""
+        - `max_tokens` → `max_completion_tokens` (OpenAI o1/gpt-5…).
+        - `stream_options` (demande d'usage) retiré si l'endpoint ne le connaît pas —
+          on perd alors le comptage pour ce fournisseur, jamais la réponse."""
         try:
             return await client.chat.completions.create(stream=True, **kwargs)
         except openai.BadRequestError as exc:
             detail = str(getattr(exc, "message", "") or exc).lower()
+            if "stream_options" in kwargs and "stream_options" in detail:
+                kwargs.pop("stream_options", None)
+                return await self._create(client, **kwargs)
             if "max_tokens" in kwargs and "max_completion_tokens" in detail:
                 kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
                 return await client.chat.completions.create(stream=True, **kwargs)
@@ -283,6 +287,7 @@ class OpenAICompatProvider:
         max_tokens: int,
         notify_activity: Callable[[str], Awaitable[None]],
         run_tool: Callable[[str, dict], Awaitable[tuple[str, bool]]],
+        on_usage: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> AsyncIterator[str]:
         client = self._get_client()
         oai_messages: list[dict] = []
@@ -290,6 +295,7 @@ class OpenAICompatProvider:
             oai_messages.append({"role": "system", "content": system_text})
         oai_messages += [{"role": m["role"], "content": m["content"]} for m in messages]
         oai_tools = to_openai_tools(tools) or None
+        total_in = total_out = 0  # tokens réels, cumulés sur les tours d'outils
 
         try:
             for round_no in range(MAX_TOOL_ROUNDS):
@@ -297,6 +303,9 @@ class OpenAICompatProvider:
                     model=self.profile.model,
                     messages=oai_messages,
                     max_tokens=max_tokens,
+                    # Demande le décompte des tokens dans l'ultime fragment du flux
+                    # (retiré automatiquement si l'endpoint ne le supporte pas).
+                    stream_options={"include_usage": True},
                 )
                 if oai_tools:
                     kwargs["tools"] = oai_tools
@@ -305,6 +314,10 @@ class OpenAICompatProvider:
                 tool_calls: dict[int, dict] = {}
                 async with stream as s:
                     async for chunk in s:
+                        cu = getattr(chunk, "usage", None)
+                        if cu is not None:  # fragment final « usage » (choices vide)
+                            total_in += getattr(cu, "prompt_tokens", 0) or 0
+                            total_out += getattr(cu, "completion_tokens", 0) or 0
                         if not chunk.choices:
                             continue
                         delta = chunk.choices[0].delta
@@ -371,6 +384,9 @@ class OpenAICompatProvider:
             raise
         except Exception as exc:  # SDK openai : on traduit en message clair, jamais opaque
             raise _translate_error(self.profile, exc) from exc
+        finally:
+            if on_usage is not None and (total_in or total_out):
+                await on_usage(total_in, total_out)
 
 
 def _translate_error(profile: ProviderProfile, exc: Exception) -> LLMUnavailable:

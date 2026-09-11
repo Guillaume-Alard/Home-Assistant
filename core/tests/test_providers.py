@@ -128,9 +128,17 @@ def _tc(index, *, id=None, name=None, args=None):
 
 def _chunk(*, content=None, tool_calls=None, finish=None, empty=False):
     if empty:
-        return SimpleNamespace(choices=[])
+        return SimpleNamespace(choices=[], usage=None)
     delta = SimpleNamespace(content=content, tool_calls=tool_calls)
-    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish)])
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish)], usage=None)
+
+
+def _usage_chunk(prompt_tokens, completion_tokens):
+    """Ultime fragment « usage » du flux OpenAI (choices vide, usage renseigné)."""
+    return SimpleNamespace(
+        choices=[],
+        usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
+    )
 
 
 class _FakeStream:
@@ -261,6 +269,62 @@ async def test_stream_erreur_inattendue_devient_llm_unavailable():
     assert "ChatGPT (OpenAI)" in str(exc.value)
 
 
+async def test_stream_rapporte_usage():
+    """Le fragment « usage » du flux est capté et rapporté via on_usage ; la
+    demande include_usage part bien dans la requête."""
+    captured, seen = [], []
+    prov = _provider([_FakeStream([
+        _chunk(content="ok"), _usage_chunk(1234, 56), _chunk(finish="stop"),
+    ])], captured)
+
+    async def on_usage(in_tok, out_tok):
+        seen.append((in_tok, out_tok))
+
+    text = await _drain(prov.stream(
+        messages=[{"role": "user", "content": "x"}], tools=None, system_text="",
+        max_tokens=512, notify_activity=_noop_activity, run_tool=lambda n, a: None,
+        on_usage=on_usage,
+    ))
+    assert text == "ok"
+    assert seen == [(1234, 56)]
+    assert captured[0]["stream_options"] == {"include_usage": True}
+
+
+async def test_stream_options_retire_si_refuse():
+    """Un endpoint qui ne connaît pas stream_options → on le retire et on réessaie
+    (la réponse passe, on perd juste le comptage pour ce fournisseur)."""
+    captured = []
+    bad = openai.BadRequestError.__new__(openai.BadRequestError)
+    bad.message = "Unknown parameter: 'stream_options'."
+    prov = _provider([bad, _FakeStream([_chunk(content="ok"), _chunk(finish="stop")])], captured)
+    seen = []
+
+    async def on_usage(i, o):
+        seen.append((i, o))
+
+    text = await _drain(prov.stream(
+        messages=[{"role": "user", "content": "x"}], tools=None, system_text="",
+        max_tokens=512, notify_activity=_noop_activity, run_tool=lambda n, a: None,
+        on_usage=on_usage,
+    ))
+    assert text == "ok"
+    assert "stream_options" in captured[0]           # 1er essai le contenait
+    assert "stream_options" not in captured[1]        # repli sans lui
+    assert seen == []                                 # aucune usage → pas de rapport
+
+
+def test_pricing_estimate():
+    from app.brain.pricing import estimate_usd, price_for
+
+    assert price_for("claude-opus-5-20260101") == (15.0, 75.0)
+    assert price_for("gpt-4o-mini") == (0.15, 0.60)   # préfixe le plus long
+    assert price_for("gpt-4o-2024-08-06") == (2.50, 10.0)
+    assert price_for("modele-inconnu") is None
+    assert estimate_usd("claude-opus-5", 1_000_000, 1_000_000) == 90.0
+    assert estimate_usd("llama-3.3-70b-versatile", 10_000, 5_000) == 0.0  # gratuit
+    assert estimate_usd("modele-inconnu", 100, 100) is None
+
+
 def test_translate_error_messages():
     prof = _openai_profile()
 
@@ -363,6 +427,27 @@ def test_apply_config_vide_revient_a_l_environnement(monkeypatch, tmp_path):
     brain.apply_config({})
     assert brain.active_id == ANTHROPIC_ID
     assert brain.providers_public()["max_tokens"] == settings.max_tokens
+
+
+async def test_report_usage_transmet_et_protege(monkeypatch, tmp_path):
+    """Brain._report_usage transmet au callback ; ignore un tour vide ; n'explose
+    jamais si le callback échoue (le comptage ne doit jamais casser une réponse)."""
+    settings = _settings(monkeypatch, tmp_path, ANTHROPIC_API_KEY="clef")
+    seen = []
+
+    async def on_usage(provider, model, in_tok, out_tok):
+        seen.append((provider, model, in_tok, out_tok))
+
+    brain = Brain(settings, toolbox=None, on_usage=on_usage)
+    await brain._report_usage("claude", "claude-opus-5", 100, 20)
+    await brain._report_usage("claude", "claude-opus-5", 0, 0)  # vide → ignoré
+    assert seen == [("claude", "claude-opus-5", 100, 20)]
+
+    async def boom(*a):
+        raise RuntimeError("stockage HS")
+
+    brain2 = Brain(settings, toolbox=None, on_usage=boom)
+    await brain2._report_usage("openai", "gpt-4o", 5, 5)  # ne lève pas
 
 
 # ── L'INVARIANT DE SÉCURITÉ tient pour un fournisseur alternatif ──────────────

@@ -269,12 +269,16 @@ class Brain:
         on_activity: Callable[[str], Awaitable[None]] | None = None,
         memory_provider: Callable[[], Awaitable[str]] | None = None,
         on_sources: Callable[[list[dict]], Awaitable[None]] | None = None,
+        on_usage: Callable[[str, str, int, int], Awaitable[None]] | None = None,
     ):
         self._settings = settings
         self._toolbox = toolbox
         self._on_activity = on_activity
         # Notifie l'UI des sources web citées à la fin d'un tour (Phase 4).
         self._on_sources = on_sources
+        # Comptabilise les tokens consommés par tour (provider, model, in, out) —
+        # branché sur le Store par main.py. Absent en test → aucun comptage.
+        self._on_usage = on_usage
         # Fournit le bloc « ce que je sais de toi » injecté dans le prompt (async :
         # il lit le Store). Absent en test unitaire → mémoire vide, comportement inchangé.
         self._memory_provider = memory_provider
@@ -342,6 +346,12 @@ class Brain:
         view["max_tokens"] = self._max_tokens
         view["history_window"] = self._history_window
         return view
+
+    def provider_key(self, provider_id: str) -> str:
+        """Clé API d'un fournisseur (usage SERVEUR seulement — p.ex. interroger un
+        solde). N'est JAMAIS exposée à l'UI ; ne figure dans aucune diffusion."""
+        p = self._by_id.get(provider_id)
+        return (p.api_key or "") if p else ""
 
     def set_provider(self, provider_id: str) -> bool:
         """Bascule le fournisseur actif (à chaud). Refuse un fournisseur indisponible."""
@@ -424,6 +434,8 @@ class Brain:
             tools.append(_web_search_tool(s))
         tools = tools or None
         sources: list[dict] = []  # sources web citées, agrégées sur le tour
+        provider_id = profile.id if profile is not None else self._default_id
+        usage_in = usage_out = 0  # tokens réels, cumulés sur les tours d'outils
 
         try:
             for round_no in range(MAX_TOOL_ROUNDS):
@@ -441,6 +453,15 @@ class Brain:
                     async for text in stream.text_stream:
                         yield text
                     final = await stream.get_final_message()
+
+                u = getattr(final, "usage", None)
+                if u is not None:
+                    usage_in += (
+                        (getattr(u, "input_tokens", 0) or 0)
+                        + (getattr(u, "cache_read_input_tokens", 0) or 0)
+                        + (getattr(u, "cache_creation_input_tokens", 0) or 0)
+                    )
+                    usage_out += getattr(u, "output_tokens", 0) or 0
 
                 sources.extend(_collect_sources(final.content))
 
@@ -504,6 +525,9 @@ class Brain:
             raise LLMUnavailable(
                 "Impossible de joindre l'API Anthropic — vérifie l'accès Internet de Nebula."
             ) from exc
+        finally:
+            # Comptabilise ce qui a été consommé, quelle que soit l'issue du tour.
+            await self._report_usage(provider_id, model, usage_in, usage_out)
 
     async def _stream_openai(
         self, profile, messages: list[dict], tools: list[dict], memory_text: str,
@@ -523,9 +547,13 @@ class Brain:
                 name, args, utterance=utterance, source=source, speaker=who
             )
 
+        async def on_usage(in_tok: int, out_tok: int) -> None:
+            await self._report_usage(profile.id, profile.model, in_tok, out_tok)
+
         async for text in provider.stream(
             messages=messages, tools=tools, system_text=system_text,
-            max_tokens=self._max_tokens, notify_activity=self._notify_activity, run_tool=run_tool,
+            max_tokens=self._max_tokens, notify_activity=self._notify_activity,
+            run_tool=run_tool, on_usage=on_usage,
         ):
             yield text
 
@@ -543,3 +571,12 @@ class Brain:
                 await self._on_sources(deduped)
             except Exception:
                 log.exception("Notification des sources impossible")
+
+    async def _report_usage(self, provider: str, model: str, in_tok: int, out_tok: int) -> None:
+        """Rapporte les tokens d'un tour (best-effort — un échec ne casse jamais la réponse)."""
+        if self._on_usage is None or (not in_tok and not out_tok):
+            return
+        try:
+            await self._on_usage(provider, model, int(in_tok), int(out_tok))
+        except Exception:
+            log.exception("Comptage de consommation impossible")

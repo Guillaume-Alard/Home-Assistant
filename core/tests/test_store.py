@@ -1,4 +1,37 @@
+from datetime import datetime, timedelta, timezone
+
 from app.store import Store
+
+
+async def test_usage_metering(tmp_path):
+    """Compteur de tokens : cumul par (jour, fournisseur, modèle), agrégation et
+    filtre par date. Ne stocke que des nombres — jamais le contenu échangé."""
+    store = Store(tmp_path / "usage.db")
+    await store.open()
+    try:
+        await store.add_usage("claude", "claude-opus-5", 1000, 200)
+        await store.add_usage("claude", "claude-opus-5", 500, 100)   # même seau → cumul
+        await store.add_usage("openai", "gpt-4o", 4000, 800)
+
+        rows = await store.usage_rows("2000-01-01")
+        by = {(r["provider"], r["model"]): r for r in rows}
+        claude = by[("claude", "claude-opus-5")]
+        assert claude["turns"] == 2
+        assert claude["input_tokens"] == 1500 and claude["output_tokens"] == 300
+        assert by[("openai", "gpt-4o")]["input_tokens"] == 4000
+        # Tri par volume de tokens décroissant (openai 4800 > claude 1800).
+        assert rows[0]["provider"] == "openai"
+
+        # Filtre : rien avant aujourd'hui n'est renvoyé si on démarre demain.
+        tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+        assert await store.usage_rows(tomorrow) == []
+
+        # Entrées invalides ignorées sans lever.
+        await store.add_usage("", "x", 1, 1)
+        await store.add_usage("openai", "", 1, 1)
+        assert len(await store.usage_rows("2000-01-01")) == 2
+    finally:
+        await store.close()
 
 
 async def test_store_aller_retour(tmp_path):

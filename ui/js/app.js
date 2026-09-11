@@ -92,6 +92,8 @@ const els = {
   setVoice: document.getElementById('set-voice'),
   setVoiceEngine: document.getElementById('set-voice-engine'),
   setLLM: document.getElementById('set-llm'),
+  conso: document.getElementById('conso'),
+  consoPeriod: document.getElementById('conso-period'),
   setStt: document.getElementById('set-stt'),
   setTts: document.getElementById('set-tts'),
   setReport: document.getElementById('set-report'),
@@ -413,6 +415,7 @@ ws.addEventListener('event', (e) => {
     case 'assistant_end': thread.endStream(msg.id, msg.message, msg.cancelled); updateChatMeta(); break;
     case 'sources': thread.addSources(msg.sources); break;
     case 'llm': if (lastHello) { lastHello.llm = msg; renderSettings(); } break;
+    case 'llm_usage': renderUsage(msg); break;
     case 'speak_start': if (player) player.begin(msg.rate); break;
     case 'speak_end': if (player) player.end(); break;
     case 'notice': thread.notice(msg.text); break;
@@ -1421,6 +1424,118 @@ function mkBtn(text, cls, onClick) {
   return b;
 }
 
+// ── Consommation (Paramètres › Consommation) ───────────────────────────────
+const NUM_FR = new Intl.NumberFormat('fr-FR');
+const fmtInt = (n) => NUM_FR.format(Math.round(n || 0));
+const fmtUsd = (n) => '$' + Number(n || 0).toFixed(Number(n || 0) < 1 ? 4 : 2);
+
+function renderUsage(msg) {
+  const box = els.conso;
+  if (!box) return;
+  if (els.consoPeriod) els.consoPeriod.textContent = `${msg.period_days || 30} derniers jours`;
+  box.textContent = '';
+
+  // Crédit restant — réel (OpenRouter) ou note honnête.
+  const credits = msg.credits || [];
+  if (credits.length) {
+    const cwrap = document.createElement('div');
+    cwrap.className = 'conso-credits';
+    for (const c of credits) cwrap.appendChild(creditCard(c));
+    box.appendChild(cwrap);
+  }
+
+  const t = msg.totals || {};
+  const rows = msg.rows || [];
+
+  // Bandeau de totaux.
+  const tot = document.createElement('div');
+  tot.className = 'conso-total';
+  const cost = t.cost_complete ? `≈ ${fmtUsd(t.cost_usd)}` : `≈ ${fmtUsd(t.cost_usd)} +`;
+  tot.innerHTML = `<span class="conso-total-cost">${cost}</span>` +
+    `<span class="conso-total-tok">${fmtInt(t.input_tokens)} tokens entrée · ${fmtInt(t.output_tokens)} sortie</span>`;
+  box.appendChild(tot);
+
+  const note = document.createElement('div');
+  note.className = 'set-note';
+  note.textContent = t.cost_complete
+    ? 'Coût estimé à partir de prix indicatifs (facturé en USD). La facture réelle fait foi.'
+    : 'Coût partiel : un modèle au moins n’a pas de prix connu (+). Facturé en USD ; la facture réelle fait foi.';
+  box.appendChild(note);
+
+  if (!rows.length) {
+    box.appendChild(emptyLine('Rien encore consommé sur la période.'));
+    return;
+  }
+
+  // Tableau par modèle.
+  const table = document.createElement('div');
+  table.className = 'conso-table';
+  const head = document.createElement('div');
+  head.className = 'conso-row conso-head';
+  head.innerHTML = '<span>Modèle</span><span>Tours</span><span>Entrée</span><span>Sortie</span><span>Coût est.</span>';
+  table.appendChild(head);
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'conso-row';
+    const model = document.createElement('span');
+    model.className = 'conso-model';
+    const mb = document.createElement('b');
+    mb.textContent = r.label || r.provider;
+    const mid = document.createElement('span');
+    mid.className = 'conso-modelid';
+    mid.textContent = r.model || '';
+    model.append(mb, mid);
+    const turns = mkCell(fmtInt(r.turns));
+    const cin = mkCell(fmtInt(r.input_tokens));
+    const cout = mkCell(fmtInt(r.output_tokens));
+    const ccost = mkCell(r.cost_usd == null ? '—' : fmtUsd(r.cost_usd));
+    if (r.cost_usd == null) ccost.title = 'Prix de ce modèle inconnu — édite core/app/brain/pricing.py.';
+    row.append(model, turns, cin, cout, ccost);
+    table.appendChild(row);
+  }
+  box.appendChild(table);
+}
+
+function mkCell(text) {
+  const s = document.createElement('span');
+  s.className = 'conso-num';
+  s.textContent = text;
+  return s;
+}
+
+function creditCard(c) {
+  const card = document.createElement('div');
+  card.className = 'conso-credit' + (c.kind === 'balance' ? ' on' : '');
+  const name = document.createElement('div');
+  name.className = 'conso-credit-name';
+  name.textContent = c.label || c.provider;
+  card.appendChild(name);
+  const val = document.createElement('div');
+  val.className = 'conso-credit-val';
+  if (c.kind === 'balance') {
+    val.textContent = `${fmtUsd(c.remaining)} restant`;
+    card.appendChild(val);
+    const sub = document.createElement('div');
+    sub.className = 'conso-credit-sub';
+    sub.textContent = `sur ${fmtUsd(c.total)} · ${fmtUsd(c.used)} utilisé`;
+    card.appendChild(sub);
+  } else if (c.kind === 'free') {
+    val.textContent = 'Gratuit';
+    card.appendChild(val);
+  } else {
+    val.textContent = '—';
+    val.className += ' muted';
+    card.appendChild(val);
+    if (c.note) {
+      const sub = document.createElement('div');
+      sub.className = 'conso-credit-sub';
+      sub.textContent = c.note;
+      card.appendChild(sub);
+    }
+  }
+  return card;
+}
+
 function setSettingsSection(name) {
   document.querySelectorAll('.set-navitem').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.sec === name)));
   document.querySelectorAll('.set-sec').forEach((s) => { s.hidden = s.dataset.sec !== name; });
@@ -1430,6 +1545,7 @@ function setSettingsSection(name) {
   if (name === 'evolutions' && ws.alive) ws.sendJSON({ type: 'evolutions' });
   if (name === 'proactivite' && ws.alive) ws.sendJSON({ type: 'proactive' });
   if (name === 'routines' && ws.alive) ws.sendJSON({ type: 'routines' });
+  if (name === 'conso' && ws.alive) { if (els.conso) els.conso.innerHTML = '<span class="set-note">Chargement…</span>'; ws.sendJSON({ type: 'llm_usage' }); }
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 

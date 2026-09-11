@@ -42,7 +42,10 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import httpx
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -278,7 +281,7 @@ class Sentinel:
         self.brain = Brain(
             settings, toolbox,
             on_activity=self._on_activity, memory_provider=self._memory_context,
-            on_sources=self._broadcast_sources,
+            on_sources=self._broadcast_sources, on_usage=self._record_usage,
         )
         self._proactive_task: asyncio.Task | None = None
         self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
@@ -318,6 +321,11 @@ class Sentinel:
         """Sources web citées par Luna (Phase 4) — rattachées au dernier message."""
         await self.hub.broadcast({"type": "sources", "sources": sources})
 
+    async def _record_usage(self, provider: str, model: str, in_tok: int, out_tok: int) -> None:
+        """Comptabilise les tokens d'un tour LLM dans le Store (best-effort)."""
+        with contextlib.suppress(Exception):
+            await self.store.add_usage(provider, model, in_tok, out_tok)
+
     # ── Fournisseurs LLM (multi-LLM) ─────────────────────────────────────
 
     def _llm_payload(self) -> dict:
@@ -355,6 +363,93 @@ class Sentinel:
         self.brain.apply_config(self._llm_cfg)
         await self._persist_llm()
         await self._broadcast_llm()
+
+    # ── Consommation & crédit (Paramètres › Consommation) ────────────────────
+
+    async def build_usage_payload(self, days: int = 30) -> dict:
+        """Résumé de consommation (tokens comptés localement) + coût ESTIMÉ + solde
+        restant, réel quand le fournisseur l'expose (OpenRouter), honnête sinon."""
+        from .brain.pricing import estimate_usd
+
+        since = (datetime.now(timezone.utc).date() - timedelta(days=max(1, days) - 1)).isoformat()
+        try:
+            rows = await self.store.usage_rows(since)
+        except Exception:
+            log.exception("Lecture de la consommation impossible")
+            rows = []
+
+        labels = {p["id"]: p["label"] for p in self.brain.providers_public()["providers"]}
+        items, tot_in, tot_out, tot_cost, cost_complete = [], 0, 0, 0.0, True
+        for r in rows:
+            est = estimate_usd(r["model"], r["input_tokens"], r["output_tokens"])
+            items.append({
+                "provider": r["provider"], "label": labels.get(r["provider"], r["provider"]),
+                "model": r["model"], "turns": r["turns"],
+                "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"],
+                "cost_usd": est,
+            })
+            tot_in += r["input_tokens"] or 0
+            tot_out += r["output_tokens"] or 0
+            if est is None:
+                cost_complete = False
+            else:
+                tot_cost += est
+        return {
+            "type": "llm_usage", "period_days": days, "since": since, "rows": items,
+            "totals": {
+                "input_tokens": tot_in, "output_tokens": tot_out,
+                "cost_usd": round(tot_cost, 4), "cost_complete": cost_complete,
+            },
+            "credits": await self._fetch_credits(),
+        }
+
+    async def _fetch_credits(self) -> list[dict]:
+        """Solde par fournisseur configuré. RÉEL pour OpenRouter (API) ; pour les
+        autres, l'API n'expose pas de solde → note honnête « à vérifier sur la
+        console ». Best-effort : un échec réseau n'empêche jamais l'affichage."""
+        from .brain.pricing import FREE_PROVIDERS
+
+        out: list[dict] = []
+        for p in self.brain.providers_public()["providers"]:
+            pid, label = p["id"], p["label"]
+            if not p.get("configured"):
+                continue
+            if pid == "openrouter":
+                out.append({"provider": pid, "label": label, **await self._openrouter_credit()})
+            elif pid in FREE_PROVIDERS:
+                out.append({"provider": pid, "label": label, "kind": "free",
+                            "note": "Gratuit à ce jour — pas de solde à suivre."})
+            elif pid == "claude":
+                out.append({"provider": pid, "label": label, "kind": "unavailable",
+                            "note": "L'API Anthropic n'expose pas le solde restant — "
+                                    "à vérifier sur console.anthropic.com."})
+            else:
+                out.append({"provider": pid, "label": label, "kind": "unavailable",
+                            "note": "Solde non exposé par l'API — à vérifier sur la "
+                                    "console du fournisseur."})
+        return out
+
+    async def _openrouter_credit(self) -> dict:
+        """Solde OpenRouter réel via son API (crédits - usage). Best-effort."""
+        key = self.brain.provider_key("openrouter")
+        if not key:
+            return {"kind": "unavailable", "note": "Clé absente."}
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as cx:
+                resp = await cx.get(
+                    "https://openrouter.ai/api/v1/credits",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+            resp.raise_for_status()
+            data = resp.json().get("data", {}) or {}
+            total = float(data.get("total_credits", 0) or 0)
+            used = float(data.get("total_usage", 0) or 0)
+            return {"kind": "balance", "currency": "USD",
+                    "remaining": round(total - used, 4),
+                    "used": round(used, 4), "total": round(total, 4)}
+        except Exception:
+            log.warning("Solde OpenRouter injoignable", exc_info=True)
+            return {"kind": "unavailable", "note": "Solde OpenRouter injoignable pour l'instant."}
 
     async def _on_proposal_change(self, change: str, proposal: dict) -> None:
         kind = "proposal_new" if change == "new" else "proposal_update"
@@ -1346,6 +1441,9 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
 
     elif mtype == "llm_set_params":
         await _llm_set_params(sentinel, client, msg)
+
+    elif mtype == "llm_usage":
+        await sentinel.hub.send(client, await sentinel.build_usage_payload())
 
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
