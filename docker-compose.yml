@@ -78,14 +78,22 @@ services:
     volumes:
       - piper-voices:/data
 
-  # Mot d'éveil (Phase 5A) : openWakeWord via Wyoming. « hey_jarvis » est fourni
-  # avec l'image ; pour un mot personnalisé, déposer un .tflite dans
-  # config/wakewords/ puis mettre son nom dans WAKEWORD_MODEL (.env).
+  # Mot d'éveil (Phase 5A) : openWakeWord via Wyoming. Plusieurs mots pré-entraînés
+  # sont FOURNIS avec l'image — on en précharge quelques-uns pour qu'ils apparaissent
+  # « chargés » dans le sélecteur du cockpit (Paramètres › Voix & réveil). On NE
+  # précharge PAS ${WAKEWORD_MODEL} : s'il pointe un modèle absent (ex. « luna » sans
+  # .tflite), le conteneur planterait au démarrage. Le mot choisi est chargé à la
+  # demande s'il existe. Pour un mot perso : déposer son .tflite dans
+  # config/wakewords/ (monté en /custom), il devient sélectionnable dans le cockpit.
   sentinel-openwakeword:
     image: rhasspy/wyoming-openwakeword
     container_name: sentinel-openwakeword
     restart: unless-stopped
-    command: --preload-model ${WAKEWORD_MODEL:-hey_jarvis} --custom-model-dir /custom
+    command: >
+      --preload-model hey_jarvis
+      --preload-model ok_nabu
+      --preload-model alexa
+      --custom-model-dir /custom
     volumes:
       - ./config/wakewords:/custom
     # aucun port publié : joignable uniquement par sentinel-core en interne

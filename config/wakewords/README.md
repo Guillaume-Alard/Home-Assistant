@@ -17,3 +17,8 @@ Pour un mot personnalisé (« Sentinel ») :
 
 Le nom affiché dans l'interface suit `WAKEWORD_MODEL` (les tirets bas
 deviennent des espaces).
+
+Depuis le cockpit, le mot d'éveil se choisit aussi **à chaud** (Paramètres › Voix
+& réveil) : les `.tflite` déposés ici y apparaissent une fois
+`sentinel-openwakeword` redémarré. Pour faire de **« Luna »** le mot d'éveil,
+guide pas à pas : **`docs/WAKEWORD-LUNA.md`**.

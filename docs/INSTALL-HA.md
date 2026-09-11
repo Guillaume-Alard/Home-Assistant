@@ -114,8 +114,9 @@ de « Luna » prêt à l'emploi.**
 - **« Luna » sur mesure** : entraîne un modèle openWakeWord (l'outil / le Colab
   officiel openWakeWord produit un `.tflite`), dépose-le dans le dossier des
   modèles personnalisés de l'add-on, puis sélectionne-le dans le pipeline. C'est
-  la même logique que le `WAKEWORD_MODEL` de Sentinel (voir
-  `config/wakewords/README.md`).
+  la même logique que le `WAKEWORD_MODEL` de Sentinel. **Guide pas à pas dédié :
+  `docs/WAKEWORD-LUNA.md`** (Colab, pose du `.tflite` côté Sentinel ET côté carte,
+  réglages anti-faux-positifs).
 
 > **Deux veilles distinctes.** Le 👂 de la **carte** utilise openWakeWord **de
 > HA** (ce doc). Le 👂 du **cockpit** autonome utilise l'openWakeWord **de
