@@ -25,6 +25,19 @@ log = logging.getLogger("sentinel.brain")
 MAX_TOOL_ROUNDS = 8
 
 
+def _clean_effort(value, default: str) -> str:
+    v = str(value or "").strip().lower()
+    return v if v in ("low", "medium", "high") else default
+
+
+def _clean_int(value, default: int, lo: int, hi: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
 class LLMUnavailable(RuntimeError):
     """Erreur LLM — le message (en français) est montré tel quel à l'utilisateur."""
 
@@ -265,23 +278,52 @@ class Brain:
         # Fournit le bloc « ce que je sais de toi » injecté dans le prompt (async :
         # il lit le Store). Absent en test unitaire → mémoire vide, comportement inchangé.
         self._memory_provider = memory_provider
-        # Claude est le cerveau de RÉFÉRENCE, piloté nativement par le SDK Anthropic.
-        self._client: anthropic.AsyncAnthropic | None = (
-            anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-            if settings.anthropic_api_key
-            else None
-        )
-        # Multi-LLM : liste des fournisseurs (Claude + alternatifs compatibles OpenAI),
-        # fournisseur actif (commutable à chaud) et cache des adaptateurs alternatifs.
-        from .providers import load_profiles, resolve_default
+        # Multi-LLM : profils (Claude natif + alternatifs compatibles OpenAI),
+        # paramètres de génération et fournisseur actif — le tout reconstruit par
+        # `_build`, à partir de l'environnement PUIS des réglages du cockpit
+        # (`apply_config`). Claude reste piloté nativement par le SDK Anthropic.
+        self._overrides: dict = {}
+        self._client: anthropic.AsyncAnthropic | None = None
+        self._build({})
 
-        self._profiles = load_profiles(settings)
+    def _build(self, overrides: dict) -> None:
+        """(Re)construit profils, client Claude, params de génération et actif."""
+        from .providers import ANTHROPIC_ID, load_profiles, resolve_default
+
+        self._overrides = overrides or {}
+        s = self._settings
+        self._profiles = load_profiles(s, self._overrides)
         self._by_id = {p.id: p for p in self._profiles}
-        self._default_id = resolve_default(self._profiles, settings.llm_default_provider)
-        self._active_id = self._default_id
-        self._oai: dict[str, object] = {}
+        self._oai: dict[str, object] = {}  # profils changés → adaptateurs reconstruits
+        claude = self._by_id.get(ANTHROPIC_ID)
+        self._client = (
+            anthropic.AsyncAnthropic(api_key=claude.api_key)
+            if (claude and claude.api_key) else None
+        )
+        params = self._overrides.get("params", {}) or {}
+        self._effort = _clean_effort(params.get("effort"), s.effort)
+        self._max_tokens = _clean_int(params.get("max_tokens"), s.max_tokens, 16, 64000)
+        self._history_window = _clean_int(params.get("history_window"), s.history_window, 1, 200)
+        self._default_id = resolve_default(
+            self._profiles, self._overrides.get("default") or s.llm_default_provider
+        )
+        active = self._overrides.get("active")
+        chosen = self._by_id.get(active) if active else None
+        self._active_id = active if (chosen and chosen.available) else self._default_id
+
+    def apply_config(self, overrides: dict) -> None:
+        """Applique les réglages LLM du cockpit (clés API, modèles, effort…) à chaud."""
+        self._build(overrides or {})
+        log.info(
+            "Config LLM appliquée — actif %s, effort %s, max_tokens %s",
+            self._active_id, self._effort, self._max_tokens,
+        )
 
     # ── Fournisseurs (multi-LLM) ─────────────────────────────────────────
+
+    @property
+    def history_window(self) -> int:
+        return self._history_window
 
     @property
     def active_id(self) -> str:
@@ -292,10 +334,14 @@ class Brain:
         return self._default_id
 
     def providers_public(self) -> dict:
-        """Vue cockpit des fournisseurs (jamais de clé)."""
+        """Vue cockpit des fournisseurs + paramètres de génération (jamais de clé)."""
         from .providers import public_view
 
-        return public_view(self._profiles, self._active_id, self._default_id)
+        view = public_view(self._profiles, self._active_id, self._default_id)
+        view["effort"] = self._effort
+        view["max_tokens"] = self._max_tokens
+        view["history_window"] = self._history_window
+        return view
 
     def set_provider(self, provider_id: str) -> bool:
         """Bascule le fournisseur actif (à chaud). Refuse un fournisseur indisponible."""
@@ -383,9 +429,9 @@ class Brain:
             for round_no in range(MAX_TOOL_ROUNDS):
                 kwargs: dict = dict(
                     model=model,
-                    max_tokens=s.max_tokens,
+                    max_tokens=self._max_tokens,
                     system=_system_blocks(s, memory_text, who),
-                    output_config={"effort": s.effort},
+                    output_config={"effort": self._effort},
                     messages=messages,
                 )
                 if tools:
@@ -479,7 +525,7 @@ class Brain:
 
         async for text in provider.stream(
             messages=messages, tools=tools, system_text=system_text,
-            settings=self._settings, notify_activity=self._notify_activity, run_tool=run_tool,
+            max_tokens=self._max_tokens, notify_activity=self._notify_activity, run_tool=run_tool,
         ):
             yield text
 

@@ -120,29 +120,42 @@ class ProviderProfile:
         return True
 
 
-def load_profiles(settings) -> list[ProviderProfile]:
-    """Construit la liste des fournisseurs à partir de la configuration.
+def load_profiles(settings, overrides: dict | None = None) -> list[ProviderProfile]:
+    """Construit la liste des fournisseurs, en superposant les réglages du cockpit
+    à ceux de l'environnement.
 
     Claude d'abord (cerveau de référence), puis les alternatifs pré-câblés. Un
     fournisseur sans clé apparaît quand même (grisé) : le cockpit indique alors
-    comment l'activer. Rien ici ne lit l'environnement — tout vient de Settings,
-    pour rester testable.
+    comment l'activer. `overrides["providers"][<id>]` = {key?, model?} : une clé
+    non vide écrase celle de `.env` ; une clé vide (ou absente) retombe sur
+    l'environnement. Idem pour le modèle. Aucune lecture d'environnement ici —
+    tout vient de Settings + overrides, pour rester testable.
     """
+    ov = (overrides or {}).get("providers", {}) or {}
+
+    def effective(pid: str, env_key: str, env_model: str, default_model: str) -> tuple[str, str]:
+        o = ov.get(pid, {}) or {}
+        key = str(o.get("key") or "").strip() or str(env_key or "")
+        model = str(o.get("model") or "").strip() or str(env_model or "") or default_model
+        return key, model
+
+    ckey, cmodel = effective(ANTHROPIC_ID, settings.anthropic_api_key, settings.model, settings.model)
     profiles = [
         ProviderProfile(
             id=ANTHROPIC_ID,
             label="Claude (Anthropic)",
             kind="anthropic",
-            model=settings.model,
+            model=cmodel,
             base_url=None,
-            api_key=settings.anthropic_api_key,
+            api_key=ckey,
             web_search=True,
             hint="console.anthropic.com",
         )
     ]
     for preset in PRESETS:
-        api_key = str(getattr(settings, preset.key_attr, "") or "")
-        model = str(getattr(settings, preset.model_attr, "") or "") or preset.default_model
+        env_key = str(getattr(settings, preset.key_attr, "") or "")
+        env_model = str(getattr(settings, preset.model_attr, "") or "")
+        key, model = effective(preset.id, env_key, env_model, preset.default_model)
         profiles.append(
             ProviderProfile(
                 id=preset.id,
@@ -150,7 +163,7 @@ def load_profiles(settings) -> list[ProviderProfile]:
                 kind="openai",
                 model=model,
                 base_url=preset.base_url,
-                api_key=api_key,
+                api_key=key,
                 web_search=False,
                 hint=preset.hint,
             )
@@ -183,6 +196,7 @@ def public_view(profiles: list[ProviderProfile], active_id: str, default_id: str
                 "label": p.label,
                 "kind": p.kind,
                 "model": p.model,
+                "configured": bool(p.api_key),  # une clé est posée (jamais la clé elle-même)
                 "available": p.available,
                 "web_search": p.web_search,
                 "hint": p.hint,
@@ -266,7 +280,7 @@ class OpenAICompatProvider:
         messages: list[dict],
         tools: list[dict] | None,
         system_text: str,
-        settings,
+        max_tokens: int,
         notify_activity: Callable[[str], Awaitable[None]],
         run_tool: Callable[[str, dict], Awaitable[tuple[str, bool]]],
     ) -> AsyncIterator[str]:
@@ -282,7 +296,7 @@ class OpenAICompatProvider:
                 kwargs = dict(
                     model=self.profile.model,
                     messages=oai_messages,
-                    max_tokens=settings.max_tokens,
+                    max_tokens=max_tokens,
                 )
                 if oai_tools:
                     kwargs["tools"] = oai_tools

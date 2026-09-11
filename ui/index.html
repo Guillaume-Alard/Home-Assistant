@@ -343,12 +343,12 @@
 
       <section class="set-sec" data-sec="moteur" hidden>
         <div class="set-title">Moteur</div>
+        <div class="set-sub">Le cerveau de Luna. Connecte tes fournisseurs, choisis le modèle et règle la génération — à chaud, sans redémarrage.</div>
         <div class="set-cards">
-          <div class="set-card">
-            <div class="set-card-h">Intelligence</div>
-            <div class="set-row"><span class="set-k">LLM</span><span class="set-v" id="set-model">—</span></div>
-            <div class="set-row"><span class="set-k">Effort de réflexion</span><span class="set-v" id="set-effort">—</span></div>
-            <div class="set-row"><span class="set-k">Tokens max / réponse</span><span class="set-v" id="set-maxtok">—</span></div>
+          <div class="set-card set-card--wide">
+            <div class="set-card-h">Intelligence — modèles &amp; génération</div>
+            <div class="set-note llm-guard">Les clés API restent <b>côté serveur</b> : jamais réaffichées, jamais renvoyées à cette page. Quel que soit le modèle, toute action reste une <b>proposition à valider</b> — les garde-fous ne changent pas.</div>
+            <div id="set-llm" class="llm-editor"><span class="set-note">Chargement des fournisseurs…</span></div>
           </div>
           <div class="set-card">
             <div class="set-card-h">Voix &amp; système (local)</div>

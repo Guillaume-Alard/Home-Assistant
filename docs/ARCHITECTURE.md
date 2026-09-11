@@ -255,8 +255,11 @@ D'autres modèles — ChatGPT, Gemini, Groq, OpenRouter — se branchent via un 
 compatible OpenAI** unique et se choisissent **à chaud** dans le cockpit. Le `Brain`
 **dispatche** selon le fournisseur actif ; le callback `run_tool` (Toolbox → moteur)
 est le **même** dans les deux chemins, donc les garde-fous sont identiques quel que
-soit le modèle (test statique + `test_providers.py`). Le fournisseur actif est
-persisté (`Store`, clé `llm_provider`). Voir `docs/MULTI-LLM.md`.
+soit le modèle (test statique + `test_providers.py`). Clés API, modèle par
+fournisseur, effort/tokens/historique et fournisseur actif sont **éditables à chaud
+depuis le cockpit** (Paramètres › Moteur) et persistés (`Store`, clé JSON
+`llm_config`) ; les clés restent côté serveur, jamais réaffichées. `apply_config`
+reconstruit le tout sans redémarrage. Voir `docs/MULTI-LLM.md`.
 
 ## Persistance
 

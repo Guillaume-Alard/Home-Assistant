@@ -34,36 +34,64 @@ la Toolbox, puis le moteur d'actions :
 Autrement dit, le choix du modèle est une simple préférence de génération de texte :
 la maison, elle, est protégée par le moteur, pas par le modèle.
 
-## Activer un fournisseur
+## Activer un fournisseur — depuis le cockpit, à chaud
 
-Chaque fournisseur s'active en posant **sa clé API** dans `.env`. Le modèle est
-préréglé (raisonnable au moment de l'écriture) mais **remplaçable** — les catalogues
-bougent, choisis le tien.
+**Le plus simple : tout se règle dans le cockpit**, comme dans Home Assistant.
+**Paramètres › Moteur › « Intelligence — modèles & génération »** : chaque
+fournisseur a sa ligne, avec un **point** (● clé posée / ○ absente), un champ pour
+**coller sa clé API**, un champ **modèle**, et un bouton **Activer**. Colle la clé,
+appuie sur **Poser** : le fournisseur devient disponible **immédiatement** — sans
+`.env`, sans redémarrage. Le choix du modèle se fait dans le même écran.
 
-| Fournisseur | Clé (`.env`)          | Où l'obtenir                         | Coût            |
-| ----------- | --------------------- | ------------------------------------ | --------------- |
-| ChatGPT     | `OPENAI_API_KEY`      | platform.openai.com/api-keys         | payant          |
-| Gemini      | `GEMINI_API_KEY`      | aistudio.google.com/apikey           | offre gratuite  |
-| Groq        | `GROQ_API_KEY`        | console.groq.com/keys                | gratuit, rapide |
-| OpenRouter  | `OPENROUTER_API_KEY`  | openrouter.ai/keys                   | selon le modèle |
+| Fournisseur | Où obtenir la clé                    | Coût            |
+| ----------- | ------------------------------------ | --------------- |
+| ChatGPT     | platform.openai.com/api-keys         | payant          |
+| Gemini      | aistudio.google.com/apikey           | offre gratuite  |
+| Groq        | console.groq.com/keys                | gratuit, rapide |
+| OpenRouter  | openrouter.ai/keys                   | selon le modèle |
 
-Modèle par fournisseur : `OPENAI_MODEL`, `GEMINI_MODEL`, `GROQ_MODEL`,
-`OPENROUTER_MODEL` (pour OpenRouter, la forme est `éditeur/modèle`, ex.
-`meta-llama/llama-3.3-70b-instruct` — voir openrouter.ai/models).
+> **Les clés restent côté serveur.** Une clé posée dans le cockpit est stockée
+> **sur Nebula** (dans le `Store`) et **jamais réaffichée** : l'interface n'expose
+> qu'un booléen « configuré » (le point ●). Effacer le champ et **Poser** à vide
+> supprime la clé et **retombe** sur la valeur d'environnement, s'il y en a une.
 
-Après avoir ajouté une clé : `docker compose restart sentinel-core`.
+**Modèle** : préréglé (raisonnable au moment de l'écriture) mais **remplaçable** —
+les catalogues bougent, choisis le tien. Champ vide = modèle par défaut du
+fournisseur. Pour OpenRouter, la forme est `éditeur/modèle`, ex.
+`meta-llama/llama-3.3-70b-instruct` (voir openrouter.ai/models).
+
+**Alternative `.env` (facultative).** Tu peux toujours préremplir les clés au
+démarrage : `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`,
+`OPENROUTER_API_KEY`, et le modèle via `OPENAI_MODEL`, `GEMINI_MODEL`,
+`GROQ_MODEL`, `OPENROUTER_MODEL`. Une clé posée dans le cockpit **prime** sur
+celle de `.env` ; à défaut, c'est `.env` qui sert. Après un changement de `.env` :
+`docker compose restart sentinel-core`.
 
 ## Choisir et basculer
 
-- **Cockpit** → Paramètres › Connexions › carte **« Modèle actif »**. La liste
-  déroulante montre chaque fournisseur ; ceux sans clé sont **grisés** avec l'indice
-  pour les activer. Choisis-en un : la bascule est **immédiate**, annoncée à tous
-  les appareils, et **mémorisée** (elle survit à un redémarrage).
-- **Au démarrage**, le fournisseur actif est celui de `SENTINEL_LLM_PROVIDER`
-  (`claude` par défaut) — sauf si tu en as choisi un autre dans le cockpit, auquel
-  cas ce dernier choix prime.
-- Une clé jamais exposée : le cockpit n'affiche que le **nom** et le **modèle**,
-  jamais la clé API.
+- **Réglage complet** → Paramètres › **Moteur**. Le bouton **Activer** de chaque
+  ligne bascule le cerveau ; un fournisseur sans clé affiche « Pose une clé pour
+  l'activer » au lieu du bouton.
+- **Bascule rapide** → Paramètres › Connexions › carte **« Modèle actif »** : une
+  liste déroulante pour changer d'un geste, plus un raccourci vers l'éditeur.
+- Dans les deux cas la bascule est **immédiate**, annoncée à tous les appareils,
+  et **mémorisée** (elle survit à un redémarrage).
+- **Au démarrage**, le fournisseur actif est le **dernier choisi** dans le cockpit ;
+  à défaut `SENTINEL_LLM_PROVIDER` (`claude` par défaut).
+- Une clé jamais exposée : le cockpit n'affiche que le **nom**, le **modèle** et
+  l'état « configuré », jamais la clé API.
+
+## Régler la génération (à chaud)
+
+Dans la même carte **Moteur**, sous **« Génération »**, trois réglages vivants,
+appliqués sans redémarrage et mémorisés :
+
+- **Effort de réflexion** — Rapide / Équilibré / Approfondi (`low`/`medium`/`high`).
+- **Tokens max / réponse** — longueur maximale d'une réponse (borné 16–64000).
+- **Mémoire de conversation** — nombre de messages repris comme contexte (1–200).
+
+Les valeurs sont **bornées côté serveur** : une saisie absurde est ramenée dans les
+limites, jamais une erreur.
 
 ## Bon à savoir
 
@@ -85,4 +113,11 @@ Après avoir ajouté une clé : `docker compose restart sentinel-core`.
   — boucle native Anthropic pour Claude, adaptateur pour les autres. Le callback
   `run_tool` (Toolbox → moteur) est le même dans les deux cas : d'où la sécurité
   identique, garantie aussi par le test `core/tests/test_providers.py`.
-- Le fournisseur actif est persisté dans le `Store` (clé `llm_provider`).
+  `apply_config(overrides)` reconstruit à chaud les profils (clés/modèles), le
+  client Claude et les paramètres de génération (effort/tokens/historique).
+- Les réglages du cockpit sont persistés dans le `Store` sous une clé unique
+  `llm_config` (JSON : `active`, `providers[id].{key,model}`, `params`). L'ancienne
+  clé `llm_provider` (fournisseur actif seul) est **migrée** automatiquement au
+  premier démarrage. Les messages WS `llm_set_key` / `llm_set_model` /
+  `llm_set_params` / `llm_select` écrivent cette config ; le serveur ne renvoie
+  **jamais** de clé (vue publique : un booléen `configured`).

@@ -282,6 +282,7 @@ class Sentinel:
         )
         self._proactive_task: asyncio.Task | None = None
         self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
+        self._llm_cfg: dict = {}  # réglages LLM du cockpit (clés/modèles/params) — cf. restore_llm_config
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -326,15 +327,34 @@ class Sentinel:
     async def _broadcast_llm(self) -> None:
         await self.hub.broadcast(self._llm_payload())
 
-    async def restore_active_provider(self) -> None:
-        """Réapplique le fournisseur LLM choisi au dernier démarrage (s'il tient encore)."""
+    async def restore_llm_config(self) -> None:
+        """Recharge les réglages LLM du cockpit (clés, modèles, params, actif) et
+        les applique. Migre l'ancien réglage `llm_provider` (fournisseur actif seul)."""
+        cfg: dict = {}
         try:
-            saved = await self.store.get_setting("llm_provider")
+            raw = await self.store.get_setting("llm_config")
+            if raw:
+                cfg = json.loads(raw)
+            else:
+                legacy = await self.store.get_setting("llm_provider")
+                if legacy:
+                    cfg = {"active": legacy}
         except Exception:
-            log.exception("Lecture du fournisseur LLM persistant impossible")
-            return
-        if saved and saved != self.brain.active_id:
-            self.brain.set_provider(saved)  # ignoré si indisponible (clé retirée…)
+            log.exception("Lecture des réglages LLM persistants impossible")
+            cfg = {}
+        self._llm_cfg = cfg if isinstance(cfg, dict) else {}
+        self.brain.apply_config(self._llm_cfg)
+
+    async def _persist_llm(self) -> None:
+        """Enregistre la config LLM (contient des clés API — jamais renvoyée à l'UI)."""
+        with contextlib.suppress(Exception):
+            await self.store.set_setting("llm_config", json.dumps(self._llm_cfg, ensure_ascii=False))
+
+    async def _apply_llm(self) -> None:
+        """Applique la config LLM courante, la persiste, et rediffuse l'état."""
+        self.brain.apply_config(self._llm_cfg)
+        await self._persist_llm()
+        await self._broadcast_llm()
 
     async def _on_proposal_change(self, change: str, proposal: dict) -> None:
         kind = "proposal_new" if change == "new" else "proposal_update"
@@ -639,7 +659,7 @@ class Sentinel:
                 stream = _single_reply(intent_reply)
             else:
                 history = _build_history(
-                    await self.store.recent_messages(self.settings.history_window)
+                    await self.store.recent_messages(self.brain.history_window)
                 )
                 stream = self.brain.stream_reply(
                     history, utterance=text, source=source, speaker=who
@@ -783,7 +803,7 @@ class Sentinel:
                 stream = _single_reply(intent_reply)
             else:
                 history = _build_history(
-                    await self.store.recent_messages(self.settings.history_window)
+                    await self.store.recent_messages(self.brain.history_window)
                 )
                 stream = self.brain.stream_reply(history, utterance=text, source=source)
             await self.hub.broadcast({"type": "assistant_start", "id": assistant_id})
@@ -898,7 +918,7 @@ async def lifespan(app: FastAPI):
     await store.open()
     sentinel = Sentinel(settings, store)
     app.state.sentinel = sentinel
-    await sentinel.restore_active_provider()
+    await sentinel.restore_llm_config()
     if sentinel.ha:
         await sentinel.ha.start()
     sentinel.start_proactive()
@@ -1318,6 +1338,15 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "llm_select":
         await _llm_select(sentinel, client, msg)
 
+    elif mtype == "llm_set_key":
+        await _llm_set_key(sentinel, client, msg)
+
+    elif mtype == "llm_set_model":
+        await _llm_set_model(sentinel, client, msg)
+
+    elif mtype == "llm_set_params":
+        await _llm_set_params(sentinel, client, msg)
+
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
 
@@ -1335,8 +1364,12 @@ async def _llm_select(sentinel: Sentinel, client: Client, msg: dict) -> None:
     provider_id = str(msg.get("id") or "").strip()
     if not provider_id:
         return
+    # Bascule à chaud : `set_provider` valide la disponibilité et flippe l'actif
+    # sans reconstruire les clients. On persiste l'actif dans la config LLM pour
+    # qu'il survive à un redémarrage (via restore_llm_config → apply_config).
     if sentinel.brain.set_provider(provider_id):
-        await sentinel.store.set_setting("llm_provider", provider_id)
+        sentinel._llm_cfg["active"] = provider_id
+        await sentinel._persist_llm()
         await sentinel._broadcast_llm()
         label = next(
             (p["label"] for p in sentinel.brain.providers_public()["providers"]
@@ -1350,6 +1383,70 @@ async def _llm_select(sentinel: Sentinel, client: Client, msg: dict) -> None:
             {"type": "notice",
              "text": "Ce fournisseur n'est pas disponible (clé API manquante ?)."},
         )
+
+
+# ── Réglages LLM éditables (Paramètres › Modèles) ────────────────────────────
+#
+# Le propriétaire connecte les fournisseurs et règle la génération DEPUIS le
+# cockpit : coller une clé API, choisir le modèle par fournisseur, régler effort
+# / max_tokens / fenêtre d'historique — le tout à chaud, sans .env ni redémarrage.
+# Les clés sont stockées côté serveur (Store) et JAMAIS renvoyées à l'UI : la vue
+# publique n'expose qu'un booléen « configuré ». Ces réglages ne touchent en rien
+# les garde-fous : quel que soit le modèle, tout appel d'outil repasse par la
+# Toolbox et le moteur « propose puis approuve ».
+
+
+async def _llm_set_key(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    """Colle (ou efface) la clé API d'un fournisseur. Vide ⇒ retour à la valeur
+    d'environnement (.env), le cas échéant. La clé n'est jamais rediffusée."""
+    provider_id = str(msg.get("id") or "").strip()
+    if not provider_id:
+        return
+    key = str(msg.get("key") or "").strip()
+    providers = sentinel._llm_cfg.setdefault("providers", {})
+    entry = providers.setdefault(provider_id, {})
+    if key:
+        entry["key"] = key
+    else:
+        entry.pop("key", None)  # vide ⇒ on retombe sur l'environnement
+        if not entry:
+            providers.pop(provider_id, None)
+    await sentinel._apply_llm()
+    await sentinel.hub.send(
+        client,
+        {"type": "notice",
+         "text": ("Clé enregistrée." if key else "Clé effacée (retour à l'environnement).")},
+    )
+
+
+async def _llm_set_model(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    """Choisit le modèle d'un fournisseur. Vide ⇒ modèle par défaut du fournisseur."""
+    provider_id = str(msg.get("id") or "").strip()
+    if not provider_id:
+        return
+    model = str(msg.get("model") or "").strip()
+    providers = sentinel._llm_cfg.setdefault("providers", {})
+    entry = providers.setdefault(provider_id, {})
+    if model:
+        entry["model"] = model
+    else:
+        entry.pop("model", None)
+        if not entry:
+            providers.pop(provider_id, None)
+    await sentinel._apply_llm()
+
+
+async def _llm_set_params(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    """Règle effort / max_tokens / fenêtre d'historique (à chaud). Les valeurs sont
+    bornées côté Brain (`apply_config`) ; ici on ne fait qu'écrire ce qui est fourni."""
+    params = sentinel._llm_cfg.setdefault("params", {})
+    if "effort" in msg:
+        params["effort"] = str(msg.get("effort") or "").strip()
+    if "max_tokens" in msg:
+        params["max_tokens"] = msg.get("max_tokens")
+    if "history_window" in msg:
+        params["history_window"] = msg.get("history_window")
+    await sentinel._apply_llm()
 
 
 # ── Veille au mot d'éveil (Phase 5A) ─────────────────────────────────────

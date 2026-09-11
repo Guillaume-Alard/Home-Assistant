@@ -111,7 +111,12 @@ def test_public_view_ne_fuit_jamais_la_cle(monkeypatch, tmp_path):
     blob = repr(view)
     assert "secret" not in blob and "aussi-secret" not in blob
     for p in view["providers"]:
-        assert set(p) == {"id", "label", "kind", "model", "available", "web_search", "hint"}
+        assert set(p) == {"id", "label", "kind", "model", "available", "web_search", "hint", "configured"}
+        # `configured` = une clé est présente, SANS jamais révéler laquelle ni sa valeur.
+        assert isinstance(p["configured"], bool)
+    by_id = {p["id"]: p for p in view["providers"]}
+    assert by_id[ANTHROPIC_ID]["configured"] is True
+    assert by_id["openai"]["configured"] is True
 
 
 # ── Adaptateur compatible OpenAI : faux client streaming ──────────────────────
@@ -189,7 +194,7 @@ async def test_stream_texte_simple():
 
     text = await _drain(prov.stream(
         messages=[{"role": "user", "content": "salut"}], tools=None, system_text="SYS",
-        settings=SimpleNamespace(max_tokens=512), notify_activity=_noop_activity, run_tool=run_tool,
+        max_tokens=512, notify_activity=_noop_activity, run_tool=run_tool,
     ))
     assert text == "Bonjour Guillaume"
     assert captured[0]["messages"][0] == {"role": "system", "content": "SYS"}
@@ -217,7 +222,7 @@ async def test_stream_tour_d_outil_arguments_fragmentes():
     tools = [{"name": "action_domotique", "description": "d", "input_schema": {"type": "object", "properties": {}}}]
     text = await _drain(prov.stream(
         messages=[{"role": "user", "content": "allume le salon"}], tools=tools, system_text="SYS",
-        settings=SimpleNamespace(max_tokens=512), notify_activity=notify, run_tool=run_tool,
+        max_tokens=512, notify_activity=notify, run_tool=run_tool,
     ))
     assert text == "C'est fait."
     # Les fragments d'arguments sont recollés puis passés parsés à run_tool.
@@ -236,7 +241,7 @@ async def test_stream_repli_max_completion_tokens():
     prov = _provider([bad, _FakeStream([_chunk(content="ok"), _chunk(finish="stop")])], captured)
     text = await _drain(prov.stream(
         messages=[{"role": "user", "content": "x"}], tools=None, system_text="",
-        settings=SimpleNamespace(max_tokens=777), notify_activity=_noop_activity,
+        max_tokens=777, notify_activity=_noop_activity,
         run_tool=lambda n, a: None,
     ))
     assert text == "ok"
@@ -250,7 +255,7 @@ async def test_stream_erreur_inattendue_devient_llm_unavailable():
     with pytest.raises(LLMUnavailable) as exc:
         await _drain(prov.stream(
             messages=[{"role": "user", "content": "x"}], tools=None, system_text="",
-            settings=SimpleNamespace(max_tokens=512), notify_activity=_noop_activity,
+            max_tokens=512, notify_activity=_noop_activity,
             run_tool=lambda n, a: None,
         ))
     assert "ChatGPT (OpenAI)" in str(exc.value)
@@ -290,6 +295,74 @@ def test_set_provider_accepte_disponible(monkeypatch, tmp_path):
     assert brain.active_id == "groq"
     view = brain.providers_public()
     assert view["active"] == "groq" and view["default"] == ANTHROPIC_ID
+
+
+# ── Réglages LLM éditables (apply_config) ─────────────────────────────────────
+
+def test_apply_config_pose_une_cle_active_le_fournisseur(monkeypatch, tmp_path):
+    """Coller une clé depuis le cockpit rend un fournisseur disponible — sans .env
+    ni redémarrage — et la vue publique le signale SANS jamais révéler la clé."""
+    settings = _settings(monkeypatch, tmp_path, ANTHROPIC_API_KEY="clef")  # OpenAI sans clé
+    brain = Brain(settings, toolbox=None)
+    assert brain._by_id["openai"].available is False
+
+    brain.apply_config({"providers": {"openai": {"key": "sk-secret-xyz"}}})
+    assert brain._by_id["openai"].available is True
+    view = brain.providers_public()
+    by_id = {p["id"]: p for p in view["providers"]}
+    assert by_id["openai"]["configured"] is True and by_id["openai"]["available"] is True
+    # La clé ne fuit JAMAIS dans la vue cockpit.
+    assert "sk-secret-xyz" not in repr(view)
+    for p in view["providers"]:
+        assert "api_key" not in p and "key" not in p
+
+
+def test_apply_config_modele_et_actif(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path, ANTHROPIC_API_KEY="clef")
+    brain = Brain(settings, toolbox=None)
+    brain.apply_config({
+        "active": "openai",
+        "providers": {"openai": {"key": "k", "model": "gpt-4o-mini"}},
+    })
+    assert brain.active_id == "openai"
+    assert brain._by_id["openai"].model == "gpt-4o-mini"
+    # Modèle vide ⇒ retour au modèle par défaut du preset.
+    brain.apply_config({"providers": {"openai": {"key": "k", "model": ""}}})
+    assert brain._by_id["openai"].model == next(p.default_model for p in PRESETS if p.id == "openai")
+
+
+def test_apply_config_actif_indisponible_retombe_sur_defaut(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path, ANTHROPIC_API_KEY="clef")
+    brain = Brain(settings, toolbox=None)
+    # OpenAI demandé actif mais sans clé → on retombe sur le défaut (Claude).
+    brain.apply_config({"active": "openai"})
+    assert brain.active_id == ANTHROPIC_ID
+
+
+def test_apply_config_params_bornes(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path, ANTHROPIC_API_KEY="clef")
+    brain = Brain(settings, toolbox=None)
+    brain.apply_config({"params": {"effort": "high", "max_tokens": 4096, "history_window": 24}})
+    view = brain.providers_public()
+    assert view["effort"] == "high" and view["max_tokens"] == 4096 and view["history_window"] == 24
+    assert brain.history_window == 24
+    # Valeurs hors bornes ou absurdes → bornées / valeur par défaut, jamais d'exception.
+    brain.apply_config({"params": {"effort": "turbo", "max_tokens": 999999, "history_window": 0}})
+    view = brain.providers_public()
+    assert view["effort"] == settings.effort          # « turbo » invalide → défaut
+    assert view["max_tokens"] == 64000                # plafonné
+    assert view["history_window"] == 1                # plancher
+
+
+def test_apply_config_vide_revient_a_l_environnement(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path, ANTHROPIC_API_KEY="clef", GROQ_API_KEY="g")
+    brain = Brain(settings, toolbox=None)
+    brain.apply_config({"active": "groq", "params": {"max_tokens": 4096}})
+    assert brain.active_id == "groq" and brain.providers_public()["max_tokens"] == 4096
+    # Config vidée → on repart des valeurs d'environnement (actif = défaut Claude).
+    brain.apply_config({})
+    assert brain.active_id == ANTHROPIC_ID
+    assert brain.providers_public()["max_tokens"] == settings.max_tokens
 
 
 # ── L'INVARIANT DE SÉCURITÉ tient pour un fournisseur alternatif ──────────────

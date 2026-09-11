@@ -91,9 +91,7 @@ const els = {
   setWakeToggle: document.getElementById('set-wake-toggle'),
   setVoice: document.getElementById('set-voice'),
   setVoiceEngine: document.getElementById('set-voice-engine'),
-  setModel: document.getElementById('set-model'),
-  setEffort: document.getElementById('set-effort'),
-  setMaxtok: document.getElementById('set-maxtok'),
+  setLLM: document.getElementById('set-llm'),
   setStt: document.getElementById('set-stt'),
   setTts: document.getElementById('set-tts'),
   setReport: document.getElementById('set-report'),
@@ -1051,9 +1049,7 @@ function renderSettings() {
   const cloned = eng.tts_engine === 'cloned';
   els.setVoiceEngine.textContent = cloned ? 'clonage local · repli Piper' : 'Piper · local';
   els.setVoice.textContent = cloned ? `« ${eng.cloned_tts_voice || 'luna'} » (clonée)` : (eng.piper_voice || '—');
-  els.setModel.textContent = eng.model || '—';
-  els.setEffort.textContent = eng.effort || '—';
-  els.setMaxtok.textContent = eng.max_tokens ? String(eng.max_tokens) : '—';
+  renderLLMEditor(h.llm || {});
   els.setStt.textContent = eng.whisper_model ? `${eng.whisper_model} · faster-whisper` : '—';
   els.setTts.textContent = cloned
     ? `voix clonée « ${eng.cloned_tts_voice || 'luna'} » (repli Piper)`
@@ -1158,10 +1154,9 @@ function renderConnexions(h, cfg) {
   for (const s of soon) grid.appendChild(svcCard({ ...s, status: 'Bientôt', badge: 'bientôt', soon: true }));
 }
 
-// Carte « Modèle actif » : sélecteur des fournisseurs LLM disponibles (bascule
-// immédiate). Aucun secret n'est affiché ; un fournisseur sans clé est grisé,
-// avec l'indice pour l'activer. Le choix repart au serveur (llm_select) qui
-// journalise et rediffuse l'état à tous les appareils.
+// Carte « Modèle actif » (Connexions) : bascule rapide + raccourci vers l'éditeur
+// complet (Moteur). Aucun secret n'est affiché ; le choix repart au serveur
+// (llm_select) qui journalise et rediffuse l'état à tous les appareils.
 function providerCard(llm) {
   const providers = (llm && llm.providers) || [];
   const active = (llm && llm.active) || 'claude';
@@ -1191,35 +1186,239 @@ function providerCard(llm) {
   desc.textContent = 'Le cerveau de Luna. Claude est le plus fiable pour les outils ; les autres passent par une API compatible. Quel que soit le modèle, toute action reste soumise à ta validation.';
   card.appendChild(desc);
 
-  if (!providers.length) return card;
-
-  const sel = document.createElement('select');
-  sel.className = 'svc-select';
-  sel.setAttribute('aria-label', 'Choisir le modèle actif');
-  for (const p of providers) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.available ? `${p.label} — ${p.model}` : `${p.label} — clé manquante`;
-    opt.disabled = !p.available;
-    if (p.id === active) opt.selected = true;
-    sel.appendChild(opt);
+  if (providers.length) {
+    const sel = document.createElement('select');
+    sel.className = 'svc-select';
+    sel.setAttribute('aria-label', 'Choisir le modèle actif');
+    for (const p of providers) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.available ? `${p.label} — ${p.model}` : `${p.label} — clé manquante`;
+      opt.disabled = !p.available;
+      if (p.id === active) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.disabled = !ws.alive;
+    sel.addEventListener('change', () => {
+      if (sel.value && sel.value !== active) ws.sendJSON({ type: 'llm_select', id: sel.value });
+    });
+    card.appendChild(sel);
   }
-  sel.disabled = !ws.alive;
-  sel.addEventListener('change', () => {
-    if (sel.value && sel.value !== active) ws.sendJSON({ type: 'llm_select', id: sel.value });
-  });
-  card.appendChild(sel);
 
-  const missing = providers.filter((p) => !p.available && p.hint);
-  if (missing.length) {
-    const note = document.createElement('div');
-    note.className = 'svc-desc';
-    note.style.opacity = '0.7';
-    note.textContent = 'Pour en activer un : pose sa clé API dans .env — ' +
-      missing.map((p) => `${p.label} (${p.hint})`).join(', ') + '.';
-    card.appendChild(note);
-  }
+  // Le réglage fin (clés API, modèle par fournisseur, effort…) vit dans Moteur.
+  const link = document.createElement('button');
+  link.type = 'button';
+  link.className = 'svc-action';
+  link.textContent = 'Connecter / régler les modèles →';
+  link.addEventListener('click', () => { setSettingsSection('moteur'); });
+  card.appendChild(link);
   return card;
+}
+
+// ── Éditeur LLM (Paramètres › Moteur) ──────────────────────────────────────
+// Connecter les fournisseurs, choisir le modèle par fournisseur, régler la
+// génération (effort / tokens max / mémoire de conversation) — le tout à chaud.
+// Les clés partent au serveur (llm_set_key) et n'en reviennent JAMAIS : la vue
+// n'expose qu'un booléen « configuré » (le point ●). Rien ici ne touche aux
+// garde-fous : tout appel d'outil repasse par le moteur « propose puis approuve ».
+const PARAM_LIMITS = { max_tokens: [16, 64000], history_window: [1, 200] };
+
+function renderLLMEditor(llm) {
+  const box = els.setLLM;
+  if (!box) return;
+  // Ne pas écraser une saisie en cours : une diffusion (un autre appareil, ou
+  // notre propre sauvegarde) peut arriver pendant qu'on tape. Nos gestionnaires
+  // « défocalisent » avant d'émettre, donc ce garde ne bloque qu'une frappe vive.
+  const ae = document.activeElement;
+  if (ae && box.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT')) return;
+
+  const providers = (llm && llm.providers) || [];
+  box.textContent = '';
+  if (!providers.length) {
+    const s = document.createElement('span');
+    s.className = 'set-note';
+    s.textContent = 'Aucun fournisseur déclaré.';
+    box.appendChild(s);
+    return;
+  }
+  const active = (llm && llm.active) || 'claude';
+  for (const p of providers) box.appendChild(llmProviderRow(p, active));
+  box.appendChild(llmParamsRow(llm));
+}
+
+function llmProviderRow(p, active) {
+  const isActive = p.id === active;
+  const row = document.createElement('div');
+  row.className = 'llm-prov' + (isActive ? ' active' : '');
+
+  const head = document.createElement('div');
+  head.className = 'llm-prov-head';
+  const dot = document.createElement('span');
+  dot.className = 'llm-dot' + (p.configured ? ' on' : '');
+  dot.title = p.configured ? 'Clé posée' : 'Aucune clé';
+  const name = document.createElement('span');
+  name.className = 'llm-prov-name';
+  name.textContent = p.label;
+  head.append(dot, name);
+  if (isActive) {
+    const tag = document.createElement('span');
+    tag.className = 'llm-tag';
+    tag.textContent = 'actif';
+    head.appendChild(tag);
+  }
+  const kind = document.createElement('span');
+  kind.className = 'llm-prov-kind';
+  kind.textContent = p.kind === 'anthropic' ? 'natif · outils + web' : 'compatible OpenAI';
+  head.appendChild(kind);
+  row.appendChild(head);
+
+  // Clé API — écriture seule. Vide = repli sur l'environnement (.env).
+  const keyField = document.createElement('div');
+  keyField.className = 'llm-field';
+  const key = document.createElement('input');
+  key.type = 'password';
+  key.className = 'llm-input';
+  key.autocomplete = 'off';
+  key.placeholder = p.configured ? '•••••••••• (clé posée)' : 'coller une clé API…';
+  key.setAttribute('aria-label', `Clé API — ${p.label}`);
+  const saveKey = () => {
+    const v = key.value.trim();
+    if (!v) return;
+    key.blur();
+    key.value = '';
+    ws.sendJSON({ type: 'llm_set_key', id: p.id, key: v });
+  };
+  key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } });
+  const poser = mkBtn('Poser', 'llm-btn', saveKey);
+  keyField.append(key, poser);
+  if (p.configured) {
+    keyField.appendChild(mkBtn('Effacer', 'llm-btn ghost', () => {
+      key.blur();
+      ws.sendJSON({ type: 'llm_set_key', id: p.id, key: '' });  // vide ⇒ retour .env
+    }));
+  }
+  row.appendChild(keyField);
+
+  // Modèle — libre. Vide = modèle par défaut du fournisseur.
+  const modelField = document.createElement('div');
+  modelField.className = 'llm-field';
+  const lab = document.createElement('label');
+  lab.className = 'llm-lab';
+  lab.textContent = 'Modèle';
+  const model = document.createElement('input');
+  model.type = 'text';
+  model.className = 'llm-input';
+  model.value = p.model || '';
+  model.placeholder = 'modèle par défaut';
+  model.spellcheck = false;
+  model.setAttribute('aria-label', `Modèle — ${p.label}`);
+  const saveModel = () => {
+    const v = model.value.trim();
+    if (v === (p.model || '')) return;  // rien de neuf
+    model.blur();
+    ws.sendJSON({ type: 'llm_set_model', id: p.id, model: v });
+  };
+  model.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveModel(); } });
+  model.addEventListener('blur', saveModel);
+  modelField.append(lab, model);
+  row.appendChild(modelField);
+
+  // Pied : activer (si dispo) ou raison de l'indisponibilité.
+  const foot = document.createElement('div');
+  foot.className = 'llm-prov-foot';
+  if (isActive) {
+    const s = document.createElement('span');
+    s.className = 'llm-foot-note on';
+    s.textContent = '● Modèle actif';
+    foot.appendChild(s);
+  } else if (p.available) {
+    foot.appendChild(mkBtn('Activer', 'llm-btn', () => {
+      ws.sendJSON({ type: 'llm_select', id: p.id });
+    }));
+  } else {
+    const s = document.createElement('span');
+    s.className = 'llm-foot-note';
+    s.textContent = 'Pose une clé pour l’activer.';
+    foot.appendChild(s);
+  }
+  row.appendChild(foot);
+  return row;
+}
+
+function llmParamsRow(llm) {
+  const wrap = document.createElement('div');
+  wrap.className = 'llm-params';
+  const title = document.createElement('div');
+  title.className = 'llm-params-h';
+  title.textContent = 'Génération';
+  wrap.appendChild(title);
+
+  const grid = document.createElement('div');
+  grid.className = 'llm-params-grid';
+
+  // Effort de réflexion.
+  const effort = document.createElement('select');
+  effort.className = 'llm-input';
+  for (const [val, lbl] of [['low', 'Rapide'], ['medium', 'Équilibré'], ['high', 'Approfondi']]) {
+    const o = document.createElement('option');
+    o.value = val; o.textContent = `${lbl} (${val})`;
+    if ((llm.effort || 'medium') === val) o.selected = true;
+    effort.appendChild(o);
+  }
+  effort.addEventListener('change', () => { effort.blur(); ws.sendJSON({ type: 'llm_set_params', effort: effort.value }); });
+  grid.appendChild(llmParamCell('Effort de réflexion', effort));
+
+  // Tokens max / réponse.
+  const maxtok = mkNumber(llm.max_tokens, PARAM_LIMITS.max_tokens, 64);
+  const saveMax = () => { const n = clampNum(maxtok, PARAM_LIMITS.max_tokens); if (n === null || n === llm.max_tokens) return; maxtok.blur(); ws.sendJSON({ type: 'llm_set_params', max_tokens: n }); };
+  maxtok.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveMax(); } });
+  maxtok.addEventListener('blur', saveMax);
+  grid.appendChild(llmParamCell('Tokens max / réponse', maxtok));
+
+  // Fenêtre d'historique (nb de messages retenus).
+  const hist = mkNumber(llm.history_window, PARAM_LIMITS.history_window, 1);
+  const saveHist = () => { const n = clampNum(hist, PARAM_LIMITS.history_window); if (n === null || n === llm.history_window) return; hist.blur(); ws.sendJSON({ type: 'llm_set_params', history_window: n }); };
+  hist.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveHist(); } });
+  hist.addEventListener('blur', saveHist);
+  grid.appendChild(llmParamCell('Mémoire de conversation', hist));
+
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+function llmParamCell(label, control) {
+  const cell = document.createElement('div');
+  cell.className = 'llm-param';
+  const l = document.createElement('label');
+  l.className = 'llm-lab';
+  l.textContent = label;
+  cell.append(l, control);
+  return cell;
+}
+
+function mkNumber(value, [lo, hi], step) {
+  const el = document.createElement('input');
+  el.type = 'number';
+  el.className = 'llm-input';
+  el.min = String(lo); el.max = String(hi); el.step = String(step);
+  el.value = value != null ? String(value) : '';
+  return el;
+}
+
+function clampNum(el, [lo, hi]) {
+  const n = parseInt(el.value, 10);
+  if (Number.isNaN(n)) return null;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function mkBtn(text, cls, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.textContent = text;
+  b.disabled = !ws.alive;
+  b.addEventListener('click', onClick);
+  return b;
 }
 
 function setSettingsSection(name) {

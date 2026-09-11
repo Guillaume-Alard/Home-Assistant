@@ -199,6 +199,83 @@ def test_llm_select_via_ws(fake_wyoming, tmp_path, monkeypatch):
             assert hello2["llm"]["active"] == "groq"
 
 
+def test_llm_config_editable_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """Réglages LLM vivants depuis le cockpit : coller une clé, changer le modèle,
+    régler la génération — à chaud, persistés, et la clé ne revient JAMAIS à l'UI."""
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "clef")  # Claude dispo ; OpenAI sans clé
+    SECRET = "sk-openai-secret-123"
+    seen_text: list[str] = []
+
+    def next_of(ws, mtype, max_frames=6):
+        for _ in range(max_frames):
+            raw = ws.receive()["text"]
+            seen_text.append(raw)
+            m = json.loads(raw)
+            if m["type"] == mtype:
+                return m
+        raise AssertionError(f"trame {mtype} non reçue")
+
+    from app.main import app
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            by_id = {p["id"]: p for p in hello["llm"]["providers"]}
+            assert by_id["openai"]["available"] is False and by_id["openai"]["configured"] is False
+
+            # 1) Coller une clé OpenAI → le fournisseur devient disponible/configuré.
+            ws.send_text(json.dumps({"type": "llm_set_key", "id": "openai", "key": SECRET}))
+            llm = next_of(ws, "llm")
+            oa = {p["id"]: p for p in llm["providers"]}["openai"]
+            assert oa["available"] is True and oa["configured"] is True
+
+            # 2) Choisir le modèle du fournisseur.
+            ws.send_text(json.dumps({"type": "llm_set_model", "id": "openai", "model": "gpt-4o-mini"}))
+            llm = next_of(ws, "llm")
+            assert {p["id"]: p for p in llm["providers"]}["openai"]["model"] == "gpt-4o-mini"
+
+            # 3) L'activer.
+            ws.send_text(json.dumps({"type": "llm_select", "id": "openai"}))
+            llm = next_of(ws, "llm")
+            assert llm["active"] == "openai"
+
+            # 4) Régler la génération (bornée côté Brain).
+            ws.send_text(json.dumps({"type": "llm_set_params",
+                                     "effort": "high", "max_tokens": 4096, "history_window": 24}))
+            llm = next_of(ws, "llm")
+            assert llm["effort"] == "high" and llm["max_tokens"] == 4096 and llm["history_window"] == 24
+
+    # La clé n'a JAMAIS transité vers l'UI, dans aucune trame.
+    assert all(SECRET not in raw for raw in seen_text)
+
+    # Redémarrage : clé, modèle, actif et params sont relus depuis le Store.
+    with TestClient(app) as tc2:
+        with tc2.websocket_connect("/ws") as ws2:
+            h2 = json.loads(ws2.receive()["text"])
+            llm2 = h2["llm"]
+            oa2 = {p["id"]: p for p in llm2["providers"]}["openai"]
+            assert oa2["configured"] is True and oa2["available"] is True
+            assert oa2["model"] == "gpt-4o-mini"
+            assert llm2["active"] == "openai"
+            assert llm2["max_tokens"] == 4096 and llm2["history_window"] == 24
+            assert SECRET not in json.dumps(h2)  # toujours pas de clé côté UI
+
+            # Effacer la clé → retour à l'environnement (ici aucune clé OpenAI → indispo).
+            ws2.send_text(json.dumps({"type": "llm_set_key", "id": "openai", "key": ""}))
+            for _ in range(6):
+                m = json.loads(ws2.receive()["text"])
+                if m["type"] == "llm":
+                    oa3 = {p["id"]: p for p in m["providers"]}["openai"]
+                    assert oa3["configured"] is False and oa3["available"] is False
+                    # L'actif retombe sur le défaut disponible (Claude).
+                    assert m["active"] == "claude"
+                    break
+            else:
+                raise AssertionError("trame llm non reçue après effacement")
+
+
 def test_memoire_via_ws(client):
     """Ajout / lecture / suppression de souvenirs par l'UI, rediffusés à tous."""
     with client.websocket_connect("/ws") as ws:
