@@ -1,0 +1,47 @@
+/* Icônes « uicons rounded » (Flaticon) — le jeu d'icônes du design « Sentinel
+   Cockpit », vendorisé EN LOCAL (ui/vendor/fonts) : aucune dépendance à un CDN,
+   les icônes vivent hors ligne sur les tablettes murales. On ne déclare que les
+   glyphes réellement utilisés par le cockpit (la police, elle, les contient
+   tous, mais le CSS reste léger et lisible).
+   Convention d'emploi : <i class="fi fi-rr-<nom>" aria-hidden="true"></i> */
+@font-face {
+  font-family: "uicons-regular-rounded";
+  font-display: swap;
+  src: url("../vendor/fonts/uicons-regular-rounded.woff2") format("woff2");
+}
+i[class^="fi-rr-"]::before,
+i[class*=" fi-rr-"]::before {
+  font-family: "uicons-regular-rounded" !important;
+  font-style: normal;
+  font-weight: normal !important;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+  display: inline-block;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* En-tête / barre d'outils */
+.fi-rr-signal-stream::before { content: "\f80b"; }   /* veille au mot d'éveil */
+.fi-rr-list-check::before    { content: "\f628"; }   /* propositions à valider */
+.fi-rr-sparkles::before      { content: "\f84e"; }   /* suggestions de Luna */
+.fi-rr-music::before         { content: "\f6ad"; }   /* musique */
+.fi-rr-bell::before          { content: "\f1de"; }   /* minuteurs & rappels */
+.fi-rr-calendar::before      { content: "\f27c"; }   /* agenda */
+.fi-rr-envelope::before      { content: "\f44d"; }   /* courriel */
+.fi-rr-heart-rate::before    { content: "\f58c"; }   /* santé des systèmes */
+.fi-rr-time-past::before     { content: "\f919"; }   /* historique / journal */
+
+/* Boutons d'action (tiroirs, aperçu, alertes) */
+.fi-rr-cross-small::before   { content: "\f3cb"; }   /* fermer */
+.fi-rr-refresh::before       { content: "\f78d"; }   /* actualiser */
+.fi-rr-arrow-up-right::before{ content: "\f187"; }   /* ouvrir dans un onglet */
+.fi-rr-expand::before        { content: "\f459"; }   /* agrandir */
+
+/* Composer (voix / envoi) */
+.fi-rr-microphone::before    { content: "\f67c"; }   /* parler */
+.fi-rr-square::before        { content: "\f890"; }   /* arrêter (écoute) */
+.fi-rr-paper-plane-top::before { content: "\f6e0"; } /* envoyer */
+.fi-rr-volume::before        { content: "\f9b7"; }   /* voix haute active */
+.fi-rr-volume-slash::before  { content: "\f9b6"; }   /* voix haute coupée */

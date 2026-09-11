@@ -76,10 +76,10 @@ body[data-state="offline"]      { --state: #4A5060; }
   min-width: 0;
 }
 .brand { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; }
-.brand-dot {
-  width: 24px; height: 24px; border-radius: 8px;
-  background: radial-gradient(circle at 32% 28%, #fff 0%, var(--accent) 45%, #0c5560 100%);
-  box-shadow: 0 0 16px rgba(91, 140, 255, 0.4);
+/* Logo Sentinel (le mark cyan « orbe » de icons/icon.svg), à la place du point. */
+.brand-mark {
+  width: 24px; height: 24px; border-radius: 7px; display: block;
+  box-shadow: 0 0 16px rgba(79, 216, 235, 0.35);
 }
 .brand-name { font-size: 14px; font-weight: 700; letter-spacing: 0.22em; }
 .brand-tag {
@@ -130,6 +130,12 @@ body[data-state="offline"]      { --state: #4A5060; }
 .tool.attention { border-color: var(--warn); color: var(--warn); }
 .tool.armed { border-color: var(--accent-line); color: var(--accent); }
 .tool.armed.live { box-shadow: 0 0 12px rgba(79, 216, 235, 0.35); animation: livepulse 2.6s ease-in-out infinite; }
+
+/* Icônes-police « uicons » dans les boutons (tailles assorties à chaque bouton). */
+.tool i { font-size: 15px; vertical-align: -2px; }
+.icon-btn i { font-size: 15px; line-height: 1; }
+.win-icon i, .drawer-head button i, .drawer-actions button i { font-size: 15px; vertical-align: -2px; }
+.alert-banner button i { font-size: 14px; vertical-align: -2px; }
 
 .conn {
   display: flex; align-items: center; gap: 6px;
@@ -367,6 +373,7 @@ body[data-view="accueil"] .composer {
 }
 body[data-view="accueil"] .composer .icon-btn { width: 40px; height: 40px; border-radius: 50%; }
 body[data-view="accueil"] .composer .icon-btn svg { width: 17px; height: 17px; }
+body[data-view="accueil"] .composer .icon-btn i { font-size: 18px; }
 body[data-view="accueil"] #text-input { font-size: 14px; padding: 8px 0; }
 body[data-view="accueil"] .chips { margin-top: 10px; }
 

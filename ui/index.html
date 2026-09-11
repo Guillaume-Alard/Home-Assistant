@@ -11,6 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/icons.css">
   <link rel="stylesheet" href="css/main.css">
 </head>
 <body data-state="offline" data-view="accueil">
@@ -18,7 +19,7 @@
   <!-- ── En-tête ─────────────────────────────────────────────────────────── -->
   <header class="topbar">
     <div class="brand">
-      <span class="brand-dot" aria-hidden="true"></span>
+      <img class="brand-mark" src="icons/icon.svg" width="24" height="24" alt="" aria-hidden="true">
       <span class="brand-name">SENTINEL</span>
       <span class="brand-tag" id="brand-tag" title="Version du code en cours d'exécution">v0.1 · LOCAL</span>
     </div>
@@ -42,21 +43,21 @@
 
     <div class="topbar-tools">
       <button id="wake-btn" class="tool" type="button" hidden
-              title="Veille au mot d'éveil" aria-label="Veille au mot d'éveil">◉</button>
+              title="Veille au mot d'éveil" aria-label="Veille au mot d'éveil"><i class="fi fi-rr-signal-stream" aria-hidden="true"></i></button>
       <button id="proposals-btn" class="tool" type="button" hidden aria-label="Propositions en attente">
-        ▤ <span id="prop-count" class="tool-badge">0</span>
+        <i class="fi fi-rr-list-check" aria-hidden="true"></i> <span id="prop-count" class="tool-badge">0</span>
       </button>
       <button id="proactive-btn" class="tool" type="button" hidden title="Suggestions de Luna" aria-label="Suggestions de Luna">
-        ✦ <span id="proactive-count" class="tool-badge">0</span>
+        <i class="fi fi-rr-sparkles" aria-hidden="true"></i> <span id="proactive-count" class="tool-badge">0</span>
       </button>
-      <button id="media-btn" class="tool" type="button" hidden title="Musique" aria-label="Musique">♫</button>
+      <button id="media-btn" class="tool" type="button" hidden title="Musique" aria-label="Musique"><i class="fi fi-rr-music" aria-hidden="true"></i></button>
       <button id="reminders-btn" class="tool" type="button" hidden title="Minuteurs &amp; rappels" aria-label="Minuteurs et rappels">
-        ⏰ <span id="reminders-count" class="tool-badge">0</span>
+        <i class="fi fi-rr-bell" aria-hidden="true"></i> <span id="reminders-count" class="tool-badge">0</span>
       </button>
-      <button id="agenda-btn" class="tool" type="button" hidden title="Agenda" aria-label="Agenda">📅</button>
-      <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel">✉</button>
-      <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé">✚</button>
-      <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique">↺</button>
+      <button id="agenda-btn" class="tool" type="button" hidden title="Agenda" aria-label="Agenda"><i class="fi fi-rr-calendar" aria-hidden="true"></i></button>
+      <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel"><i class="fi fi-rr-envelope" aria-hidden="true"></i></button>
+      <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé"><i class="fi fi-rr-heart-rate" aria-hidden="true"></i></button>
+      <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique"><i class="fi fi-rr-time-past" aria-hidden="true"></i></button>
       <div class="topbar-sep" aria-hidden="true"></div>
       <div class="conn" id="conn-nova" title="Nova (Home Assistant)" hidden>
         <span class="conn-dot nova" id="nova-dot" aria-hidden="true"></span><span>nova</span>
@@ -85,21 +86,15 @@
                  aria-label="Message écrit" maxlength="4000">
           <button id="voice-reply" class="icon-btn spk" type="button" role="switch" aria-checked="true"
                   aria-label="Réponse vocale de Luna" title="Luna répond à voix haute (cliquer pour couper le son)">
-            <svg class="icon-spk-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 8.5a4 4 0 0 1 0 7"></path><path d="M18.5 6a7 7 0 0 1 0 12"></path>
-            </svg>
-            <svg class="icon-spk-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 9v6h4l5 4V5L8 9H4z"></path><line x1="16" y1="9" x2="21" y2="14"></line><line x1="21" y1="9" x2="16" y2="14"></line>
-            </svg>
+            <i class="fi fi-rr-volume icon-spk-on" aria-hidden="true"></i>
+            <i class="fi fi-rr-volume-slash icon-spk-off" aria-hidden="true"></i>
           </button>
           <button id="mic" class="icon-btn mic" type="button" aria-label="Parler (barre espace)">
-            <svg class="icon-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><line x1="12" y1="18" x2="12" y2="21"></line>
-            </svg>
-            <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>
+            <i class="fi fi-rr-microphone icon-mic" aria-hidden="true"></i>
+            <i class="fi fi-rr-square icon-stop" aria-hidden="true"></i>
           </button>
           <button type="submit" class="icon-btn send" aria-label="Envoyer">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15"></path><path d="M13 6l6 6-6 6"></path></svg>
+            <i class="fi fi-rr-paper-plane-top" aria-hidden="true"></i>
           </button>
         </form>
       </footer>
@@ -168,8 +163,8 @@
           <button id="preview-tab-vite" class="vtab" type="button" aria-selected="true">Aperçu</button>
           <button id="preview-tab-code" class="vtab" type="button" aria-selected="false">Code</button>
           <div class="viewer-spacer"></div>
-          <button id="preview-open" class="win-icon" type="button" title="Ouvrir dans un onglet">↗</button>
-          <button id="preview-refresh" class="win-icon" type="button" title="Recharger">↻</button>
+          <button id="preview-open" class="win-icon" type="button" title="Ouvrir dans un onglet"><i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i></button>
+          <button id="preview-refresh" class="win-icon" type="button" title="Recharger"><i class="fi fi-rr-refresh" aria-hidden="true"></i></button>
         </header>
         <div class="preview-bar" id="preview-bar">
           <input id="preview-url" type="url" inputmode="url" autocomplete="off"
@@ -395,7 +390,7 @@
   <aside id="proposals-panel" class="drawer" hidden aria-label="Centre de propositions">
     <header class="drawer-head">
       <h2>Propositions</h2>
-      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
     </header>
     <div id="proposals-list" class="drawer-list"></div>
     <p class="drawer-hint">À la voix : « approuve / refuse / reporte la proposition N ».
@@ -406,8 +401,8 @@
     <header class="drawer-head">
       <h2>Santé</h2>
       <div class="drawer-actions">
-        <button id="sante-refresh" type="button" aria-label="Actualiser">↻</button>
-        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+        <button id="sante-refresh" type="button" aria-label="Actualiser"><i class="fi fi-rr-refresh" aria-hidden="true"></i></button>
+        <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
       </div>
     </header>
     <div id="sante-body" class="drawer-list"></div>
@@ -416,7 +411,7 @@
   <aside id="history-panel" class="drawer" hidden aria-label="Historique et journal">
     <header class="drawer-head">
       <h2>Historique</h2>
-      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
     </header>
     <div id="history-body" class="drawer-list"></div>
   </aside>
@@ -425,8 +420,8 @@
     <header class="drawer-head">
       <h2>Courriel <span class="drawer-sub">lecture seule</span></h2>
       <div class="drawer-actions">
-        <button id="mail-refresh" type="button" aria-label="Actualiser">↻</button>
-        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+        <button id="mail-refresh" type="button" aria-label="Actualiser"><i class="fi fi-rr-refresh" aria-hidden="true"></i></button>
+        <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
       </div>
     </header>
     <div id="mail-body" class="drawer-list"></div>
@@ -436,8 +431,8 @@
     <header class="drawer-head">
       <h2>Agenda <span class="drawer-sub">lecture seule</span></h2>
       <div class="drawer-actions">
-        <button id="agenda-refresh" type="button" aria-label="Actualiser">↻</button>
-        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+        <button id="agenda-refresh" type="button" aria-label="Actualiser"><i class="fi fi-rr-refresh" aria-hidden="true"></i></button>
+        <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
       </div>
     </header>
     <div id="agenda-body" class="drawer-list"></div>
@@ -446,7 +441,7 @@
   <aside id="reminders-panel" class="drawer" hidden aria-label="Minuteurs et rappels">
     <header class="drawer-head">
       <h2>Rappels <span class="drawer-sub">minuteurs &amp; rappels</span></h2>
-      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
     </header>
     <div id="reminders-body" class="drawer-list"></div>
     <p class="drawer-hint">« Luna, minuteur 10 minutes » · « rappelle-moi dans 20 min de… ».
@@ -457,8 +452,8 @@
     <header class="drawer-head">
       <h2>Musique <span class="drawer-sub">multi-pièces</span></h2>
       <div class="drawer-actions">
-        <button id="media-refresh" type="button" aria-label="Actualiser">↻</button>
-        <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+        <button id="media-refresh" type="button" aria-label="Actualiser"><i class="fi fi-rr-refresh" aria-hidden="true"></i></button>
+        <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
       </div>
     </header>
     <div id="media-body" class="drawer-list"></div>
@@ -467,7 +462,7 @@
   <aside id="proactive-panel" class="drawer" hidden aria-label="Suggestions de Luna">
     <header class="drawer-head">
       <h2>Suggestions <span class="drawer-sub">Luna anticipe</span></h2>
-      <button class="drawer-x" type="button" aria-label="Fermer">✕</button>
+      <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
     </header>
     <div id="proactive-body" class="drawer-list"></div>
     <p class="drawer-hint">Luna observe la maison et te suggère — elle n'agit jamais seule.
@@ -476,7 +471,7 @@
 
   <div id="alert-banner" class="alert-banner" role="alert" hidden>
     <span id="alert-text"></span>
-    <button id="alert-close" type="button" aria-label="Fermer l'alerte">✕</button>
+    <button id="alert-close" type="button" aria-label="Fermer l'alerte"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
   </div>
 
   <!-- Aperçu d'une page (iframe cloisonnée : allow-scripts sans allow-same-origin) -->
@@ -486,8 +481,8 @@
       <span id="pp-url" class="pp-url"></span>
       <div class="pp-actions">
         <button id="pp-publish" type="button" class="mini-btn">Publier</button>
-        <button id="pp-open" type="button" class="win-icon" title="Ouvrir la page publiée" hidden>↗</button>
-        <button id="pp-close" type="button" class="win-icon" aria-label="Fermer l'aperçu">✕</button>
+        <button id="pp-open" type="button" class="win-icon" title="Ouvrir la page publiée" hidden><i class="fi fi-rr-arrow-up-right" aria-hidden="true"></i></button>
+        <button id="pp-close" type="button" class="win-icon" aria-label="Fermer l'aperçu"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
       </div>
     </header>
     <iframe id="pp-frame" class="pp-frame" sandbox="allow-scripts" title="Aperçu de la page"></iframe>
@@ -501,7 +496,7 @@
       <div class="pp-actions">
         <button id="evo-accept" type="button" class="mini-btn">Accepter</button>
         <button id="evo-reject" type="button" class="mini-btn ghost">Rejeter</button>
-        <button id="evo-close" type="button" class="win-icon" aria-label="Fermer">✕</button>
+        <button id="evo-close" type="button" class="win-icon" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
       </div>
     </header>
     <div id="evo-why" class="evo-why"></div>
