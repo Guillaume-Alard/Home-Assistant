@@ -207,6 +207,7 @@ let wakeWord = 'hey jarvis';
 let liveLevel = 0;         // niveau audio courant (0..1) → amplitude de l'orbe
 let turnCount = 0;
 let lastHello = null;      // dernier message hello (moteur/config) pour les Paramètres
+let lastConnections = null; // dernier message 'connections' (URL HA, état, jamais le jeton)
 let devAtelier = null;     // dernières infos atelier (auth/push/dépôts)
 let voiceReply = true;     // Luna répond-elle à voix haute ? (aussi à l'écrit)
 
@@ -395,8 +396,14 @@ ws.addEventListener('event', (e) => {
       renderSettings();
       renderSpeakers({ enabled: !!(msg.config && msg.config.speaker), speakers: msg.speakers || [] });
       refreshUi();
+      if (ws.alive) ws.sendJSON({ type: 'connections' });  // récupère l'URL HA (jamais le jeton)
       break;
-    case 'ha_status': setNova(!!msg.connected); break;
+    case 'connections': lastConnections = msg; renderSettings(); break;
+    case 'ha_status':
+      setNova(!!msg.connected);
+      if (lastConnections && lastConnections.ha) lastConnections.ha.connected = !!msg.connected;
+      if (lastHello) { lastHello.ha_connected = !!msg.connected; renderSettings(); }
+      break;
     case 'activity':
       if (st.server === 'thinking') { els.stateLabel.textContent = msg.text; els.transcript.textContent = msg.text; }
       break;
@@ -1133,14 +1140,94 @@ function svcCard(o) {
   return card;
 }
 
+// Carte Home Assistant ÉDITABLE (Paramètres › Connexions) : URL + jeton longue
+// durée, connexion à CHAUD. Le jeton part au serveur (ha_set) et n'en revient
+// jamais : seul un booléen « configuré » l'indique. La sécurité ne change pas —
+// toute action domotique reste soumise au moteur « propose puis approuve ».
+function haConnCard(h) {
+  const conn = (lastConnections && lastConnections.ha) || {};
+  const configured = conn.configured != null ? conn.configured : !!h.ha_configured;
+  const connected = conn.connected != null ? conn.connected : !!h.ha_connected;
+  const url = conn.url || '';
+
+  const card = document.createElement('div');
+  card.className = 'svc';
+  const top = document.createElement('div');
+  top.className = 'svc-top';
+  const icon = document.createElement('div');
+  icon.className = 'svc-ic';
+  icon.textContent = 'HA';
+  const mid = document.createElement('div');
+  mid.style.flex = '1'; mid.style.minWidth = '0';
+  const nm = document.createElement('div');
+  nm.className = 'svc-name';
+  nm.textContent = 'Home Assistant (Nova)';
+  const status = document.createElement('div');
+  status.className = 'svc-status ' + (configured ? (connected ? 'on' : 'warn') : '');
+  status.textContent = configured ? (connected ? 'Connecté' : 'Déconnecté') : 'Non configuré';
+  mid.append(nm, status);
+  top.append(icon, mid);
+  card.appendChild(top);
+
+  const desc = document.createElement('div');
+  desc.className = 'svc-desc';
+  desc.textContent = 'Lumières, chauffage, volets, scènes, capteurs — toutes tes entités.';
+  card.appendChild(desc);
+
+  const urlField = document.createElement('div');
+  urlField.className = 'llm-field';
+  const lu = document.createElement('label'); lu.className = 'llm-lab'; lu.textContent = 'URL';
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text'; urlInput.className = 'llm-input'; urlInput.spellcheck = false;
+  urlInput.value = url;
+  urlInput.placeholder = 'http://192.168.0.212:8123';
+  urlInput.setAttribute('aria-label', 'URL de Home Assistant');
+  urlField.append(lu, urlInput);
+  card.appendChild(urlField);
+
+  const tokField = document.createElement('div');
+  tokField.className = 'llm-field';
+  const lt = document.createElement('label'); lt.className = 'llm-lab'; lt.textContent = 'Jeton';
+  const tokInput = document.createElement('input');
+  tokInput.type = 'password'; tokInput.className = 'llm-input'; tokInput.autocomplete = 'off';
+  tokInput.placeholder = configured ? '•••••• (posé — vide = garder)' : 'coller un jeton longue durée…';
+  tokInput.setAttribute('aria-label', 'Jeton Home Assistant');
+  tokField.append(lt, tokInput);
+  card.appendChild(tokField);
+
+  const save = () => {
+    const u = urlInput.value.trim();
+    const t = tokInput.value.trim();
+    if (!u && !t) return;
+    urlInput.blur(); tokInput.blur();
+    tokInput.value = '';
+    ws.sendJSON({ type: 'ha_set', url: u, token: t });
+  };
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  tokInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  const foot = document.createElement('div');
+  foot.className = 'llm-field';
+  foot.appendChild(mkBtn('Enregistrer & connecter', 'llm-btn', save));
+  card.appendChild(foot);
+
+  const note = document.createElement('div');
+  note.className = 'svc-desc';
+  note.style.opacity = '0.7';
+  note.textContent = 'Jeton stocké côté serveur, jamais réaffiché. Crée un jeton longue durée dans HA : ton profil → tout en bas → « Jetons d’accès longue durée ».';
+  card.appendChild(note);
+  return card;
+}
+
 function renderConnexions(h, cfg) {
   const grid = els.setConnexions;
+  // Ne pas écraser une saisie en cours (une diffusion — ha_status, connections —
+  // peut arriver pendant qu'on tape l'URL ou le jeton).
+  const ae = document.activeElement;
+  if (ae && grid.contains(ae) && ae.tagName === 'INPUT') return;
   grid.textContent = '';
+  // Home Assistant (Nova) — carte ÉDITABLE (URL + jeton, connexion à chaud).
+  grid.appendChild(haConnCard(h));
   const real = [
-    { ic: 'HA', name: 'Home Assistant (Nova)',
-      status: h.ha_configured ? (h.ha_connected ? 'Connecté' : 'Déconnecté') : 'Non configuré',
-      statusCls: h.ha_configured ? (h.ha_connected ? 'on' : 'warn') : '',
-      desc: 'Lumières, chauffage, volets, scènes, capteurs — toutes tes entités.' },
     { ic: 'IA', name: 'Cerveau (Anthropic)',
       status: cfg.anthropic ? 'Actif' : 'Clé absente',
       statusCls: cfg.anthropic ? 'on' : 'warn',
@@ -1557,6 +1644,7 @@ function setSettingsSection(name) {
   if (name === 'routines' && ws.alive) ws.sendJSON({ type: 'routines' });
   if (name === 'conso' && ws.alive) { if (els.conso) els.conso.innerHTML = '<span class="set-note">Chargement…</span>'; ws.sendJSON({ type: 'llm_usage' }); }
   if (name === 'voix' && ws.alive) ws.sendJSON({ type: 'wake_models' });
+  if (name === 'connexions' && ws.alive) ws.sendJSON({ type: 'connections' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
 

@@ -239,6 +239,10 @@ class Sentinel:
         self.ha: HAClient | None = None
         self.engine: ActionEngine | None = None
         self.alerts: AlertEngine | None = None
+        # Connexion Nova effective (réglable à chaud depuis le cockpit ; défaut .env).
+        # L'URL n'est pas un secret ; le jeton, si — il n'est jamais réaffiché.
+        self._ha_url = settings.ha_url
+        self._ha_token = settings.ha_token
         if settings.ha_url and settings.ha_token:
             self.ha = HAClient(
                 settings.ha_url, settings.ha_token,
@@ -527,6 +531,55 @@ class Sentinel:
             "model": self._wake_model,
             "word": self.wake_word_display(),
         })
+
+    # ── Connexion Home Assistant réglable (Paramètres › Connexions) ──────────
+
+    def connections_payload(self) -> dict:
+        """Vue cockpit de la connexion Nova — l'URL et l'état, JAMAIS le jeton
+        (seul un booléen « configuré » l'indique)."""
+        return {
+            "type": "connections",
+            "ha": {
+                "url": self._ha_url,
+                "configured": bool(self._ha_token),
+                "connected": bool(self.ha and self.ha.connected),
+                # live=False → HA n'a jamais été configuré au démarrage : un
+                # redémarrage est nécessaire pour l'activer la première fois.
+                "live": self.ha is not None,
+            },
+        }
+
+    async def restore_connections(self) -> None:
+        """Relit la connexion Nova réglée dans le cockpit (défaut .env) et l'applique
+        au client AVANT son démarrage (pas de reconnexion ici : `ha.start()` suit)."""
+        with contextlib.suppress(Exception):
+            url = await self.store.get_setting("ha_url")
+            token = await self.store.get_setting("ha_token")
+            if url:
+                self._ha_url = url
+            if token:
+                self._ha_token = token
+        if self.ha is not None and self._ha_url and self._ha_token:
+            self.ha.set_creds(self._ha_url, self._ha_token)
+
+    async def set_ha_connection(self, url: str, token: str) -> bool:
+        """Change l'URL/jeton de Nova depuis le cockpit : persiste et reconnecte à
+        chaud (même client → aucun service reconstruit). Un champ jeton vide GARDE le
+        jeton courant (il n'est jamais réaffiché). Renvoie False si HA n'était pas
+        configuré au démarrage (activation impossible à chaud → redémarrage requis)."""
+        url = str(url or "").strip()
+        token = str(token or "").strip()
+        self._ha_url = url or self._ha_url
+        self._ha_token = token or self._ha_token  # vide = on garde le jeton actuel
+        with contextlib.suppress(Exception):
+            await self.store.set_setting("ha_url", self._ha_url)
+            await self.store.set_setting("ha_token", self._ha_token)
+        applied = False
+        if self.ha is not None and self._ha_url and self._ha_token:
+            await self.ha.reconfigure(self._ha_url, self._ha_token)  # on_status diffusera
+            applied = True
+        await self.hub.broadcast(self.connections_payload())
+        return applied
 
     async def _on_proposal_change(self, change: str, proposal: dict) -> None:
         kind = "proposal_new" if change == "new" else "proposal_update"
@@ -1092,6 +1145,7 @@ async def lifespan(app: FastAPI):
     app.state.sentinel = sentinel
     await sentinel.restore_llm_config()
     await sentinel.restore_wake_model()
+    await sentinel.restore_connections()
     if sentinel.ha:
         await sentinel.ha.start()
     sentinel.start_proactive()
@@ -1530,6 +1584,12 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "llm_usage":
         await sentinel.hub.send(client, await sentinel.build_usage_payload())
 
+    elif mtype == "connections":
+        await sentinel.hub.send(client, sentinel.connections_payload())
+
+    elif mtype == "ha_set":
+        await _ha_set(sentinel, client, msg)
+
     elif mtype == "ping":
         await sentinel.hub.send(client, {"type": "pong"})
 
@@ -1631,6 +1691,22 @@ async def _llm_set_params(sentinel: Sentinel, client: Client, msg: dict) -> None
     if "history_window" in msg:
         params["history_window"] = msg.get("history_window")
     await sentinel._apply_llm()
+
+
+async def _ha_set(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    """Enregistre l'URL / le jeton de Nova depuis le cockpit et reconnecte à chaud.
+    Le jeton est stocké côté serveur (jamais réaffiché) ; un champ jeton vide garde
+    le jeton courant. Si HA n'était pas configuré au démarrage, un redémarrage est
+    nécessaire pour l'activer (le graphe d'actions se construit au lancement)."""
+    url = str(msg.get("url") or "").strip()
+    token = str(msg.get("token") or "").strip()
+    if not url and not token:
+        return
+    applied = await sentinel.set_ha_connection(url, token)
+    text = ("Connexion Nova enregistrée — reconnexion en cours…" if applied
+            else "Connexion enregistrée. Redémarre Sentinel pour activer Home Assistant "
+                 "(la domotique n'était pas configurée au lancement).")
+    await sentinel.hub.send(client, {"type": "notice", "text": text})
 
 
 # ── Veille au mot d'éveil (Phase 5A) ─────────────────────────────────────

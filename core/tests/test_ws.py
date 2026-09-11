@@ -404,6 +404,73 @@ def test_wake_start_mot_absent_previent(fake_wyoming, tmp_path, monkeypatch):
             assert "luna" in err["text"] and "chargé" in err["text"]
 
 
+async def test_ha_reconfigure_reconnecte(fake_ha):
+    """reconfigure() garde la même instance mais rebranche la connexion : un mauvais
+    jeton refuse l'auth, puis le bon jeton connecte — sans reconstruire le client."""
+    import asyncio
+
+    from app.ha.client import HAClient
+
+    ha = HAClient(f"http://127.0.0.1:{fake_ha.port}", "mauvais-jeton")
+    await ha.start()
+    try:
+        for _ in range(40):
+            if ha.connected:
+                break
+            await asyncio.sleep(0.02)
+        assert ha.connected is False  # jeton refusé par Nova
+
+        await ha.reconfigure(f"http://127.0.0.1:{fake_ha.port}", fake_ha.token)
+        for _ in range(200):
+            if ha.connected:
+                break
+            await asyncio.sleep(0.02)
+        assert ha.connected is True   # même objet, reconnecté avec le bon jeton
+    finally:
+        await ha.stop()
+
+
+def test_ha_set_via_ws(client_ha, tmp_path):
+    """Régler la connexion Nova depuis le cockpit : la vue expose l'URL (jamais le
+    jeton), et le choix est persisté côté serveur."""
+    _wait_ha(client_ha)
+    with client_ha.websocket_connect("/ws") as ws:
+        ws.receive()  # hello
+
+        ws.send_text(json.dumps({"type": "connections"}))
+        conn = json.loads(ws.receive()["text"])
+        assert conn["type"] == "connections"
+        assert conn["ha"]["configured"] is True and conn["ha"]["connected"] is True
+        url = conn["ha"]["url"]
+        assert "127.0.0.1" in url
+        assert "token" not in json.dumps(conn)  # le jeton ne fuit jamais
+
+        # Re-régler (même URL ; jeton vide = garder l'actuel) → diffusion + avis.
+        ws.send_text(json.dumps({"type": "ha_set", "url": url, "token": ""}))
+        got = {}
+        for _ in range(8):
+            m = json.loads(ws.receive()["text"])
+            got[m["type"]] = m
+            if "connections" in got and "notice" in got:
+                break
+        assert got["connections"]["ha"]["configured"] is True
+
+    # Persisté dans le Store (survit à un redémarrage).
+    import asyncio
+
+    from app.store import Store
+
+    async def read_back():
+        store = Store(tmp_path / "data" / "sentinel.db")
+        await store.open()
+        try:
+            return await store.get_setting("ha_url")
+        finally:
+            await store.close()
+
+    assert asyncio.run(read_back()) == url
+
+
 def test_memoire_via_ws(client):
     """Ajout / lecture / suppression de souvenirs par l'UI, rediffusés à tous."""
     with client.websocket_connect("/ws") as ws:

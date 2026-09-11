@@ -261,6 +261,27 @@ depuis le cockpit** (Paramètres › Moteur) et persistés (`Store`, clé JSON
 `llm_config`) ; les clés restent côté serveur, jamais réaffichées. `apply_config`
 reconstruit le tout sans redémarrage. Voir `docs/MULTI-LLM.md`.
 
+### Réglages éditables & précédence `.env`
+
+Plusieurs réglages autrefois figés dans `.env` sont désormais **éditables à chaud
+depuis le cockpit** et persistés dans le `Store` (jamais dans `.env`) :
+
+- **Modèles LLM** (clés, modèle par fournisseur, effort/tokens/historique) — clé
+  `llm_config` ; voir ci-dessus.
+- **Mot d'éveil** (Paramètres › Voix & réveil) — clé `wake_model` ; `Detect` ne
+  déclenche que sur ce mot, et `_wake_start` prévient si le mot n'est pas chargé.
+- **Connexion Home Assistant** (Paramètres › Connexions) — URL + jeton (clés
+  `ha_url`/`ha_token`) ; `HAClient.reconfigure()` rebranche la connexion **à chaud**
+  en gardant la même instance, donc le moteur d'actions et la Toolbox ne sont pas
+  reconstruits. Le jeton reste côté serveur, jamais réaffiché. Limite : si HA
+  n'était pas configuré au démarrage (graphe d'actions non bâti), l'activer demande
+  un redémarrage.
+
+**Précédence, une seule règle** : réglage du **cockpit** (base) **>** `.env` **>**
+défaut. Conséquence utile à retenir : une fois qu'une valeur est réglée dans le
+cockpit, modifier le `.env` correspondant n'a plus d'effet tant qu'on n'a pas vidé
+le champ dans le cockpit (ce qui rétablit le repli sur `.env`).
+
 ## Persistance
 
 SQLite (`data/sentinel.db`, WAL) via aiosqlite. Table unique `messages`

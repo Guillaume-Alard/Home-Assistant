@@ -80,6 +80,28 @@ class HAClient:
                 await self._task
         self._task = None
 
+    def set_creds(self, url: str, token: str) -> None:
+        """Fixe l'URL/jeton AVANT le démarrage (ne (re)connecte pas). Sert à appliquer
+        les réglages du cockpit relus au démarrage, avant le premier `start()`."""
+        self._url = _ws_url(url)
+        self._token = token
+
+    async def reconfigure(self, url: str, token: str) -> None:
+        """Change l'URL/jeton et relance la connexion à chaud, en GARDANT la même
+        instance : les services qui référencent ce client (moteur d'actions, toolbox,
+        alertes, proactivité, routines…) n'ont RIEN à reconstruire. On repart d'un
+        cache d'états vide, réamorcé par la reconnexion."""
+        await self.stop()
+        self._closing = False
+        self._url = _ws_url(url)
+        self._token = token
+        self.connected = False
+        self.ha_version = None
+        self._states = {}
+        self._areas = {}
+        self._entity_area = {}
+        await self.start()
+
     async def _run(self) -> None:
         backoff = 1.0
         while not self._closing:
