@@ -1,14 +1,17 @@
 /* Service worker Sentinel — réseau d'abord, cache en secours (usage hors ligne
    limité à l'UI ; la conversation exige évidemment le serveur). */
-const CACHE = 'sentinel-v47';
+const CACHE = 'sentinel-v48';
 const ASSETS = [
-  './', 'index.html', 'orb.html', 'css/main.css', 'css/icons.css', 'manifest.webmanifest', 'icons/icon.svg',
+  './', 'index.html', 'orb.html', 'css/fonts.css', 'css/icons.css', 'css/main.css',
+  'manifest.webmanifest', 'icons/icon.svg',
   'js/app.js', 'js/ws.js', 'js/chat.js',
   'js/audio-capture.js', 'js/audio-play.js', 'js/pcm-worklet.js',
   // Orbe WebGL embarquée (three.js local) — pour vivre hors ligne sur tablette.
   'vendor/orbe.js', 'vendor/three.module.js',
-  // Police d'icônes « uicons » embarquée (hors ligne, mêmes icônes que le design).
+  // Polices embarquées (hors ligne) : icônes uicons + Manrope (UI) + IBM Plex Mono.
   'vendor/fonts/uicons-regular-rounded.woff2',
+  'vendor/fonts/manrope-latin.woff2', 'vendor/fonts/manrope-latin-ext.woff2',
+  'vendor/fonts/ibmplexmono-400.woff2', 'vendor/fonts/ibmplexmono-500.woff2', 'vendor/fonts/ibmplexmono-600.woff2',
 ];
 
 self.addEventListener('install', (e) => {
