@@ -311,6 +311,65 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
 }
 .chip-q:hover { color: var(--text); border-color: var(--accent-line); }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Vue ACCUEIL — « orbe héros » (refonte progressive, étape 2)
+
+   Accueil réutilise le DOM du cockpit (#view-cockpit) : MÊME orbe WebGL, MÊME
+   fil de conversation, MÊME composer et micro, MÊMES chips — rien n'est
+   dupliqué. On RE-DISPOSE simplement le cockpit en un écran centré façon
+   « Luna Loggia » : l'orbe en héros, le fil « Pose-lui une question. », une
+   barre micro/envoi ronde et flottante. Tout est cadré sous
+   body[data-view="accueil"] : les vues Cockpit et Paramètres sont intactes.
+   ═══════════════════════════════════════════════════════════════════════════ */
+body[data-view="accueil"] .cockpit {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0; padding: clamp(10px, 2.4vh, 26px) 16px calc(6px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+/* Une seule colonne étroite, centrée, porte toute la scène. */
+body[data-view="accueil"] .col {
+  background: transparent; border: 0; border-radius: 0;
+  width: 100%; max-width: 640px; min-height: 0; overflow: visible;
+}
+body[data-view="accueil"] .col.right { display: none; }          /* pas de tâches / aperçu ici */
+body[data-view="accueil"] .col.voice {
+  order: 1; flex: 0 0 auto; padding: 0; background: transparent; min-height: auto;
+}
+body[data-view="accueil"] .col.conversation { order: 2; flex: 1 1 auto; min-height: 0; }
+
+/* Colonne Voix → l'orbe (héros) + les chips. On masque la grille, le bandeau
+   d'état et les actions redondantes (le composer porte déjà micro + envoi). */
+body[data-view="accueil"] .voice-grid,
+body[data-view="accueil"] .voice-status,
+body[data-view="accueil"] .voice-actions { display: none; }
+body[data-view="accueil"] .orb-wrap { width: min(78vw, 320px); margin: 4px auto 0; }
+body[data-view="accueil"] .transcript { margin-top: 4px; }         /* parole en direct, sous l'orbe */
+/* « Interrompre » : réapparaît, centré, uniquement quand Luna parle. */
+body[data-view="accueil"][data-state="speaking"] .voice-actions { display: flex; justify-content: center; }
+body[data-view="accueil"][data-state="speaking"] .voice-actions #orb-mic { display: none; }
+
+/* Colonne Conversation → pas d'en-tête ; le fil respire, le composer flotte. */
+body[data-view="accueil"] .conversation .col-head { display: none; }
+body[data-view="accueil"] .thread { padding: 10px 6px 14px; }
+/* État vide accueillant : l'invitation « Pose-lui une question. ». */
+body[data-view="accueil"] .thread:empty { display: grid; place-items: center; }
+body[data-view="accueil"] .thread:empty::before {
+  content: "Pose-lui une question."; color: var(--muted);
+  font-size: 14.5px; letter-spacing: 0.01em;
+}
+
+/* Barre micro / envoi « Luna Loggia » : une pilule flottante, boutons ronds. */
+body[data-view="accueil"] .composer-bar { border-top: 0; padding: 8px 0 4px; }
+body[data-view="accueil"] .composer {
+  border-radius: 999px; padding: 6px 6px 6px 18px;
+  background: var(--panel-2); border-color: var(--edge-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+body[data-view="accueil"] .composer .icon-btn { width: 40px; height: 40px; border-radius: 50%; }
+body[data-view="accueil"] .composer .icon-btn svg { width: 17px; height: 17px; }
+body[data-view="accueil"] #text-input { font-size: 14px; padding: 8px 0; }
+body[data-view="accueil"] .chips { margin-top: 10px; }
+
 /* ── Colonne droite : panneaux empilés ───────────────────────────────────── */
 .pane { background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .tasks-pane { flex: 0 1 44%; }

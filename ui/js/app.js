@@ -23,6 +23,7 @@ const HARD_CAP_MS = 45000; // durée maximale d'une prise de parole
 
 const els = {
   // en-tête
+  tabAccueil: document.getElementById('tab-accueil'),
   tabCockpit: document.getElementById('tab-cockpit'),
   tabSettings: document.getElementById('tab-settings'),
   liaisonNova: document.getElementById('liaison-nova'),
@@ -201,7 +202,7 @@ const dev = {
 };
 
 let devConfigured = false;
-let currentView = 'cockpit';
+let currentView = 'accueil';
 let viewerTab = 'vite';   // 'vite' | 'code'
 let wakeWord = 'hey jarvis';
 let liveLevel = 0;         // niveau audio courant (0..1) → amplitude de l'orbe
@@ -561,12 +562,16 @@ function renderProposals() {
 function setView(view) {
   currentView = view;
   document.body.dataset.view = view;
-  els.viewCockpit.hidden = view !== 'cockpit';
+  // « Accueil » et « Cockpit » partagent le MÊME DOM (#view-cockpit) : Accueil
+  // n'est qu'un habillage CSS (écran orbe centré) piloté par body[data-view].
+  els.viewCockpit.hidden = !(view === 'cockpit' || view === 'accueil');
   els.viewSettings.hidden = view !== 'settings';
+  els.tabAccueil.setAttribute('aria-selected', String(view === 'accueil'));
   els.tabCockpit.setAttribute('aria-selected', String(view === 'cockpit'));
   els.tabSettings.setAttribute('aria-selected', String(view === 'settings'));
   if (view === 'settings') renderSettings();
 }
+els.tabAccueil.addEventListener('click', () => setView('accueil'));
 els.tabCockpit.addEventListener('click', () => setView('cockpit'));
 els.tabSettings.addEventListener('click', () => setView('settings'));
 
@@ -2712,7 +2717,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-setView('cockpit');
+setView('accueil');
 renderVoiceReply();
 updateChatMeta();
 refreshUi();
