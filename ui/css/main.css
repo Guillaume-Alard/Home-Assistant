@@ -316,6 +316,7 @@ body[data-state="listening"] .btn-primary { animation: pulsering 2.4s ease-out i
   border-radius: 999px; padding: 6px 12px; font-family: inherit; font-size: 11.5px; cursor: pointer; transition: all 0.18s;
 }
 .chip-q:hover { color: var(--text); border-color: var(--accent-line); }
+.chip-q i { font-size: 12px; vertical-align: -1px; margin-right: 4px; opacity: 0.85; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Vue ACCUEIL — « orbe héros » (refonte progressive, étape 2)
@@ -350,6 +351,11 @@ body[data-view="accueil"] .voice-status,
 body[data-view="accueil"] .voice-actions { display: none; }
 body[data-view="accueil"] .orb-wrap { width: min(78vw, 320px); margin: 4px auto 0; }
 body[data-view="accueil"] .transcript { margin-top: 4px; }         /* parole en direct, sous l'orbe */
+/* Au repos, l'orbe + l'invitation du fil suffisent : on masque le bandeau de
+   transcription (il ne sert qu'à la parole en direct) pour n'avoir qu'UNE seule
+   invitation à l'écran. Il réapparaît dès que Luna écoute, réfléchit ou parle. */
+body[data-view="accueil"][data-state="idle"] .transcript,
+body[data-view="accueil"][data-state="offline"] .transcript { display: none; }
 /* « Interrompre » : réapparaît, centré, uniquement quand Luna parle. */
 body[data-view="accueil"][data-state="speaking"] .voice-actions { display: flex; justify-content: center; }
 body[data-view="accueil"][data-state="speaking"] .voice-actions #orb-mic { display: none; }
@@ -376,6 +382,21 @@ body[data-view="accueil"] .composer .icon-btn svg { width: 17px; height: 17px; }
 body[data-view="accueil"] .composer .icon-btn i { font-size: 18px; }
 body[data-view="accueil"] #text-input { font-size: 14px; padding: 8px 0; }
 body[data-view="accueil"] .chips { margin-top: 10px; }
+
+/* État vide (aucun message) : on CENTRE toute la scène — orbe, chips, invitation
+   et barre forment un seul groupe équilibré (façon page d'accueil), plus de
+   grand vide entre les chips et la barre. Dès le 1ᵉʳ message, #thread n'est plus
+   :empty → :has() ne matche plus → on repasse en fil qui défile, barre en bas. */
+body[data-view="accueil"] .cockpit:has(#thread:empty) { justify-content: center; }
+body[data-view="accueil"] .cockpit:has(#thread:empty) .col.conversation { flex: 0 0 auto; margin-top: 6px; }
+body[data-view="accueil"] .cockpit:has(#thread:empty) .thread { flex: 0 0 auto; }
+
+/* Conversation engagée : l'orbe se réduit en pastille d'état (elle reste le
+   témoin vivant de Luna) et les chips s'effacent — tout l'espace va au fil. */
+body[data-view="accueil"] .cockpit:not(:has(#thread:empty)) .orb-wrap {
+  width: min(38vw, 132px); margin: 0 auto 2px;
+}
+body[data-view="accueil"] .cockpit:not(:has(#thread:empty)) .chips { display: none; }
 
 /* ── Colonne droite : panneaux empilés ───────────────────────────────────── */
 .pane { background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }

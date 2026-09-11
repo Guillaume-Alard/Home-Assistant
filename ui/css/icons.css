@@ -39,6 +39,9 @@ i[class*=" fi-rr-"]::before {
 .fi-rr-arrow-up-right::before{ content: "\f187"; }   /* ouvrir dans un onglet */
 .fi-rr-expand::before        { content: "\f459"; }   /* agrandir */
 
+/* Chips d'action rapide */
+.fi-rr-sun::before           { content: "\f8bb"; }   /* briefing du matin */
+
 /* Composer (voix / envoi) */
 .fi-rr-microphone::before    { content: "\f67c"; }   /* parler */
 .fi-rr-square::before        { content: "\f890"; }   /* arrêter (écoute) */
