@@ -1223,40 +1223,140 @@ function haConnCard(h) {
   return card;
 }
 
+// ── Petits constructeurs du langage « réglages » (design Sentinel Cockpit) ──
+function cxIc(icon, cls) {
+  const s = document.createElement('span');
+  s.className = 'ic' + (cls ? ' ' + cls : '');
+  s.innerHTML = `<i class="fi fi-rr-${icon}" aria-hidden="true"></i>`;
+  return s;
+}
+function cxTx(title, sub) {
+  const tx = document.createElement('span'); tx.className = 'tx';
+  const b = document.createElement('b'); b.textContent = title;
+  const s = document.createElement('span');
+  if (sub instanceof Node) s.appendChild(sub); else s.textContent = sub || '';
+  tx.append(b, s); return tx;
+}
+function cxLn(icon, iconCls, title, sub, rightEls) {
+  const ln = document.createElement('div'); ln.className = 'ln';
+  ln.append(cxIc(icon, iconCls), cxTx(title, sub));
+  const rt = document.createElement('span'); rt.className = 'rt';
+  (rightEls || []).forEach((e) => rt.appendChild(e));
+  ln.appendChild(rt);
+  return ln;
+}
+function cxH4(text) { const e = document.createElement('h4'); e.textContent = text; return e; }
+
+// Cerveau : une ligne-radio .opt par fournisseur (bascule à chaud, llm_select).
+function cxBrainOpt(p, active) {
+  const opt = document.createElement('div');
+  opt.className = 'opt'; opt.setAttribute('role', 'radio');
+  opt.setAttribute('aria-checked', String(p.id === active));
+  opt.tabIndex = 0;
+  const pt = document.createElement('span'); pt.className = 'pt';
+  const tx = document.createElement('span'); tx.className = 'tx'; tx.style.flex = '1';
+  const b = document.createElement('b'); b.textContent = p.label;
+  const sp = document.createElement('span');
+  sp.style.cssText = 'display:block;font-size:12px;color:var(--t4);margin-top:2px';
+  sp.textContent = p.available ? p.model : 'clé manquante — à poser dans Moteur';
+  tx.append(b, sp);
+  const distant = (p.kind === 'anthropic' || p.kind === 'openai');
+  const lieu = document.createElement('span');
+  lieu.className = 'lieu ' + (distant ? 'nuage' : 'local');
+  lieu.textContent = distant ? 'distant' : 'local';
+  opt.append(pt, tx, lieu);
+  if (!p.available) opt.style.opacity = '0.55';
+  const choose = () => { if (p.available && p.id !== active) ws.sendJSON({ type: 'llm_select', id: p.id }); };
+  opt.addEventListener('click', choose);
+  opt.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); } });
+  return opt;
+}
+
+// Nova (Home Assistant) : une ligne .ln + un éditeur URL/jeton repliable, dans
+// le MÊME bloc. Le jeton part au serveur (ha_set) et n'en revient jamais.
+function cxHaRows(container, h) {
+  const conn = (lastConnections && lastConnections.ha) || {};
+  const configured = conn.configured != null ? conn.configured : !!h.ha_configured;
+  const connected = conn.connected != null ? conn.connected : !!h.ha_connected;
+  const url = conn.url || '';
+
+  const editor = document.createElement('div');
+  editor.className = 'ha-editor'; editor.hidden = configured;   // ouvert d'emblée si pas configuré
+
+  const urlC = document.createElement('div'); urlC.className = 'champ';
+  const lu = document.createElement('label'); lu.textContent = 'URL';
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text'; urlInput.spellcheck = false; urlInput.value = url;
+  urlInput.placeholder = 'http://192.168.0.212:8123';
+  urlInput.setAttribute('aria-label', 'URL de Home Assistant');
+  urlC.append(lu, urlInput);
+
+  const tokC = document.createElement('div'); tokC.className = 'champ';
+  const lt = document.createElement('label'); lt.textContent = 'Jeton';
+  const tokInput = document.createElement('input');
+  tokInput.type = 'password'; tokInput.autocomplete = 'off';
+  tokInput.placeholder = configured ? '•••••• (posé — vide = garder)' : 'coller un jeton longue durée…';
+  tokInput.setAttribute('aria-label', 'Jeton Home Assistant');
+  const aide = document.createElement('p'); aide.className = 'aide';
+  aide.textContent = 'Jeton stocké côté serveur, jamais réaffiché. Dans HA : ton profil → tout en bas → « Jetons d’accès longue durée ».';
+  tokC.append(lt, tokInput, aide);
+
+  const save = () => {
+    const u = urlInput.value.trim(); const t = tokInput.value.trim();
+    if (!u && !t) return;
+    urlInput.blur(); tokInput.blur(); tokInput.value = '';
+    ws.sendJSON({ type: 'ha_set', url: u, token: t });
+  };
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  tokInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  const actC = document.createElement('div'); actC.className = 'champ';
+  actC.appendChild(mkBtn('Enregistrer & connecter', 'mini-bt go', save));
+  editor.append(urlC, tokC, actC);
+
+  const gerer = mkBtn(configured ? 'Gérer' : 'Configurer', configured ? 'mini-bt' : 'mini-bt go',
+    () => { editor.hidden = !editor.hidden; if (!editor.hidden) urlInput.focus(); });
+  const sub = configured
+    ? (connected ? 'Connecté · lumières, chauffage, volets, scènes, capteurs' : 'Déconnecté — vérifie l’URL et le jeton')
+    : 'Non configuré — lumières, chauffage, volets, toutes tes entités';
+  container.appendChild(cxLn('home', configured ? (connected ? 'ok' : 'warn') : '', 'Home Assistant (Nova)', sub, [gerer]));
+  container.appendChild(editor);
+}
+
 function renderConnexions(h, cfg) {
-  const grid = els.setConnexions;
-  // Ne pas écraser une saisie en cours (une diffusion — ha_status, connections —
-  // peut arriver pendant qu'on tape l'URL ou le jeton).
+  const box = els.setConnexions;
+  // Ne pas écraser une saisie en cours (une diffusion peut arriver pendant qu'on tape).
   const ae = document.activeElement;
-  if (ae && grid.contains(ae) && ae.tagName === 'INPUT') return;
-  grid.textContent = '';
-  // Home Assistant (Nova) — carte ÉDITABLE (URL + jeton, connexion à chaud).
-  grid.appendChild(haConnCard(h));
-  const real = [
-    { ic: 'IA', name: 'Cerveau (Anthropic)',
-      status: cfg.anthropic ? 'Actif' : 'Clé absente',
-      statusCls: cfg.anthropic ? 'on' : 'warn',
-      desc: 'Compréhension, dialogue et décisions.' },
-    { ic: 'AS', name: 'Agent Assist (Nova)',
-      status: cfg.assist ? 'Actif' : 'Désactivé',
-      statusCls: cfg.assist ? 'on' : '',
-      desc: 'Luna comme agent conversationnel de Home Assistant.' },
-  ];
-  if (cfg.notify) real.push({
-    ic: 'NT', name: 'Notifications mobiles', status: 'Connecté', statusCls: 'on',
-    desc: 'Rappels et alertes de sécurité te suivent sur ton téléphone (app Home Assistant). Communication seule — jamais de pilotage.',
-    action: { label: 'Envoyer un test', onClick: () => { ws.sendJSON({ type: 'notify_test' }); toast('Notification de test envoyée…'); } },
-  });
-  if (cfg.web_search) real.push({ ic: 'WB', name: 'Recherche web', status: 'Active', statusCls: 'on', desc: 'Actualité et connaissances externes, avec sources citées (Claude seul).' });
-  for (const s of real) grid.appendChild(svcCard(s));
+  if (ae && box.contains(ae) && ae.tagName === 'INPUT') return;
+  box.textContent = '';
 
-  // Modèle actif (multi-LLM) — bascule à chaud entre Claude et les modèles alternatifs.
-  grid.appendChild(providerCard(h.llm));
+  // ── Cerveau : le modèle actif, choisi ici (radios), comme le design ──
+  const llm = h.llm || {};
+  const providers = llm.providers || [];
+  const active = llm.active || 'claude';
+  box.appendChild(cxH4('Cerveau'));
+  const cerv = document.createElement('div'); cerv.className = 'bloc';
+  if (providers.length) { for (const p of providers) cerv.appendChild(cxBrainOpt(p, active)); }
+  else cerv.appendChild(cxLn('brain', 'acc', 'Cerveau', 'Aucun fournisseur déclaré.'));
+  box.appendChild(cerv);
+  const reg = document.createElement('div'); reg.style.margin = '10px 0 0';
+  reg.appendChild(mkBtn('Régler les modèles →', 'mini-bt', () => setSettingsSection('moteur')));
+  box.appendChild(reg);
 
-  const soon = [
-    { ic: 'HA', name: 'App Luna dans Home Assistant', desc: 'Un panneau Luna dans la barre latérale de HA.' },
-  ];
-  for (const s of soon) grid.appendChild(svcCard({ ...s, status: 'Bientôt', badge: 'bientôt', soon: true }));
+  // ── Applications : ce que Luna lit et pilote, en lignes ──
+  box.appendChild(cxH4('Applications'));
+  const apps = document.createElement('div'); apps.className = 'bloc';
+  cxHaRows(apps, h);                                     // Nova (HA) + éditeur repliable
+  apps.appendChild(cxLn('comment', cfg.assist ? 'ok' : '', 'Agent Assist (Nova)',
+    (cfg.assist ? 'Actif' : 'Désactivé') + ' — Luna comme agent conversationnel de Home Assistant.'));
+  if (cfg.notify) apps.appendChild(cxLn('bell', 'ok', 'Notifications mobiles',
+    'Rappels et alertes te suivent sur ton téléphone. Communication seule — jamais de pilotage.',
+    [mkBtn('Test', 'mini-bt', () => { ws.sendJSON({ type: 'notify_test' }); toast('Notification de test envoyée…'); })]));
+  if (cfg.web_search) apps.appendChild(cxLn('globe', 'ok', 'Recherche web',
+    'Actualité et connaissances externes, avec sources citées (Claude seul).'));
+  const soonBadge = document.createElement('span'); soonBadge.className = 'verrou w'; soonBadge.textContent = 'bientôt';
+  apps.appendChild(cxLn('apps', '', 'App Luna dans Home Assistant',
+    'Un panneau Luna dans la barre latérale de HA.', [soonBadge]));
+  box.appendChild(apps);
 }
 
 // Carte « Modèle actif » (Connexions) : bascule rapide + raccourci vers l'éditeur
