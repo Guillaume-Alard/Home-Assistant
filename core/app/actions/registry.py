@@ -28,6 +28,12 @@ class ActionSpec:
     executor: Callable[[dict], Awaitable[str]]  # renvoie un résumé en français
     # Risque dépendant des paramètres (ex. protocole) ; défaut : risque statique
     risk_fn: Callable[[dict], str] | None = field(default=None)
+    # Vérification (brique 1) : après exécution, relit l'état de Nova pour
+    # confirmer (ou non) que l'ordre a pris effet. LECTURE SEULE — ne rejoue
+    # jamais l'action. Renvoie (ok, détail) : ok True = confirmé, False = non
+    # confirmé (détail = ce qui cloche), None = action non vérifiable par un
+    # simple état. Absent (None) = pas de vérification pour cette action.
+    verify: Callable[[dict], Awaitable[tuple[bool | None, str]]] | None = field(default=None)
 
     def risk_for(self, params: dict) -> str:
         if self.risk_fn is not None:

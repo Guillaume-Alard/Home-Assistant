@@ -37,7 +37,9 @@ async def home(tmp_path, monkeypatch):
 
 async def test_allumer_lumiere_du_salon(home):
     reply = await home.intents.handle("Allume la lumière du salon", "voice")
-    assert reply == "Allumé : Plafonnier salon."
+    # Le verdict de vérification (brique 1) s'ajoute au résumé ; le routage, lui,
+    # doit produire exactement cet ordre.
+    assert reply.startswith("Allumé : Plafonnier salon.")
     assert home.calls == [
         ("homeassistant", "turn_on", None, {"entity_id": ["light.salon"]})
     ]
@@ -152,7 +154,7 @@ async def test_phrase_ordinaire_part_au_llm(home):
 async def test_verbe_et_piece_sans_mot_lumiere(home):
     # « allume le salon » = lumières ; « coupe la musique dans le salon » = LLM
     reply = await home.intents.handle("allume le salon", "voice")
-    assert reply == "Allumé : Plafonnier salon."
+    assert reply.startswith("Allumé : Plafonnier salon.")
 
     assert await home.intents.handle("coupe la musique dans le salon", "voice") is None
     assert len(home.calls) == 1  # seul le premier ordre a agi
@@ -160,7 +162,7 @@ async def test_verbe_et_piece_sans_mot_lumiere(home):
 
 async def test_la_piece_prime_sur_toutes(home):
     reply = await home.intents.handle("Éteins toutes les lumières de la chambre", "voice")
-    assert reply == "Éteint : Lampe chambre."
+    assert reply.startswith("Éteint : Lampe chambre.")
     assert home.calls[0][3] == {"entity_id": ["light.chambre"]}
 
 

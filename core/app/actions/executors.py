@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ..ha.client import HAClient
@@ -44,6 +45,50 @@ def _friendly_list(ha: HAClient, entity_ids: list[str]) -> str:
     return ", ".join(ha.friendly_name(e) for e in entity_ids)
 
 
+# ── Vérification (brique 1) : relecture d'état, LECTURE SEULE ─────────────
+#
+# Après une écriture, on relit l'état de Nova pour confirmer que l'ordre a bien
+# pris effet. Le cache d'états est alimenté par le WebSocket (événements
+# state_changed) : on laisse donc quelques instants à l'état pour se propager.
+# On confirme au premier état conforme ; sinon on épuise un budget court. Aucune
+# de ces fonctions n'écrit — elles n'appellent QUE `get_state` (l'invariant de
+# sécurité reste vert).
+
+# États « indisponibles » : ni allumé, ni éteint — on ne peut rien confirmer.
+_INDISPO = {"", "unavailable", "unknown", "none"}
+
+
+def _state_str(state: dict | None) -> str:
+    return str((state or {}).get("state") or "").strip().lower()
+
+
+def _is_on(state: str) -> bool:
+    """« Allumé-ish » : tout sauf éteint/veille/indisponible. Couvre aussi les
+    media_player (idle/playing/on) qui ne rapportent pas littéralement « on »."""
+    return state not in _INDISPO and state not in {"off", "standby"}
+
+
+async def _await_state(
+    ha: HAClient,
+    entity_ids: list[str],
+    ok: Callable[[dict | None], bool],
+    *,
+    tries: int = 4,
+    delay: float = 0.25,
+) -> list[str]:
+    """Relit l'état jusqu'à ce que TOUTES les entités satisfassent `ok`, ou
+    épuisement du budget (~0,75 s). Renvoie la liste des entités encore non
+    conformes (vide = tout est confirmé)."""
+    pending = list(entity_ids)
+    for attempt in range(tries):
+        pending = [e for e in pending if not ok(ha.get_state(e))]
+        if not pending:
+            return []
+        if attempt < tries - 1:
+            await asyncio.sleep(delay)
+    return pending
+
+
 def build_registry(
     ha: HAClient | None,
     protocols: "ProtocolBook | None" = None,
@@ -65,8 +110,18 @@ def build_registry(
         await ha.call_service("homeassistant", "turn_off", target={"entity_id": ids})
         return f"Éteint : {_friendly_list(ha, ids)}."
 
-    reg.register(ActionSpec("ha.turn_on", "Allumer lumières/prises/ventilateurs", "low", True, turn_on))
-    reg.register(ActionSpec("ha.turn_off", "Éteindre lumières/prises/ventilateurs", "low", True, turn_off))
+    async def verify_turn_on(params: dict) -> tuple[bool | None, str]:
+        ids = _entity_ids(params, ONOFF_DOMAINS)
+        reste = await _await_state(ha, ids, lambda s: _is_on(_state_str(s)))
+        return (True, "") if not reste else (False, f"{_friendly_list(ha, reste)} pas encore allumé côté Nova")
+
+    async def verify_turn_off(params: dict) -> tuple[bool | None, str]:
+        ids = _entity_ids(params, ONOFF_DOMAINS)
+        reste = await _await_state(ha, ids, lambda s: _state_str(s) == "off")
+        return (True, "") if not reste else (False, f"{_friendly_list(ha, reste)} pas encore éteint côté Nova")
+
+    reg.register(ActionSpec("ha.turn_on", "Allumer lumières/prises/ventilateurs", "low", True, turn_on, verify=verify_turn_on))
+    reg.register(ActionSpec("ha.turn_off", "Éteindre lumières/prises/ventilateurs", "low", True, turn_off, verify=verify_turn_off))
 
     # ── Volets ───────────────────────────────────────────────────────────
 
@@ -80,7 +135,21 @@ def build_registry(
         verbe = {"open": "Ouverture", "close": "Fermeture", "stop": "Arrêt"}[op]
         return f"{verbe} : {_friendly_list(ha, ids)}."
 
-    reg.register(ActionSpec("ha.cover", "Ouvrir/fermer/stopper des volets", "low", True, cover))
+    async def verify_cover(params: dict) -> tuple[bool | None, str]:
+        # Un volet met du temps à bouger : on confirme que le mouvement a démarré
+        # (ou est déjà arrivé) dans le bon sens. « stop » laisse une position
+        # indéterminée → non vérifiable.
+        attendu = {"open": {"open", "opening"}, "close": {"closed", "closing"}}.get(params.get("op"))
+        if attendu is None:
+            return None, ""
+        ids = _entity_ids(params, {"cover"})
+        reste = await _await_state(ha, ids, lambda s: _state_str(s) in attendu)
+        if not reste:
+            return True, ""
+        sens = "ouvre" if params.get("op") == "open" else "ferme"
+        return False, f"{_friendly_list(ha, reste)} ne s'{sens} pas côté Nova"
+
+    reg.register(ActionSpec("ha.cover", "Ouvrir/fermer/stopper des volets", "low", True, cover, verify=verify_cover))
 
     # ── Scènes ───────────────────────────────────────────────────────────
 
@@ -106,9 +175,26 @@ def build_registry(
         )
         return f"Consigne réglée à {temp:g} °C : {_friendly_list(ha, ids)}."
 
+    async def verify_climate(params: dict) -> tuple[bool | None, str]:
+        try:
+            cible = float(params.get("temperature"))
+        except (TypeError, ValueError):
+            return None, ""
+        ids = _entity_ids(params, {"climate"})
+
+        def atteinte(state: dict | None) -> bool:
+            cur = ((state or {}).get("attributes") or {}).get("temperature")
+            try:
+                return cur is not None and abs(float(cur) - cible) < 0.15
+            except (TypeError, ValueError):
+                return False
+
+        reste = await _await_state(ha, ids, atteinte)
+        return (True, "") if not reste else (False, f"consigne non prise en compte sur {_friendly_list(ha, reste)}")
+
     reg.register(ActionSpec(
         "ha.climate_set_temperature", "Régler une consigne de chauffage (5–30 °C)",
-        "medium", True, climate,
+        "medium", True, climate, verify=verify_climate,
     ))
 
     # ── Serrures ─────────────────────────────────────────────────────────
@@ -123,8 +209,18 @@ def build_registry(
         await ha.call_service("lock", "unlock", target={"entity_id": ids})
         return f"Déverrouillé : {_friendly_list(ha, ids)}."
 
-    reg.register(ActionSpec("ha.lock", "Verrouiller des serrures", "medium", True, lock))
-    reg.register(ActionSpec("ha.unlock", "Déverrouiller des serrures", "sensitive", True, unlock))
+    async def verify_lock(params: dict) -> tuple[bool | None, str]:
+        ids = _entity_ids(params, {"lock"})
+        reste = await _await_state(ha, ids, lambda s: _state_str(s) in {"locked", "locking"})
+        return (True, "") if not reste else (False, f"{_friendly_list(ha, reste)} pas encore verrouillé côté Nova")
+
+    async def verify_unlock(params: dict) -> tuple[bool | None, str]:
+        ids = _entity_ids(params, {"lock"})
+        reste = await _await_state(ha, ids, lambda s: _state_str(s) in {"unlocked", "unlocking"})
+        return (True, "") if not reste else (False, f"{_friendly_list(ha, reste)} pas encore déverrouillé côté Nova")
+
+    reg.register(ActionSpec("ha.lock", "Verrouiller des serrures", "medium", True, lock, verify=verify_lock))
+    reg.register(ActionSpec("ha.unlock", "Déverrouiller des serrures", "sensitive", True, unlock, verify=verify_unlock))
 
     # ── Alarme ───────────────────────────────────────────────────────────
 
@@ -149,8 +245,21 @@ def build_registry(
         await ha.call_service("alarm_control_panel", "alarm_disarm", data=data, target={"entity_id": ids})
         return "Alarme désarmée."
 
-    reg.register(ActionSpec("ha.alarm_arm", "Armer l'alarme", "medium", True, alarm_arm))
-    reg.register(ActionSpec("ha.alarm_disarm", "Désarmer l'alarme", "sensitive", True, alarm_disarm))
+    async def verify_alarm_arm(params: dict) -> tuple[bool | None, str]:
+        ids = _alarm_targets(params)
+        # L'armement passe souvent par un état transitoire « arming » (délai de sortie).
+        reste = await _await_state(
+            ha, ids, lambda s: _state_str(s) == "arming" or _state_str(s).startswith("armed")
+        )
+        return (True, "") if not reste else (False, "l'alarme n'est pas encore armée côté Nova")
+
+    async def verify_alarm_disarm(params: dict) -> tuple[bool | None, str]:
+        ids = _alarm_targets(params)
+        reste = await _await_state(ha, ids, lambda s: _state_str(s) == "disarmed")
+        return (True, "") if not reste else (False, "l'alarme n'est pas encore désarmée côté Nova")
+
+    reg.register(ActionSpec("ha.alarm_arm", "Armer l'alarme", "medium", True, alarm_arm, verify=verify_alarm_arm))
+    reg.register(ActionSpec("ha.alarm_disarm", "Désarmer l'alarme", "sensitive", True, alarm_disarm, verify=verify_alarm_disarm))
 
     # ── Notifications ────────────────────────────────────────────────────
 

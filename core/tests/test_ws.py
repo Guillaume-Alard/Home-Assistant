@@ -855,7 +855,9 @@ def test_intent_local_bout_en_bout(client_ha, fake_ha, brain_interdit):
         events, _ = _drain(ws, {"assistant_end"})
 
     end = next(e for e in events if e["type"] == "assistant_end")
-    assert end["message"]["content"] == "Allumé : Plafonnier salon."
+    # Le routage produit l'ordre ; le verdict de vérification (brique 1) peut
+    # s'ajouter au résumé (ici le faux Nova ne rejoue pas d'état).
+    assert end["message"]["content"].startswith("Allumé : Plafonnier salon.")
     assert fake_ha.calls[-1][:2] == ("homeassistant", "turn_on")
     assert fake_ha.calls[-1][3] == {"entity_id": ["light.salon"]}
 

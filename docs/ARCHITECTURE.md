@@ -50,6 +50,16 @@ Point de passage **unique** des écritures — PLAN §5, appliqué techniquement
 - **Chemin « système »** : les règles d'alerte peuvent notifier (`ha.notify`)
   avec l'autorisation « règle X » — limité techniquement au risque `low`.
 - **Journal** append-only : qui, quoi, quand, autorisation, résultat.
+- **Boucle de vérification (brique 1)** : après un exécuteur réussi, le moteur
+  relit l'état de Nova (`ActionEngine._verified` → `ActionSpec.verify`, défini
+  dans `executors.py`) pour confirmer que l'ordre a pris effet, sur les trois
+  chemins (direct, proposition, système). Le résultat porte alors un verdict
+  honnête — « Vérifié côté Nova », « je n'ai pas pu le confirmer… — à vérifier »,
+  ou rien pour une action non vérifiable par un simple état (scène, notification,
+  musique). La vérification est en **lecture seule** (`get_state`, jamais
+  `call_service` : l'invariant reste vert) et ne **rejoue jamais** l'action —
+  un ordre sensible non confirmé n'est pas relancé automatiquement, il repasse
+  par l'approbation. Une vérification qui échoue ne masque jamais le résultat réel.
 - **Verrou statique** : `tests/test_invariant.py` interdit `call_service` et
   `_send_wait` hors des fichiers autorisés — la CI casse si on contourne.
 

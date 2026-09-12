@@ -153,8 +153,9 @@ class ActionEngine:
             log.exception("Exécuteur %s en échec inattendu", spec.id)
             await self._journal("direct", source, spec.id, params, auth, "failed", "erreur interne")
             return Outcome("failed", "L'action a échoué — détail dans les journaux du serveur.")
-        await self._journal("direct", source, spec.id, params, auth, "ok", result)
-        return Outcome("ok", result)
+        verified = await self._verified(spec, params, result)
+        await self._journal("direct", source, spec.id, params, auth, "ok", verified)
+        return Outcome("ok", verified)
 
     # ── Chemin 2 : propositions ──────────────────────────────────────────
 
@@ -273,12 +274,13 @@ class ActionEngine:
             await self._notify("update", proposal)
             return proposal, f"Proposition n°{num} approuvée, mais l'exécution a échoué (erreur interne)."
 
+        verified = await self._verified(spec, proposal["params"], result)
         proposal = await self._store.update_proposal(
-            num, status="done", result=result, executed_at=_now()
+            num, status="done", result=verified, executed_at=_now()
         )
-        await self._journal("proposal", actor, spec.id, proposal["params"], auth, "ok", result)
+        await self._journal("proposal", actor, spec.id, proposal["params"], auth, "ok", verified)
         await self._notify("update", proposal)
-        return proposal, f"Proposition n°{num} exécutée. {result}"
+        return proposal, f"Proposition n°{num} exécutée. {verified}"
 
     # ── Chemin « système » : règles d'alerte (pré-autorisées, risque faible) ──
 
@@ -295,8 +297,37 @@ class ActionEngine:
         except (ActionError, HAError) as exc:
             await self._journal("system", "sentinel", action_id, params, authorization, "failed", str(exc))
             return Outcome("failed", str(exc))
-        await self._journal("system", "sentinel", action_id, params, authorization, "ok", result)
-        return Outcome("ok", result)
+        verified = await self._verified(spec, params, result)
+        await self._journal("system", "sentinel", action_id, params, authorization, "ok", verified)
+        return Outcome("ok", verified)
+
+    # ── Vérification (brique 1) : ne jamais dire « c'est fait » à l'aveugle ──
+
+    async def _verified(self, spec: ActionSpec, params: dict, result: str) -> str:
+        """Relit l'état de Nova pour confirmer (ou non) qu'un ordre a pris effet,
+        puis renvoie une phrase honnête.
+
+        Principe fondateur préservé : la vérification est en LECTURE SEULE. Elle
+        ne rejoue JAMAIS l'action — une action sensible ne peut pas se
+        ré-exécuter sans repasser par l'approbation. En cas d'échec, elle le dit
+        franchement : le cœur agentique (Luna) voit le verdict dans le résultat
+        de l'outil et peut alors proposer une correction, qu'un humain validera.
+        """
+        if spec.verify is None:
+            return result
+        try:
+            ok, detail = await spec.verify(params)
+        except Exception:
+            # Une vérification qui casse ne doit jamais masquer ni fausser le
+            # résultat réel de l'action : on rend le résultat brut.
+            log.exception("Vérification %s en échec inattendu", spec.id)
+            return result
+        if ok is True:
+            return f"{result} Vérifié côté Nova."
+        if ok is False:
+            precision = f" ({detail})" if detail else ""
+            return f"{result} Mais je n'ai pas pu le confirmer côté Nova{precision} — à vérifier."
+        return result  # ok is None : action non vérifiable par un simple état
 
     # ── Interne ──────────────────────────────────────────────────────────
 

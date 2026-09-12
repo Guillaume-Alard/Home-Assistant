@@ -100,7 +100,9 @@ async def test_action_domotique_via_moteur(box):
     content, is_error = await _run(
         box, "action_domotique", {"operation": "allumer", "zone": "salon"}
     )
-    assert not is_error and content == "Allumé : Plafonnier salon."
+    # Le résumé de l'action est stable ; le verdict de vérification (brique 1)
+    # peut s'y ajouter selon l'état relu de Nova.
+    assert not is_error and content.startswith("Allumé : Plafonnier salon.")
     assert box.calls == [("homeassistant", "turn_on", None, {"entity_id": ["light.salon"]})]
 
     journal = await box.store.list_journal()
