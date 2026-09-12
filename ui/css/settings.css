@@ -242,8 +242,31 @@ input[type="range"].cur, .set-card input[type="range"] { accent-color: var(--acc
 .verrou.w { background: var(--warn-soft); color: var(--warn); border-color: rgba(245,165,36,.35); }
 .verrou.ok { background: var(--ok-soft); color: var(--ok); border-color: rgba(52,211,153,.3); }
 
+/* ══ page d'architecture (section « Architecture ») ══ */
+.archi-map { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin: 4px 0 10px; }
+.archi-band { border: 1px solid var(--line); border-radius: 13px; background: var(--surf); padding: 12px 14px; }
+.archi-band.accent { border-color: var(--acc-line); background: var(--acc-soft); }
+.archi-lab { display: block; font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--t4); margin-bottom: 9px; }
+.archi-band.accent .archi-lab { color: var(--acc-h); }
+.archi-boxes { display: flex; flex-wrap: wrap; gap: 7px; }
+.archi-box { font-size: 12px; font-weight: 600; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line2); background: var(--well); color: var(--t2); display: inline-flex; align-items: center; gap: 7px; }
+.archi-box::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--t4); flex: none; }
+.archi-box.ok::before { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
+.archi-box.warn::before { background: var(--warn); box-shadow: 0 0 7px var(--warn); }
+.archi-box.bad::before { background: var(--bad); box-shadow: 0 0 7px var(--bad); }
+.archi-row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.archi-arrow { align-self: center; width: 2px; height: 15px; background: linear-gradient(var(--line2), rgba(255,255,255,.02)); }
+.archi-spine { margin-top: 10px; font-size: 12.5px; font-weight: 600; color: var(--ok); border: 1px solid rgba(52,211,153,.3); background: var(--ok-soft); border-radius: 12px; padding: 11px 14px; display: flex; align-items: center; gap: 10px; }
+.archi-spine i { font-size: 14px; line-height: 1; flex: none; }
+.archi-spine b { color: var(--t1); }
+.archi-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 2px 0 16px; font-size: 11.5px; color: var(--t4); }
+.archi-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.archi-legend i { width: 8px; height: 8px; border-radius: 50%; }
+.archi-legend .d-ok { background: var(--ok); } .archi-legend .d-w { background: var(--warn); } .archi-legend .d-b { background: var(--bad); }
+
 @media (max-width: 760px) {
   .settings { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
   .set-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
   .set-nav-note { display: none; }
+  .archi-row3 { grid-template-columns: 1fr; }
 }

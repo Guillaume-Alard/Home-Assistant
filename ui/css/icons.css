@@ -54,6 +54,21 @@ i[class*=" fi-rr-"]::before {
 .fi-rr-chart-histogram::before { content: "\f2c8"; }  /* Consommation */
 .fi-rr-shield-check::before    { content: "\f7e6"; }  /* Confidentialité */
 
+/* Page d'architecture (cartographie des briques) */
+.fi-rr-diagram-project::before { content: "\f3ef"; }
+.fi-rr-sitemap::before         { content: "\f80f"; }
+.fi-rr-layers::before          { content: "\f604"; }
+.fi-rr-memory::before          { content: "\f663"; }
+.fi-rr-apps::before            { content: "\f147"; }
+.fi-rr-eye::before             { content: "\f45d"; }
+.fi-rr-share::before           { content: "\f7e4"; }
+.fi-rr-network-cloud::before   { content: "\f6b1"; }
+.fi-rr-check-double::before    { content: "\f2dd"; }
+.fi-rr-route::before           { content: "\f7a7"; }
+.fi-rr-home::before            { content: "\f59d"; }
+.fi-rr-user::before            { content: "\f995"; }
+.fi-rr-comment::before         { content: "\f3ae"; }
+
 /* Composer (voix / envoi) */
 .fi-rr-microphone::before    { content: "\f67c"; }   /* parler */
 .fi-rr-square::before        { content: "\f890"; }   /* arrêter (écoute) */

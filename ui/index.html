@@ -199,6 +199,7 @@
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false"><i class="fi fi-rr-microchip" aria-hidden="true"></i> Moteur</button>
       <button class="set-navitem" type="button" data-sec="conso" aria-selected="false"><i class="fi fi-rr-chart-histogram" aria-hidden="true"></i> Consommation</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false"><i class="fi fi-rr-shield-check" aria-hidden="true"></i> Confidentialité</button>
+      <button class="set-navitem" type="button" data-sec="architecture" aria-selected="false"><i class="fi fi-rr-diagram-project" aria-hidden="true"></i> Architecture</button>
       <div class="set-nav-note">Sentinel tourne en local.<br>Aucune donnée n'est envoyée sans ton accord.</div>
     </nav>
 
@@ -380,6 +381,89 @@
             <div class="set-card-h">Protocoles reconnus</div>
             <div id="set-protocols" class="set-protos"><span class="set-note">—</span></div>
           </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="architecture" hidden>
+        <div class="set-title">Architecture</div>
+        <div class="set-sub">Où en est Sentinel / Luna par rapport à une IA agentique complète — 12 briques, cartographiées sur le <b>vrai code</b> (pas sur les noms de conteneurs).</div>
+        <div class="archi-legend">
+          <span><i class="d-ok"></i> en place</span>
+          <span><i class="d-w"></i> partiel</span>
+          <span><i class="d-b"></i> à construire</span>
+        </div>
+
+        <div class="archi-map">
+          <div class="archi-band">
+            <span class="archi-lab">Interface · Luna</span>
+            <div class="archi-boxes">
+              <span class="archi-box ok">Accueil · orbe</span>
+              <span class="archi-box ok">Cockpit</span>
+              <span class="archi-box ok">Voix &amp; carte HA</span>
+            </div>
+          </div>
+          <div class="archi-arrow" aria-hidden="true"></div>
+          <div class="archi-band accent">
+            <span class="archi-lab">Agentic Core — brain/llm.py</span>
+            <div class="archi-boxes">
+              <span class="archi-box ok">compréhension</span>
+              <span class="archi-box ok">outils (tool-use)</span>
+              <span class="archi-box ok">propositions</span>
+              <span class="archi-box warn">vérification</span>
+              <span class="archi-box warn">tâches longues</span>
+            </div>
+          </div>
+          <div class="archi-arrow" aria-hidden="true"></div>
+          <div class="archi-row3">
+            <div class="archi-band">
+              <span class="archi-lab">Mémoire</span>
+              <div class="archi-boxes"><span class="archi-box ok">souvenirs</span><span class="archi-box warn">profil · projets</span></div>
+            </div>
+            <div class="archi-band">
+              <span class="archi-lab">Skills</span>
+              <div class="archi-boxes"><span class="archi-box ok">domotique · code · web</span><span class="archi-box warn">registre</span></div>
+            </div>
+            <div class="archi-band">
+              <span class="archi-lab">Outils</span>
+              <div class="archi-boxes"><span class="archi-box ok">HA · Docker · fichiers</span><span class="archi-box bad">MCP</span></div>
+            </div>
+          </div>
+          <div class="archi-arrow" aria-hidden="true"></div>
+          <div class="archi-band">
+            <span class="archi-lab">Sens &amp; monde</span>
+            <div class="archi-boxes">
+              <span class="archi-box bad">Vision</span>
+              <span class="archi-box ok">STT · whisper</span>
+              <span class="archi-box ok">TTS · piper / xtts</span>
+              <span class="archi-box ok">Home Assistant</span>
+              <span class="archi-box ok">Unraid · Docker</span>
+            </div>
+          </div>
+          <div class="archi-spine"><i class="fi fi-rr-shield-check" aria-hidden="true"></i><span><b>Sécurité — propose puis valide.</b> Invariant statique · actions sensibles hors-voix · la reconnaissance n'élève jamais les droits.</span></div>
+        </div>
+
+        <h4>Les 12 briques</h4>
+        <div class="bloc">
+          <div class="ln"><span class="ic ok"><i class="fi fi-rr-brain" aria-hidden="true"></i></span><span class="tx"><b>1 · Modèle LLM</b><span>Claude natif + compat-OpenAI (Gemini/Groq/OpenRouter) · <em>brain/providers.py</em></span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
+          <div class="ln"><span class="ic ok"><i class="fi fi-rr-route" aria-hidden="true"></i></span><span class="tx"><b>2 · Harnais agentique</b><span>Boucle tool_use → agir → répondre · <em>brain/llm.py + toolbox.py</em></span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
+          <div class="ln"><span class="ic warn"><i class="fi fi-rr-user" aria-hidden="true"></i></span><span class="tx"><b>3 · Profil utilisateur</b><span><em>identity.py</em> + mémoire ; profil stable pas encore séparé</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
+          <div class="ln"><span class="ic warn"><i class="fi fi-rr-memory" aria-hidden="true"></i></span><span class="tx"><b>4 · Mémoire persistante</b><span>Souvenirs (<em>store/db.py</em>, memoriser/oublier) ; mono-niveau, pas de RAG</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
+          <div class="ln"><span class="ic warn"><i class="fi fi-rr-apps" aria-hidden="true"></i></span><span class="tx"><b>5 · Skills</b><span>Domotique, santé, code, web, pages… en outils ; pas de registre modulaire</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
+          <div class="ln"><span class="ic ok"><i class="fi fi-rr-comment" aria-hidden="true"></i></span><span class="tx"><b>6 · Voix (STT ≠ LLM ≠ TTS)</b><span>whisper · piper/xtts · openwakeword · speaker — services séparés</span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
+          <div class="ln"><span class="ic bad"><i class="fi fi-rr-eye" aria-hidden="true"></i></span><span class="tx"><b>7 · Vision</b><span>Aucun modèle de vision — la webcam pourrait devenir un capteur</span></span><span class="rt"><span class="verrou">à construire</span></span></div>
+          <div class="ln"><span class="ic ok"><i class="fi fi-rr-sitemap" aria-hidden="true"></i></span><span class="tx"><b>8 · Système d'outils</b><span><em>actions/</em> (registry · engine · executors) · ha/client · docker-proxy</span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
+          <div class="ln"><span class="ic ok"><i class="fi fi-rr-shield-check" aria-hidden="true"></i></span><span class="tx"><b>9 · Permissions / sécurité</b><span>Propose → valide · invariant statique · sensible hors-voix</span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
+          <div class="ln"><span class="ic warn"><i class="fi fi-rr-list-check" aria-hidden="true"></i></span><span class="tx"><b>10 · Tâches longues</b><span>Atelier (statut/journal/diff), rappels, routines ; pas d'orchestrateur générique</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
+          <div class="ln"><span class="ic bad"><i class="fi fi-rr-share" aria-hidden="true"></i></span><span class="tx"><b>11 · MCP</b><span>Pas de couche MCP — future brique d'extension</span></span><span class="rt"><span class="verrou">à construire</span></span></div>
+          <div class="ln"><span class="ic warn"><i class="fi fi-rr-diagram-project" aria-hidden="true"></i></span><span class="tx"><b>12 · Orchestrateur</b><span>La boucle de <em>brain/llm.py</em> ; manque plan → vérifie → corrige</span></span><span class="rt"><span class="verrou w">à approfondir</span></span></div>
+        </div>
+
+        <h4>Prochaines briques (propose puis valide)</h4>
+        <div class="bloc">
+          <div class="ln"><span class="ic acc"><i class="fi fi-rr-check-double" aria-hidden="true"></i></span><span class="tx"><b>1 · Boucle de vérification</b><span>Après une action, Luna vérifie le résultat et se corrige — au lieu de dire « c'est fait ».</span></span></div>
+          <div class="ln"><span class="ic acc"><i class="fi fi-rr-eye" aria-hidden="true"></i></span><span class="tx"><b>2 · Vision en lecture</b><span>Un service local (RTX 2070) comme capteur : « regarde cette caméra / cet écran » — jamais d'action directe.</span></span></div>
+          <div class="ln"><span class="ic acc"><i class="fi fi-rr-share" aria-hidden="true"></i></span><span class="tx"><b>3 · MCP</b><span>Couche d'extension pour brancher des services sans toucher au cœur.</span></span></div>
+          <div class="ln"><span class="ic acc"><i class="fi fi-rr-memory" aria-hidden="true"></i></span><span class="tx"><b>4 · Mémoire par niveaux + profil</b><span>Enrichir l'existant (travail · conversation · utilisateur · projets), pas repartir de zéro.</span></span></div>
         </div>
       </section>
     </div>
