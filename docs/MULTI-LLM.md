@@ -67,6 +67,30 @@ démarrage : `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`,
 celle de `.env` ; à défaut, c'est `.env` qui sert. Après un changement de `.env` :
 `docker compose restart sentinel-core`.
 
+## Un modèle local sur Nebula (RTX 2070)
+
+En plus des fournisseurs cloud, une ligne **« Modèle local »** branche un serveur
+d'inférence **qui tourne chez toi** — llama.cpp, vLLM, Ollama, LM Studio… — du
+moment qu'il expose une **API compatible OpenAI**. Idéal pour un **Qwen** sur la
+RTX 2070 : gratuit, privé, sans quitter le réseau local.
+
+Deux différences avec les fournisseurs cloud :
+
+- **L'URL du serveur est éditable** (champ « URL », ex. `http://nebula:8000/v1`) —
+  c'est *ton* serveur, pas une adresse fixe. Renseigne-la : elle prend effet à chaud.
+- **La clé est optionnelle** : un serveur local n'en exige souvent aucune. La ligne
+  devient disponible **dès que l'URL est posée**, avec ou sans clé.
+
+`.env` (facultatif) : `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`, `LOCAL_LLM_API_KEY`.
+L'URL posée dans le cockpit **prime** sur le `.env`. Le nom du modèle dépend de ce
+que sert ton serveur (ex. `qwen2.5`, `qwen2.5:14b`) — champ libre.
+
+> **Fiabilité.** Un petit modèle local pilote la maison de façon plus approximative
+> qu'un grand modèle cloud — mais la **sécurité est identique** (même moteur, même
+> « propose puis approuve »). C'est le socle de l'étape suivante : **un modèle par
+> agent**, pour confier p. ex. la lecture à un modèle local et garder Claude à
+> l'orchestration.
+
 ## Choisir et basculer
 
 - **Réglage complet** → Paramètres › **Moteur**. Le bouton **Activer** de chaque
@@ -141,8 +165,13 @@ compteurs**.
   `llm_config` (JSON : `active`, `providers[id].{key,model}`, `params`). L'ancienne
   clé `llm_provider` (fournisseur actif seul) est **migrée** automatiquement au
   premier démarrage. Les messages WS `llm_set_key` / `llm_set_model` /
-  `llm_set_params` / `llm_select` écrivent cette config ; le serveur ne renvoie
-  **jamais** de clé (vue publique : un booléen `configured`).
+  `llm_set_base_url` (fournisseur local uniquement) / `llm_set_params` /
+  `llm_select` écrivent cette config ; le serveur ne renvoie **jamais** de clé
+  (vue publique : un booléen `configured`, plus `base_url` pour le seul local).
+- **Fournisseur local** : construit à part des presets cloud (sa base_url est
+  celle de Guillaume, éditable — `providers.local.base_url`), `requires_key=False`
+  (dispo dès que la base_url est posée). L'adaptateur passe un jeton factice au SDK
+  `openai` quand aucune clé n'est fournie (la machine est locale).
 - **Consommation** : chaque tour rapporte ses tokens réels (`usage` de l'API — natif
   Claude et `stream_options.include_usage` côté compatible OpenAI) via le callback
   `on_usage` du `Brain` → `Store.add_usage` (table `llm_usage`, seaux par jour /

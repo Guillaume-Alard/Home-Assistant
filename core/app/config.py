@@ -105,6 +105,13 @@ class Settings:
     groq_model: str = ""
     openrouter_api_key: str = ""
     openrouter_model: str = ""
+    # Modèle LOCAL (API compatible OpenAI) tournant sur Nebula — llama.cpp / vLLM /
+    # Ollama / LM Studio… `local_llm_base_url` vide ⇒ fournisseur « local » absent ;
+    # la clé est OPTIONNELLE (un serveur local n'en exige souvent pas). base_url et
+    # modèle restent éditables à chaud dans le cockpit (Paramètres › Modèles).
+    local_llm_base_url: str = ""
+    local_llm_model: str = ""
+    local_llm_api_key: str = ""
     llm_default_provider: str = ""
 
     # Mémoire persistante (Phase 1) — SENTINEL_MEMORY=off coupe l'injection du profil
@@ -238,6 +245,9 @@ class Settings:
             groq_model=os.environ.get("GROQ_MODEL", "").strip(),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", "").strip(),
             openrouter_model=os.environ.get("OPENROUTER_MODEL", "").strip(),
+            local_llm_base_url=os.environ.get("LOCAL_LLM_BASE_URL", "").strip().rstrip("/"),
+            local_llm_model=os.environ.get("LOCAL_LLM_MODEL", "").strip(),
+            local_llm_api_key=os.environ.get("LOCAL_LLM_API_KEY", "").strip(),
             llm_default_provider=os.environ.get("SENTINEL_LLM_PROVIDER", "").strip().lower(),
             memory_enabled=os.environ.get("SENTINEL_MEMORY", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),

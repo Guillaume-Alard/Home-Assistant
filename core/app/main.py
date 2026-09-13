@@ -1682,6 +1682,9 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "llm_set_model":
         await _llm_set_model(sentinel, client, msg)
 
+    elif mtype == "llm_set_base_url":
+        await _llm_set_base_url(sentinel, client, msg)
+
     elif mtype == "llm_set_params":
         await _llm_set_params(sentinel, client, msg)
 
@@ -1782,6 +1785,33 @@ async def _llm_set_model(sentinel: Sentinel, client: Client, msg: dict) -> None:
         if not entry:
             providers.pop(provider_id, None)
     await sentinel._apply_llm()
+
+
+async def _llm_set_base_url(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    """Règle l'URL de base d'un fournisseur local (compatible OpenAI). Vide ⇒ retour
+    à la valeur d'environnement (.env). Réservé au fournisseur « local » : les URLs
+    des fournisseurs cloud sont fixes et ne se modifient pas depuis le cockpit."""
+    from .brain.providers import LOCAL_ID
+
+    provider_id = str(msg.get("id") or "").strip()
+    if provider_id != LOCAL_ID:
+        return
+    base_url = str(msg.get("base_url") or "").strip().rstrip("/")
+    providers = sentinel._llm_cfg.setdefault("providers", {})
+    entry = providers.setdefault(provider_id, {})
+    if base_url:
+        entry["base_url"] = base_url
+    else:
+        entry.pop("base_url", None)  # vide ⇒ on retombe sur l'environnement
+        if not entry:
+            providers.pop(provider_id, None)
+    await sentinel._apply_llm()
+    await sentinel.hub.send(
+        client,
+        {"type": "notice",
+         "text": ("Modèle local : URL enregistrée." if base_url
+                  else "Modèle local : URL effacée (retour au .env).")},
+    )
 
 
 async def _llm_set_params(sentinel: Sentinel, client: Client, msg: dict) -> None:

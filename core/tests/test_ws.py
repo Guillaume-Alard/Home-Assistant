@@ -280,6 +280,43 @@ def test_llm_config_editable_via_ws(fake_wyoming, tmp_path, monkeypatch):
                 raise AssertionError("trame llm non reçue après effacement")
 
 
+def test_llm_local_base_url_editable_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """Fournisseur local : indisponible sans URL, disponible dès qu'on la pose (sans
+    clé), à chaud — et l'URL est relue au redémarrage."""
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "clef")
+
+    from app.main import app
+
+    def wait_llm(ws):
+        for _ in range(6):
+            m = json.loads(ws.receive()["text"])
+            if m["type"] == "llm":
+                return m
+        raise AssertionError("trame llm non reçue")
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            loc = {p["id"]: p for p in hello["llm"]["providers"]}["local"]
+            assert loc["local"] is True and loc["available"] is False   # aucune URL encore
+
+            ws.send_text(json.dumps({"type": "llm_set_base_url", "id": "local",
+                                     "base_url": "http://nebula:8000/v1"}))
+            loc2 = {p["id"]: p for p in wait_llm(ws)["providers"]}["local"]
+            assert loc2["available"] is True                  # dispo sans clé
+            assert loc2["base_url"] == "http://nebula:8000/v1"
+            assert loc2["configured"] is False                # toujours aucune clé
+
+    # Persistance : au redémarrage l'URL locale est relue depuis le Store.
+    with TestClient(app) as tc2:
+        with tc2.websocket_connect("/ws") as ws2:
+            h2 = json.loads(ws2.receive()["text"])
+            loc3 = {p["id"]: p for p in h2["llm"]["providers"]}["local"]
+            assert loc3["available"] is True and loc3["base_url"] == "http://nebula:8000/v1"
+
+
 def test_llm_usage_via_ws(fake_wyoming, tmp_path, monkeypatch):
     """La commande llm_usage renvoie un résumé (tokens comptés localement + coût
     estimé) et un solde honnête par fournisseur — jamais une clé API."""

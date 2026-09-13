@@ -33,6 +33,9 @@ log = logging.getLogger("sentinel.providers")
 
 # Identifiant du cerveau de référence (Claude, piloté nativement dans llm.py).
 ANTHROPIC_ID = "claude"
+# Fournisseur LOCAL (API compatible OpenAI sur Nebula) : base_url éditable, clé
+# optionnelle. Sa disponibilité tient à la base_url, pas à une clé.
+LOCAL_ID = "local"
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,9 @@ SUGGESTED_MODELS: dict[str, tuple[str, ...]] = {
         "google/gemini-2.5-flash",
         "anthropic/claude-sonnet-5",
     ),
+    # Modèles locaux courants (le nom exact dépend de ce que sert Nebula ;
+    # champ toujours libre). Qwen 2.5 tient bien sur une RTX 2070 8 Go en quantifié.
+    LOCAL_ID: ("qwen2.5", "qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b"),
 }
 
 
@@ -129,15 +135,20 @@ class ProviderProfile:
     api_key: str
     web_search: bool = False
     hint: str = ""
+    requires_key: bool = True   # un serveur local n'exige souvent aucune clé
 
     @property
     def available(self) -> bool:
-        """Utilisable dès qu'une clé est présente (et le SDK openai pour les alternatifs)."""
-        if not self.api_key:
-            return False
-        if self.kind == "openai" and openai is None:
-            return False
-        return True
+        """Utilisable dès que le nécessaire est en place.
+
+        Claude/cloud : une clé API. Fournisseur compatible OpenAI : le SDK `openai`
+        et une base_url ; la clé n'est requise que si `requires_key` (un modèle local
+        s'en passe souvent — sa dispo tient alors à la seule base_url)."""
+        if self.kind == "openai":
+            if openai is None or not self.base_url:
+                return False
+            return bool(self.api_key) or not self.requires_key
+        return bool(self.api_key)
 
 
 def load_profiles(settings, overrides: dict | None = None) -> list[ProviderProfile]:
@@ -188,6 +199,28 @@ def load_profiles(settings, overrides: dict | None = None) -> list[ProviderProfi
                 hint=preset.hint,
             )
         )
+    # Fournisseur LOCAL (Nebula) : à part des presets cloud car sa base_url est celle
+    # de Guillaume — éditable, contrairement aux URLs fixes ci-dessus. La clé est
+    # optionnelle (requires_key=False) : sa disponibilité tient à la base_url.
+    lo = ov.get(LOCAL_ID, {}) or {}
+    local_base = (str(lo.get("base_url") or "").strip().rstrip("/")
+                  or str(settings.local_llm_base_url or ""))
+    local_key = str(lo.get("key") or "").strip() or str(settings.local_llm_api_key or "")
+    local_model = (str(lo.get("model") or "").strip()
+                   or str(settings.local_llm_model or "") or "qwen2.5")
+    profiles.append(
+        ProviderProfile(
+            id=LOCAL_ID,
+            label="Modèle local",
+            kind="openai",
+            model=local_model,
+            base_url=local_base or None,
+            api_key=local_key,
+            web_search=False,
+            requires_key=False,
+            hint="serveur OpenAI-compat sur Nebula (llama.cpp, vLLM, Ollama…)",
+        )
+    )
     return profiles
 
 
@@ -221,6 +254,11 @@ def public_view(profiles: list[ProviderProfile], active_id: str, default_id: str
                 "available": p.available,
                 "web_search": p.web_search,
                 "hint": p.hint,
+                # Fournisseur local : base_url éditable (celle de Guillaume, jamais un
+                # secret) et clé optionnelle — l'UI adapte sa carte en conséquence.
+                "local": p.id == LOCAL_ID,
+                "base_url": p.base_url or "" if p.id == LOCAL_ID else "",
+                "requires_key": p.requires_key,
             }
             for p in profiles
         ],
@@ -270,14 +308,20 @@ class OpenAICompatProvider:
                 "Le paquet Python « openai » n'est pas installé sur Nebula "
                 "(ajoute-le puis reconstruis l'image sentinel-core)."
             )
-        if not self.profile.api_key:
+        # Une clé est requise pour les fournisseurs cloud ; un serveur local n'en
+        # exige souvent pas — le SDK openai réclame néanmoins une chaîne non vide,
+        # d'où ce jeton factice (jamais transmis à un tiers, c'est ta machine).
+        key = self.profile.api_key or ("" if self.profile.requires_key else "sk-local")
+        if not key:
             raise LLMUnavailable(
                 f"Aucune clé API n'est configurée pour {self.profile.label}."
             )
-        if self._client is None:
-            self._client = openai.AsyncOpenAI(
-                api_key=self.profile.api_key, base_url=self.profile.base_url
+        if not self.profile.base_url:
+            raise LLMUnavailable(
+                f"Aucune URL de base n'est configurée pour {self.profile.label}."
             )
+        if self._client is None:
+            self._client = openai.AsyncOpenAI(api_key=key, base_url=self.profile.base_url)
         return self._client
 
     async def _create(self, client, **kwargs):

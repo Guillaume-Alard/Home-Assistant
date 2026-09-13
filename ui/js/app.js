@@ -1610,8 +1610,11 @@ function llmProviderRow(p, active) {
   const head = document.createElement('div');
   head.className = 'llm-prov-head';
   const dot = document.createElement('span');
-  dot.className = 'llm-dot' + (p.configured ? ' on' : '');
-  dot.title = p.configured ? 'Clé posée' : 'Aucune clé';
+  // Local : la pastille suit la DISPONIBILITÉ (une URL suffit) ; ailleurs, la clé.
+  const lit = p.local ? p.available : p.configured;
+  dot.className = 'llm-dot' + (lit ? ' on' : '');
+  dot.title = p.local ? (p.available ? 'Serveur configuré' : 'URL manquante')
+                      : (p.configured ? 'Clé posée' : 'Aucune clé');
   const name = document.createElement('span');
   name.className = 'llm-prov-name';
   name.textContent = p.label;
@@ -1628,6 +1631,31 @@ function llmProviderRow(p, active) {
   head.appendChild(kind);
   row.appendChild(head);
 
+  // Fournisseur LOCAL : l'URL du serveur (éditable à chaud) est le cœur de sa
+  // config — un serveur OpenAI-compat sur Nebula. Vide = repli sur le .env.
+  if (p.local) {
+    const urlField = document.createElement('div');
+    urlField.className = 'llm-field';
+    const ulab = document.createElement('label');
+    ulab.className = 'llm-lab';
+    ulab.textContent = 'URL';
+    const url = document.createElement('input');
+    url.type = 'text';
+    url.className = 'llm-input';
+    url.spellcheck = false;
+    url.value = p.base_url || '';
+    url.placeholder = 'http://nebula:8000/v1';
+    url.setAttribute('aria-label', `URL du serveur local — ${p.label}`);
+    const applyUrl = () => {
+      const v = url.value.trim();
+      if (v !== (p.base_url || '')) ws.sendJSON({ type: 'llm_set_base_url', id: p.id, base_url: v });
+    };
+    url.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); url.blur(); } });
+    url.addEventListener('blur', applyUrl);
+    urlField.append(ulab, url);
+    row.appendChild(urlField);
+  }
+
   // Clé API — écriture seule. Vide = repli sur l'environnement (.env).
   const keyField = document.createElement('div');
   keyField.className = 'llm-field';
@@ -1635,7 +1663,8 @@ function llmProviderRow(p, active) {
   key.type = 'password';
   key.className = 'llm-input';
   key.autocomplete = 'off';
-  key.placeholder = p.configured ? '•••••••••• (clé posée)' : 'coller une clé API…';
+  key.placeholder = p.configured ? '•••••••••• (clé posée)'
+    : (p.local ? 'clé API (optionnelle)…' : 'coller une clé API…');
   key.setAttribute('aria-label', `Clé API — ${p.label}`);
   const saveKey = () => {
     const v = key.value.trim();
@@ -1724,7 +1753,7 @@ function llmProviderRow(p, active) {
   } else {
     const s = document.createElement('span');
     s.className = 'llm-foot-note';
-    s.textContent = 'Pose une clé pour l’activer.';
+    s.textContent = p.local ? 'Renseigne l’URL du serveur pour l’activer.' : 'Pose une clé pour l’activer.';
     foot.appendChild(s);
   }
   row.appendChild(foot);

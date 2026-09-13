@@ -15,6 +15,7 @@ from app.brain.llm import Brain
 from app.brain.providers import (
     ANTHROPIC_ID,
     LLMUnavailable,
+    LOCAL_ID,
     OpenAICompatProvider,
     ProviderProfile,
     PRESETS,
@@ -68,9 +69,47 @@ def test_load_profiles_claude_en_tete_et_presets(monkeypatch, tmp_path):
     profiles = load_profiles(_settings(monkeypatch, tmp_path, ANTHROPIC_API_KEY="clef"))
     ids = [p.id for p in profiles]
     assert ids[0] == ANTHROPIC_ID
-    assert ids[1:] == [p.id for p in PRESETS]  # ordre stable openai/gemini/groq/openrouter
+    # Claude, puis les presets cloud (ordre stable), puis le fournisseur local en fin.
+    assert ids[1:1 + len(PRESETS)] == [p.id for p in PRESETS]
+    assert ids[-1] == LOCAL_ID
     claude = profiles[0]
     assert claude.kind == "anthropic" and claude.web_search is True and claude.available
+
+
+def test_fournisseur_local_dispo_sans_cle_selon_base_url(monkeypatch, tmp_path):
+    # Sans base_url : le fournisseur local existe mais n'est PAS disponible.
+    absent = {p.id: p for p in load_profiles(_settings(monkeypatch, tmp_path))}
+    assert LOCAL_ID in absent and not absent[LOCAL_ID].available
+
+    # Avec une base_url (et AUCUNE clé) : disponible — un serveur local n'en exige pas.
+    local = {p.id: p for p in load_profiles(
+        _settings(monkeypatch, tmp_path, LOCAL_LLM_BASE_URL="http://nebula:8000/v1",
+                  LOCAL_LLM_MODEL="qwen2.5")
+    )}[LOCAL_ID]
+    assert local.available and local.api_key == "" and local.requires_key is False
+    assert local.model == "qwen2.5" and local.base_url == "http://nebula:8000/v1"
+
+
+def test_fournisseur_local_base_url_surchargeable_par_le_cockpit(monkeypatch, tmp_path):
+    s = _settings(monkeypatch, tmp_path, LOCAL_LLM_BASE_URL="http://env:1234/v1")
+    ov = {"providers": {LOCAL_ID: {"base_url": "http://cockpit:5678/v1", "model": "qwen2.5:14b"}}}
+    local = {p.id: p for p in load_profiles(s, ov)}[LOCAL_ID]
+    assert local.base_url == "http://cockpit:5678/v1"   # le cockpit prime sur .env
+    assert local.model == "qwen2.5:14b"
+
+
+def test_public_view_expose_base_url_du_local_jamais_de_cle(monkeypatch, tmp_path):
+    s = _settings(monkeypatch, tmp_path, LOCAL_LLM_BASE_URL="http://nebula:8000/v1",
+                  OPENAI_API_KEY="sk-secret")
+    profiles = load_profiles(s)
+    view = public_view(profiles, ANTHROPIC_ID, ANTHROPIC_ID)
+    by_id = {p["id"]: p for p in view["providers"]}
+    assert by_id[LOCAL_ID]["local"] is True
+    assert by_id[LOCAL_ID]["base_url"] == "http://nebula:8000/v1"
+    assert by_id[LOCAL_ID]["requires_key"] is False
+    # base_url n'est exposée QUE pour le local ; jamais de clé nulle part.
+    assert by_id["openai"]["base_url"] == "" and by_id["openai"]["local"] is False
+    assert all("api_key" not in p and "key" not in p for p in view["providers"])
 
 
 def test_profil_disponible_selon_la_cle(monkeypatch, tmp_path):
@@ -112,7 +151,8 @@ def test_public_view_ne_fuit_jamais_la_cle(monkeypatch, tmp_path):
     assert "secret" not in blob and "aussi-secret" not in blob
     for p in view["providers"]:
         assert set(p) == {"id", "label", "kind", "model", "suggested",
-                          "available", "web_search", "hint", "configured"}
+                          "available", "web_search", "hint", "configured",
+                          "local", "base_url", "requires_key"}
         assert isinstance(p["suggested"], list)  # liste déroulante de modèles
         # `configured` = une clé est présente, SANS jamais révéler laquelle ni sa valeur.
         assert isinstance(p["configured"], bool)
