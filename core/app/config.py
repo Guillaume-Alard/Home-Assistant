@@ -147,6 +147,18 @@ class Settings:
     # Minuteurs & rappels vocaux (Phase 10) — 100% local. Off = outils retirés.
     reminders_enabled: bool = True
 
+    # Vision en lecture (brique 1 agentique) — Luna REGARDE une caméra de Nova et
+    # DÉCRIT ce qu'elle voit ; jamais une action (pour agir, elle PROPOSE). Le
+    # modèle de vision tourne EN LOCAL (RTX 2070) derrière une API compatible
+    # OpenAI (comme la voix clonée) : `vision_base_url` vide = vision désactivée
+    # (l'outil n'apparaît pas). La clé est optionnelle pour un service local.
+    vision_enabled: bool = True
+    vision_base_url: str = ""
+    vision_model: str = ""
+    vision_api_key: str = ""
+    vision_max_tokens: int = 512
+    vision_timeout: int = 60
+
     # Notifications mobiles (Phase 14) — Luna te joint sur ton téléphone via l'app
     # Home Assistant. `notify_service` = le service Nova (« mobile_app_xxx »), vide
     # = désactivé. Les bascules disent QUOI pousser : rappels qui sonnent, alertes
@@ -229,6 +241,13 @@ class Settings:
             not in ("off", "0", "false", "no", "non"),
             reminders_enabled=os.environ.get("SENTINEL_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
+            vision_enabled=os.environ.get("SENTINEL_VISION", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            vision_base_url=os.environ.get("VISION_BASE_URL", "").strip().rstrip("/"),
+            vision_model=os.environ.get("VISION_MODEL", "").strip(),
+            vision_api_key=os.environ.get("VISION_API_KEY", "").strip(),
+            vision_max_tokens=_int(os.environ.get("VISION_MAX_TOKENS"), 512),
+            vision_timeout=_int(os.environ.get("VISION_TIMEOUT"), 60),
             notify_service=os.environ.get("SENTINEL_NOTIFY_SERVICE", "").strip(),
             notify_reminders=os.environ.get("SENTINEL_NOTIFY_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),

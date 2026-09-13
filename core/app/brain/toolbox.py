@@ -17,7 +17,8 @@ from ..identity import OWNER, Speaker
 from ..reminders import compute_due_iso
 from ..routines import RoutineError, RoutineService
 from ..selfmod import SelfSource, evaluate as evaluate_diff, summarize as summarize_diff
-from ..ha.client import HAClient
+from .vision import VisionError, VisionService
+from ..ha.client import HAClient, HAError
 from ..ha import media as media_lib
 from ..ha.media import MediaConfig
 from ..ha.protocols import ProtocolBook
@@ -73,6 +74,7 @@ ACTIVITY_LABELS = {
     "rappel": "note un rappel…",
     "lister_rappels": "relit tes rappels…",
     "annuler_rappel": "annule un rappel…",
+    "regarder": "regarde la caméra…",
 }
 
 
@@ -93,6 +95,7 @@ class Toolbox:
         routines: RoutineService | None = None,
         media: MediaConfig | None = None,
         reminders: bool = False,
+        vision: VisionService | None = None,
         tz: str = "Europe/Paris",
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
@@ -113,6 +116,9 @@ class Toolbox:
         self._media = media
         # Minuteurs & rappels (Phase 10). self._reminders = disponibilité de l'outil.
         self._reminders = reminders
+        # Vision en lecture (brique agentique) — service local optionnel. Absent
+        # ou non configuré = pas d'outil « regarder ».
+        self._vision = vision
         self._tz = tz
         self._on_reminders_change = on_reminders_change
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
@@ -521,6 +527,28 @@ class Toolbox:
                     },
                 },
             ]
+        # Vision en lecture — présente si un service de vision local est configuré
+        # ET Nova joignable (les caméras viennent de Nova). C'est un CAPTEUR :
+        # décrire ce qu'on voit, jamais agir dessus.
+        if self._vision is not None and self._vision.available and self._ha is not None:
+            specs.append({
+                "name": "regarder",
+                "description": (
+                    "REGARDE une caméra de Nova et décris ce qui est visible — c'est une "
+                    "OBSERVATION, jamais une action. Cible : `zone` (pièce) ou `camera` "
+                    "(entity_id précis) ; si une seule caméra existe, elle est prise par "
+                    "défaut. `question` oriente le regard (« y a-t-il quelqu'un ? »). Pour "
+                    "AGIR sur ce que tu vois, crée une proposition — regarder n'exécute rien."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "zone": {"type": "string", "description": "Pièce de la caméra (ex. « entrée »)."},
+                        "camera": {"type": "string", "description": "entity_id précis (ex. « camera.entree »)."},
+                        "question": {"type": "string", "description": "Ce que tu cherches à voir (optionnel)."},
+                    },
+                },
+            })
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -548,6 +576,10 @@ class Toolbox:
         # Minuteurs & rappels (Phase 10) : personne reconnue (usage courant).
         "minuteur": "known", "rappel": "known",
         "lister_rappels": "known", "annuler_rappel": "known",
+        # Vision : regarder une caméra touche à l'intimité → personne reconnue
+        # seulement (jamais un invité). La reconnaissance n'élève aucun droit :
+        # c'est une lecture, pas une action.
+        "regarder": "known",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -658,6 +690,49 @@ class Toolbox:
             "attributs": attrs,
             "piece": self._ha.area_name(self._ha.entity_area(entity_id) or "") or None,
             "depuis": state.get("last_changed"),
+        })[:4000], False
+
+    async def _tool_regarder(self, args, _utt, _src):
+        """Vision en LECTURE : instantané d'une caméra de Nova + description. Ne
+        déclenche jamais d'action — pour agir, Luna crée une proposition."""
+        if self._vision is None or not self._vision.available:
+            return (
+                "La vision locale n'est pas configurée — déclare le service sur Nebula "
+                "(.env : VISION_BASE_URL et VISION_MODEL).", True
+            )
+        if self._ha is None or not self._ha.connected:
+            return self._NOVA_ABSENTE, True
+        camera = str(args.get("camera") or "").strip()
+        zone = str(args.get("zone") or "").strip()
+        question = str(args.get("question") or "").strip() or None
+        if camera and not camera.startswith("camera."):
+            return f"« {camera} » n'est pas une caméra (attendu : camera.xxx).", True
+        if not camera:
+            if zone:
+                found = self._ha.find_area_in_text(zone)
+                if not found:
+                    names = ", ".join(sorted(self._ha.areas().values())) or "aucune pièce déclarée"
+                    return f"Pièce inconnue : « {zone} ». Pièces de Nova : {names}.", True
+                cams = self._ha.entities_in_area(found[0], "camera")
+                if not cams:
+                    return f"Aucune caméra dans « {found[1]} ».", True
+            else:
+                cams = self._ha.entities_by_domain("camera")
+                if not cams:
+                    return "Nova ne déclare aucune caméra.", True
+            if len(cams) > 1:
+                listing = ", ".join(f"{self._ha.friendly_name(c)} ({c})" for c in cams)
+                return f"Plusieurs caméras possibles : {listing}. Précise `zone` ou `camera`.", True
+            camera = cams[0]
+        try:
+            image, ctype = await self._ha.camera_snapshot(camera)
+            description = await self._vision.describe(image, question, content_type=ctype)
+        except (HAError, VisionError) as exc:
+            return str(exc), True
+        return _compact({
+            "camera": self._ha.friendly_name(camera),
+            "entity_id": camera,
+            "observation": description,
         })[:4000], False
 
     async def _tool_liste_pieces(self, args, _utt, _src):

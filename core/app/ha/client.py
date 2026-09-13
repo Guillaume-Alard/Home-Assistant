@@ -18,6 +18,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 
+import httpx
 import websockets
 
 from ..norm import normalize
@@ -50,6 +51,7 @@ class HAClient:
         on_status: Callable[[bool], Awaitable[None]] | None = None,
     ):
         self._url = _ws_url(url)
+        self._http_url = url.rstrip("/")  # base HTTP(S) pour les lectures REST (caméras)
         self._token = token
         self._on_event = on_event
         self._on_status = on_status
@@ -84,6 +86,7 @@ class HAClient:
         """Fixe l'URL/jeton AVANT le démarrage (ne (re)connecte pas). Sert à appliquer
         les réglages du cockpit relus au démarrage, avant le premier `start()`."""
         self._url = _ws_url(url)
+        self._http_url = url.rstrip("/")
         self._token = token
 
     async def reconfigure(self, url: str, token: str) -> None:
@@ -94,6 +97,7 @@ class HAClient:
         await self.stop()
         self._closing = False
         self._url = _ws_url(url)
+        self._http_url = url.rstrip("/")
         self._token = token
         self.connected = False
         self.ha_version = None
@@ -268,6 +272,32 @@ class HAClient:
 
     def get_state(self, entity_id: str) -> dict | None:
         return self._states.get(entity_id)
+
+    async def camera_snapshot(self, entity_id: str, *, timeout: float = 10.0) -> tuple[bytes, str]:
+        """Instantané d'une caméra de Nova — LECTURE SEULE (REST `camera_proxy`).
+
+        Ce n'est PAS `call_service` : une requête GET qui ne modifie rien, donc
+        hors du champ de l'invariant d'écriture. Renvoie (octets, type MIME) ou
+        lève HAError (entité invalide, caméra injoignable, refus de Nova)."""
+        if not entity_id.startswith("camera."):
+            raise HAError(f"« {entity_id} » n'est pas une caméra.")
+        if not self._http_url or not self._token:
+            raise HAError("Nova n'est pas configurée pour lire les caméras.")
+        url = f"{self._http_url}/api/camera_proxy/{entity_id}"
+        headers = {"Authorization": f"Bearer {self._token}"}
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(url, headers=headers)
+        except (httpx.HTTPError, OSError) as exc:
+            raise HAError(f"Caméra injoignable ({entity_id}) : {exc}.") from exc
+        if resp.status_code == 404:
+            raise HAError(f"Caméra inconnue de Nova : {entity_id}.")
+        if resp.status_code >= 400:
+            raise HAError(f"Nova a refusé l'instantané de {entity_id} (HTTP {resp.status_code}).")
+        if not resp.content:
+            raise HAError(f"Instantané vide pour {entity_id}.")
+        ctype = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
+        return resp.content, ctype or "image/jpeg"
 
     def states_snapshot(self) -> dict[str, dict]:
         return dict(self._states)

@@ -78,6 +78,22 @@ Point de passage **unique** des écritures — PLAN §5, appliqué techniquement
   voix sur tous les appareils ; « critique » interrompt Sentinel) + notification
   via le moteur.
 
+## Vision en lecture (`core/app/brain/vision.py`) — brique agentique
+
+Luna REGARDE une caméra et DÉCRIT ce qu'elle voit — un **capteur**, jamais un
+bras (voir `docs/VISION.md`).
+
+- **Lecture de l'image** : `HAClient.camera_snapshot` lit un instantané via
+  l'API REST `camera_proxy` de Nova (`GET`, pas `call_service` → hors invariant
+  d'écriture, qui reste vert).
+- **Description** : `VisionService` envoie l'image à un modèle multimodal
+  **local** (RTX 2070) derrière une API compatible OpenAI (`image_url` en data
+  URL). Aucune image ne quitte le réseau local.
+- **Outil `regarder`** (Toolbox) : résout la caméra (pièce ou entity_id),
+  renvoie une description. Réservé aux personnes reconnues (`known`) ; jamais une
+  action — agir sur ce qu'elle voit repasse par une **proposition**. Absent si le
+  service de vision ou une caméra manquent (dégradé propre).
+
 ## Surveillance (`core/app/monitors/`) — Phase 3A
 
 - **Docker** (`docker.py`) via DEUX proxys tecnativa (aucun port LAN, socket

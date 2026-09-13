@@ -61,6 +61,7 @@ from .brain.llm import Brain, LLMUnavailable
 from .brain.memory import format_profile, normalize_category
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.toolbox import Toolbox
+from .brain.vision import VisionService
 from .config import Settings, find_ui_dir
 from .identity import OWNER, Speaker, identify
 from .ha.alerts import AlertEngine, load_rules
@@ -301,11 +302,14 @@ class Sentinel:
         # Auto-amélioration encadrée (Phase 6) : lecteur SEULE lecture de son propre
         # code (app/ + ui/), pour que Luna rédige des diffs justes.
         self.source = SelfSource(Path(__file__).resolve().parent, settings.ui_dir)
+        # Vision en lecture (brique agentique) : service local optionnel (RTX 2070).
+        # Non configuré → `available` faux → l'outil « regarder » n'apparaît pas.
+        self.vision = VisionService(settings)
         toolbox = Toolbox(
             self.ha, self.engine, self.protocols, store,
             health=self.health, source=self.source, self_improve=settings.self_improve_enabled,
             routines=self.routines, media=self.media_cfg,
-            reminders=settings.reminders_enabled, tz=settings.tz,
+            reminders=settings.reminders_enabled, vision=self.vision, tz=settings.tz,
             on_memory_change=self._broadcast_memoires,
             on_suggestions_change=self._broadcast_evolutions,
             on_reminders_change=self._broadcast_reminders,
