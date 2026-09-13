@@ -8,6 +8,7 @@ avec un plafond de tours pour ne jamais boucler.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
@@ -23,6 +24,11 @@ from .toolbox import ACTIVITY_LABELS, Toolbox
 log = logging.getLogger("sentinel.brain")
 
 MAX_TOOL_ROUNDS = 8
+
+# Accumulateur de tokens d'une MISSION (délégation), par tâche asyncio — pour
+# rattacher le coût d'un sous-agent à sa mission sans mélanger avec le tour
+# principal ni avec une autre délégation concurrente. `None` hors délégation.
+_MISSION_USAGE: contextvars.ContextVar = contextvars.ContextVar("mission_usage", default=None)
 
 
 def _clean_effort(value, default: str) -> str:
@@ -194,6 +200,15 @@ def _mission_summary(text: str, limit: int = 120) -> str:
     """Première ligne non vide d'un résultat d'agent (aperçu de fin de mission)."""
     first = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
     return first[:limit]
+
+
+def _mission_cost(usage: dict) -> float | None:
+    """Coût USD estimé d'une mission (None si modèle sans prix connu — ex. local)."""
+    from .pricing import estimate_usd
+
+    if not usage.get("model") or not (usage.get("in") or usage.get("out")):
+        return None
+    return estimate_usd(usage["model"], usage.get("in", 0), usage.get("out", 0))
 
 
 def _last_user_text(messages: list[dict]) -> str:
@@ -669,10 +684,19 @@ class Brain:
 
     async def _report_usage(self, provider: str, model: str, in_tok: int, out_tok: int) -> None:
         """Rapporte les tokens d'un tour (best-effort — un échec ne casse jamais la réponse)."""
+        in_tok, out_tok = int(in_tok or 0), int(out_tok or 0)
+        # Si l'appel a lieu dans une mission (délégation), on cumule aussi pour elle —
+        # indépendamment du comptage global (qui exige `_on_usage`).
+        mu = _MISSION_USAGE.get()
+        if mu is not None and (in_tok or out_tok):
+            mu["in"] += in_tok
+            mu["out"] += out_tok
+            mu["provider"] = provider
+            mu["model"] = model
         if self._on_usage is None or (not in_tok and not out_tok):
             return
         try:
-            await self._on_usage(provider, model, int(in_tok), int(out_tok))
+            await self._on_usage(provider, model, in_tok, out_tok)
         except Exception:
             log.exception("Comptage de consommation impossible")
 
@@ -716,6 +740,8 @@ class Brain:
         # travaille et sur quoi — l'activité des outils qui suit lui est rattachée.
         await self._notify_mission({"phase": "start", "agent": spec.id, "label": spec.label, "task": task})
         result, ok = "", False
+        usage = {"in": 0, "out": 0, "provider": "", "model": ""}
+        token = _MISSION_USAGE.set(usage)   # cumule les tokens du sous-agent pour cette mission
         try:
             if profile is not None and profile.kind == "openai":
                 result = await self._run_agent_openai(profile, spec, task, tools, run_tool)
@@ -727,9 +753,14 @@ class Brain:
             result = f"L'agent {agent_id} n'a pas pu répondre : {exc}"
             return result
         finally:
+            _MISSION_USAGE.reset(token)
             await self._notify_mission({
                 "phase": "done", "agent": spec.id, "label": spec.label,
                 "ok": ok, "summary": _mission_summary(result),
+                "provider": usage["provider"] or (profile.id if profile else ""),
+                "model": usage["model"] or (profile.model if profile else ""),
+                "tokens_in": usage["in"], "tokens_out": usage["out"],
+                "cost_usd": _mission_cost(usage),
             })
 
     async def _run_agent_openai(self, profile, spec, task, tools, run_tool) -> str:

@@ -436,7 +436,12 @@ ws.addEventListener('event', (e) => {
         st.mission = { agent: msg.agent, label: msg.label, task: msg.task || '', at: Date.now() };
         if (st.server === 'thinking') showActivity(`${msg.label} · ${msg.task || 'en mission…'}`);
       } else if (st.mission) {
-        st.missions.unshift({ ...st.mission, ok: msg.ok !== false, summary: msg.summary || '', doneAt: Date.now() });
+        st.missions.unshift({
+          ...st.mission, ok: msg.ok !== false, summary: msg.summary || '', doneAt: Date.now(),
+          provider: msg.provider || '', model: msg.model || '',
+          tokensIn: msg.tokens_in || 0, tokensOut: msg.tokens_out || 0,
+          cost: (typeof msg.cost_usd === 'number' ? msg.cost_usd : null),
+        });
         st.missions = st.missions.slice(0, 40);   // journal borné
         st.mission = null;   // fin : l'orchestrateur (Luna) reprend la main
       }
@@ -554,6 +559,19 @@ const POSTURE = {
 
 function fmtClock(ms) {
   return new Date(ms).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+// Tokens consommés par une mission + coût estimé. Un modèle LOCAL n'a pas de prix :
+// c'est « gratuit » (ta machine) ; un modèle cloud sans grille affiche « coût n.c. ».
+function missionCostText(m) {
+  const tok = (m.tokensIn || 0) + (m.tokensOut || 0);
+  if (!tok) return '';
+  const k = tok >= 1000 ? `${(tok / 1000).toFixed(1)}k` : String(tok);
+  let cost;
+  if (m.provider === 'local') cost = 'local · gratuit';
+  else if (typeof m.cost === 'number') cost = `≈ $${m.cost < 0.01 ? m.cost.toFixed(4) : m.cost.toFixed(3)}`;
+  else cost = 'coût n.c.';
+  return `${k} tokens · ${cost}`;
 }
 
 function onMissionChange() {
@@ -676,6 +694,13 @@ function renderAgents() {
       sum.className = 'mission-sum';
       sum.textContent = `${m.ok ? '✓' : '✗'} ${m.summary}`;
       row.appendChild(sum);
+    }
+    const meta = missionCostText(m);
+    if (meta) {
+      const mp = document.createElement('p');
+      mp.className = 'mission-meta';
+      mp.textContent = meta;
+      row.appendChild(mp);
     }
     els.agentsJournal.appendChild(row);
   }

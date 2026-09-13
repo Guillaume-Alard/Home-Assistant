@@ -45,12 +45,18 @@ C'est **purement observable** : rien n'est ouvert, aucun chemin d'exécution n'e
 modifié — juste de la visibilité. Les droits restent ceux du demandeur, et une
 action sensible reste validable depuis l'interface uniquement.
 
-Dans le **cockpit**, le tiroir **Agents** (icône « diagramme ») montre une **carte
-par agent** — son rôle, sa **posture** (`lecture` / `propose` / `agit`, *calculée*
-d'après ses outils réels) et son état en direct (« en mission… » quand il
-travaille) — plus un **journal des délégations récentes** (agent, tâche, résultat).
-Le roster vient du serveur (`agent_roster`) ; les cartes ne font qu'**afficher**,
-elles ne pilotent rien.
+Dans le **cockpit**, le tiroir **Agents** (icône « diagramme », en haut à droite)
+montre une **carte par agent** — son rôle, sa **posture** (`lecture` / `propose` /
+`agit`, *calculée* d'après ses outils réels), son **modèle** (sélecteur) et son état
+en direct (« en mission… » quand il travaille) — plus un **journal des délégations
+récentes** (agent, tâche, résultat). Le roster vient du serveur (`agent_roster`) ;
+les cartes n'**affichent** — sauf le sélecteur de modèle, qui n'ouvre aucun droit.
+
+Chaque mission terminée note aussi ses **tokens** et un **coût estimé** : un modèle
+**local** apparaît « gratuit » (ta machine), un modèle cloud avec son prix indicatif
+(grille `pricing.py`), ou « coût n.c. » si le prix est inconnu. Les tokens sont
+rattachés à la mission via un accumulateur *par tâche* (`_MISSION_USAGE`) — jamais
+mélangés avec le tour principal ni avec une autre délégation.
 
 ## Les agents
 

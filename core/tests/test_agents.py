@@ -295,6 +295,27 @@ async def test_run_agent_inconnu_n_emet_aucune_mission(brainbox):
     assert missions == []   # pas de mission pour un agent qui n'existe pas
 
 
+async def test_mission_capture_les_tokens_et_le_cout(brainbox):
+    # Les tokens consommés par le sous-agent sont rattachés à SA mission (coût par agent).
+    missions: list[dict] = []
+
+    async def cap(ev):
+        missions.append(ev)
+
+    brainbox.brain._on_mission = cap
+    usage = SimpleNamespace(input_tokens=1000, output_tokens=500,
+                            cache_read_input_tokens=0, cache_creation_input_tokens=0)
+    tool = SimpleNamespace(stop_reason="tool_use",
+                           content=[_tool_use("etat_maison", "t1", {"zone": "salon"})], usage=usage)
+    end = SimpleNamespace(stop_reason="end_turn", content=[_text("Le salon est calme.")], usage=usage)
+    brainbox.brain._client = _FakeAnthropic([tool, end])
+    await brainbox.brain.run_agent("research", "état ?", who=OWNER, source="test")
+    done = missions[-1]
+    assert done["phase"] == "done"
+    assert done["tokens_in"] >= 1000 and done["tokens_out"] >= 500   # cumulés sur la mission
+    assert "cost_usd" in done and "model" in done                    # coût estimé (ou None)
+
+
 # ── Agent Home : peut agir, mais UNIQUEMENT via le moteur ────────────────────
 
 def test_home_perimetre():
