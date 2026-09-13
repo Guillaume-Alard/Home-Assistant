@@ -141,8 +141,12 @@
 .memoire-form input:focus, .memoire-cat:focus { border-color: var(--acc-line); }
 .memoire-form input::placeholder { color: var(--t4); }
 .memoire-list { display: flex; flex-direction: column; gap: 0; margin-top: 4px; max-height: 360px; overflow-y: auto; }
+/* Niveaux de mémoire (brique 4) : en-tête de section au-dessus des catégories. */
+.mem-scope { font-size: 12.5px; font-weight: 700; color: var(--t2); margin: 20px 0 6px; padding-bottom: 5px; border-bottom: 1px solid var(--line2); }
+.mem-scope:first-child { margin-top: 0; }
 .mem-cat { font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--t4); margin: 14px 0 4px; font-weight: 700; }
 .mem-cat:first-child { margin-top: 0; }
+.mem-scope + .mem-cat { margin-top: 6px; }
 .mem-row { display: flex; align-items: center; gap: 10px; padding: 11px 2px; border-bottom: 1px solid var(--line); border-radius: 0; }
 .mem-row:hover { background: transparent; border-color: var(--line); }
 .mem-text { flex: 1 1 auto; font-size: 13.5px; line-height: 1.5; color: var(--t1); overflow-wrap: anywhere; }

@@ -58,7 +58,7 @@ from .actions.executors import build_registry
 from .notify import Notifier
 from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
-from .brain.memory import format_profile, normalize_category
+from .brain.memory import format_profile, normalize_category, normalize_scope
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.mcp import McpManager, load_mcp_config
 from .brain.toolbox import Toolbox
@@ -1824,8 +1824,9 @@ async def _memoire_add(sentinel: Sentinel, msg: dict) -> None:
     if not content:
         return
     category = normalize_category(msg.get("category"))
+    scope = normalize_scope(msg.get("scope") or msg.get("niveau"))
     await sentinel.store.add_memory(
-        content, category=category, subject="guillaume", source="manuel"
+        content, category=category, scope=scope, subject="guillaume", source="manuel"
     )
     await sentinel._broadcast_memoires()
 

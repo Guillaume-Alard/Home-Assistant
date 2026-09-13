@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.brain.llm import _speaker_line, _system_blocks
-from app.brain.memory import format_profile, normalize_category
+from app.brain.memory import format_profile, normalize_category, normalize_scope
 from app.config import Settings
 from app.identity import OWNER, UNKNOWN, Speaker
 
@@ -38,6 +38,42 @@ def test_format_profile_groupe_par_categorie():
 def test_format_profile_vide():
     assert format_profile([]) == ""
     assert format_profile([{"content": "   "}]) == ""  # que du vide → rien
+
+
+# ── Niveaux de mémoire (brique 4) ────────────────────────────────────────────
+
+def test_normalize_scope_variantes_et_repli():
+    assert normalize_scope("utilisateur") == "utilisateur"
+    assert normalize_scope("travail") == "projet"       # alias → projet
+    assert normalize_scope("Domotique") == "maison"
+    assert normalize_scope("session") == "conversation"
+    assert normalize_scope(None) == "utilisateur"        # défaut = profil stable
+    assert normalize_scope("n'importe quoi") == "utilisateur"
+
+
+def _memn(content, scope, category="fait"):
+    return {"content": content, "scope": scope, "category": category}
+
+
+def test_format_profile_groupe_par_niveau():
+    memories = [
+        _memn("Réponses courtes", "utilisateur", "preference"),
+        _memn("Cuisine ouverte sur le salon", "maison"),
+        _memn("Refonte de la cave à vin", "projet"),
+    ]
+    out = format_profile(memories)
+    # Le profil stable d'abord, puis maison, puis projet.
+    assert out.index("Profil de Guillaume") < out.index("La maison") < out.index("Projets en cours")
+    assert "- Réponses courtes" in out and "- Refonte de la cave à vin" in out
+
+
+def test_format_profile_conversation_bornee():
+    from app.brain.memory import CONVERSATION_INJECT_MAX
+    memories = [_memn(f"note {i}", "conversation") for i in range(CONVERSATION_INJECT_MAX + 5)]
+    out = format_profile(memories)
+    # Contexte passager : seuls les plus récents sont injectés.
+    assert "note 0" not in out
+    assert f"note {CONVERSATION_INJECT_MAX + 4}" in out
 
 
 def test_system_blocks_injecte_la_memoire_apres_le_cache():

@@ -214,12 +214,24 @@ async def test_memoriser_puis_lister(box):
     assert [m["content"] for m in stored] == ["Préfère des réponses très courtes"]
     assert stored[0]["category"] == "preference"
     assert stored[0]["source"] == "luna"
+    assert stored[0]["scope"] == "utilisateur"  # niveau par défaut = profil stable
 
     listing, is_error = await _run(box, "lister_souvenirs", {})
     assert not is_error
     data = json.loads(listing)
     assert data[0]["contenu"] == "Préfère des réponses très courtes"
     assert data[0]["id"] == stored[0]["id"]
+    assert data[0]["niveau"] == "utilisateur"
+
+
+async def test_memoriser_avec_niveau(box):
+    await _run(box, "memoriser", {
+        "contenu": "Refonte de la cave à vin", "categorie": "fait", "niveau": "projet",
+    })
+    stored = await box.store.list_memories(subject="guillaume")
+    assert stored[0]["scope"] == "projet"
+    data = json.loads((await _run(box, "lister_souvenirs", {}))[0])
+    assert data[0]["niveau"] == "projet"
 
 
 async def test_memoriser_anti_doublon(box):

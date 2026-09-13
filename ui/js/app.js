@@ -105,6 +105,7 @@ const els = {
   // mémoire (Paramètres)
   memoireForm: document.getElementById('memoire-form'),
   memoireCat: document.getElementById('memoire-cat'),
+  memoireScope: document.getElementById('memoire-scope'),
   memoireInput: document.getElementById('memoire-input'),
   memoireList: document.getElementById('memoire-list'),
   memoireCount: document.getElementById('memoire-count'),
@@ -1788,6 +1789,11 @@ const MEM_CATS = {
   preference: 'Préférences', habitude: 'Habitudes',
   style: 'Style de langage', fait: 'À savoir',
 };
+// Niveaux de mémoire (brique 4), dans l'ordre d'affichage. « utilisateur » = profil stable.
+const MEM_SCOPES = {
+  utilisateur: 'Profil de Guillaume', maison: 'La maison',
+  projet: 'Projets en cours', conversation: 'Contexte récent',
+};
 
 function renderMemoires(msg) {
   const mems = msg.memories || [];
@@ -1797,33 +1803,46 @@ function renderMemoires(msg) {
     els.memoireList.appendChild(emptyLine('Luna n’a encore rien retenu.'));
     return;
   }
-  const byCat = {};
-  for (const m of mems) (byCat[m.category] || (byCat[m.category] = [])).push(m);
-  for (const [cat, label] of Object.entries(MEM_CATS)) {
-    const items = byCat[cat];
-    if (!items) continue;
-    const head = document.createElement('div');
-    head.className = 'mem-cat';
-    head.textContent = label;
-    els.memoireList.appendChild(head);
-    for (const m of items) {
-      const row = document.createElement('div');
-      row.className = 'mem-row';
-      const text = document.createElement('span');
-      text.className = 'mem-text';
-      text.textContent = m.content;
-      const src = document.createElement('span');
-      src.className = 'mem-src';
-      src.textContent = m.source === 'manuel' ? 'ajouté' : 'appris';
-      const del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'mem-del';
-      del.textContent = '✕';
-      del.title = 'Oublier ce souvenir';
-      del.setAttribute('aria-label', `Oublier : ${m.content}`);
-      del.addEventListener('click', () => ws.sendJSON({ type: 'memoire_delete', id: m.id }));
-      row.append(text, src, del);
-      els.memoireList.appendChild(row);
+  const byScope = {};
+  for (const m of mems) {
+    const sc = MEM_SCOPES[m.scope] ? m.scope : 'utilisateur';
+    (byScope[sc] || (byScope[sc] = [])).push(m);
+  }
+  for (const [scope, scopeLabel] of Object.entries(MEM_SCOPES)) {
+    const scoped = byScope[scope];
+    if (!scoped) continue;
+    const scopeHead = document.createElement('div');
+    scopeHead.className = 'mem-scope';
+    scopeHead.textContent = scopeLabel;
+    els.memoireList.appendChild(scopeHead);
+    const byCat = {};
+    for (const m of scoped) (byCat[m.category] || (byCat[m.category] = [])).push(m);
+    for (const [cat, label] of Object.entries(MEM_CATS)) {
+      const items = byCat[cat];
+      if (!items) continue;
+      const head = document.createElement('div');
+      head.className = 'mem-cat';
+      head.textContent = label;
+      els.memoireList.appendChild(head);
+      for (const m of items) {
+        const row = document.createElement('div');
+        row.className = 'mem-row';
+        const text = document.createElement('span');
+        text.className = 'mem-text';
+        text.textContent = m.content;
+        const src = document.createElement('span');
+        src.className = 'mem-src';
+        src.textContent = m.source === 'manuel' ? 'ajouté' : 'appris';
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'mem-del';
+        del.textContent = '✕';
+        del.title = 'Oublier ce souvenir';
+        del.setAttribute('aria-label', `Oublier : ${m.content}`);
+        del.addEventListener('click', () => ws.sendJSON({ type: 'memoire_delete', id: m.id }));
+        row.append(text, src, del);
+        els.memoireList.appendChild(row);
+      }
     }
   }
 }
@@ -1832,7 +1851,11 @@ els.memoireForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const content = els.memoireInput.value.trim();
   if (!content || !ws.alive) return;
-  ws.sendJSON({ type: 'memoire_add', content, category: els.memoireCat.value });
+  ws.sendJSON({
+    type: 'memoire_add', content,
+    category: els.memoireCat.value,
+    scope: els.memoireScope ? els.memoireScope.value : 'utilisateur',
+  });
   els.memoireInput.value = '';
 });
 

@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS memories (
     id          TEXT PRIMARY KEY,
     subject     TEXT NOT NULL DEFAULT 'guillaume',
     category    TEXT NOT NULL DEFAULT 'fait',   -- preference | habitude | style | fait
+    scope       TEXT NOT NULL DEFAULT 'utilisateur', -- utilisateur | maison | projet | conversation
     content     TEXT NOT NULL,
     source      TEXT NOT NULL DEFAULT 'luna',    -- luna | manuel
     created_at  TEXT NOT NULL,
@@ -251,7 +252,21 @@ class Store:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.executescript(_SCHEMA)
+        await self._migrate()
         await self._db.commit()
+
+    async def _migrate(self) -> None:
+        """Migrations idempotentes : colonnes ajoutées après coup sur une base
+        existante (CREATE TABLE IF NOT EXISTS ne les ajoute pas aux vieilles bases)."""
+        # Brique 4 : niveau de mémoire. Les souvenirs déjà présents portent sur
+        # Guillaume → niveau « utilisateur » (le profil stable).
+        await self._ensure_column("memories", "scope", "TEXT NOT NULL DEFAULT 'utilisateur'")
+
+    async def _ensure_column(self, table: str, column: str, decl: str) -> None:
+        cursor = await self._db.execute(f"PRAGMA table_info({table})")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if column not in columns:
+            await self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     async def close(self) -> None:
         if self._db is not None:
@@ -389,6 +404,7 @@ class Store:
         content: str,
         *,
         category: str = "fait",
+        scope: str = "utilisateur",
         subject: str = "guillaume",
         source: str = "luna",
     ) -> dict:
@@ -398,14 +414,15 @@ class Store:
             "id": uuid.uuid4().hex[:12],
             "subject": subject,
             "category": category,
+            "scope": scope,
             "content": content,
             "source": source,
             "created_at": now,
             "updated_at": now,
         }
         await self._db.execute(
-            "INSERT INTO memories (id, subject, category, content, source, created_at, updated_at)"
-            " VALUES (:id, :subject, :category, :content, :source, :created_at, :updated_at)",
+            "INSERT INTO memories (id, subject, category, scope, content, source, created_at, updated_at)"
+            " VALUES (:id, :subject, :category, :scope, :content, :source, :created_at, :updated_at)",
             record,
         )
         await self._db.commit()
@@ -435,7 +452,7 @@ class Store:
 
     async def update_memory(self, mem_id: str, **fields) -> dict | None:
         assert self._db is not None, "Store non ouvert"
-        fields = {k: v for k, v in fields.items() if k in ("content", "category", "subject")}
+        fields = {k: v for k, v in fields.items() if k in ("content", "category", "scope", "subject")}
         if fields:
             fields["updated_at"] = _now_iso()
             keys = ", ".join(f"{k} = ?" for k in fields)

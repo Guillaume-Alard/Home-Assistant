@@ -261,6 +261,12 @@
           <div class="set-card">
             <div class="set-card-h">Ajouter un souvenir</div>
             <form id="memoire-form" class="memoire-form" autocomplete="off">
+              <select id="memoire-scope" class="memoire-cat" aria-label="Niveau du souvenir">
+                <option value="utilisateur">Profil</option>
+                <option value="maison">Maison</option>
+                <option value="projet">Projet</option>
+                <option value="conversation">Récent</option>
+              </select>
               <select id="memoire-cat" class="memoire-cat" aria-label="Catégorie du souvenir">
                 <option value="preference">Préférence</option>
                 <option value="habitude">Habitude</option>
@@ -447,7 +453,7 @@
           <div class="ln"><span class="ic ok"><i class="fi fi-rr-brain" aria-hidden="true"></i></span><span class="tx"><b>1 · Modèle LLM</b><span>Claude natif + compat-OpenAI (Gemini/Groq/OpenRouter) · <em>brain/providers.py</em></span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
           <div class="ln"><span class="ic ok"><i class="fi fi-rr-route" aria-hidden="true"></i></span><span class="tx"><b>2 · Harnais agentique</b><span>Boucle tool_use → agir → répondre · <em>brain/llm.py + toolbox.py</em></span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
           <div class="ln"><span class="ic warn"><i class="fi fi-rr-user" aria-hidden="true"></i></span><span class="tx"><b>3 · Profil utilisateur</b><span><em>identity.py</em> + mémoire ; profil stable pas encore séparé</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
-          <div class="ln"><span class="ic warn"><i class="fi fi-rr-memory" aria-hidden="true"></i></span><span class="tx"><b>4 · Mémoire persistante</b><span>Souvenirs (<em>store/db.py</em>, memoriser/oublier) ; mono-niveau, pas de RAG</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
+          <div class="ln"><span class="ic warn"><i class="fi fi-rr-memory" aria-hidden="true"></i></span><span class="tx"><b>4 · Mémoire persistante</b><span>Souvenirs par niveaux + profil stable (<em>store/db.py</em>, memoriser) ; pas encore de RAG sémantique</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
           <div class="ln"><span class="ic warn"><i class="fi fi-rr-apps" aria-hidden="true"></i></span><span class="tx"><b>5 · Skills</b><span>Domotique, santé, code, web, pages… en outils ; pas de registre modulaire</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
           <div class="ln"><span class="ic ok"><i class="fi fi-rr-comment" aria-hidden="true"></i></span><span class="tx"><b>6 · Voix (STT ≠ LLM ≠ TTS)</b><span>whisper · piper/xtts · openwakeword · speaker — services séparés</span></span><span class="rt"><span class="verrou ok">en place</span></span></div>
           <div class="ln"><span class="ic warn"><i class="fi fi-rr-eye" aria-hidden="true"></i></span><span class="tx"><b>7 · Vision</b><span>« Regarder » une caméra en lecture (VLM local · <em>brain/vision.py</em>) ; pas encore de flux continu</span></span><span class="rt"><span class="verrou w">partiel</span></span></div>
@@ -463,7 +469,7 @@
           <div class="ln"><span class="ic ok"><i class="fi fi-rr-check-double" aria-hidden="true"></i></span><span class="tx"><b>1 · Boucle de vérification</b><span>Après une action, Luna relit l'état de Nova et rend un verdict honnête — au lieu de dire « c'est fait ». Lecture seule, jamais de rejeu d'un ordre sensible.</span></span><span class="rt"><span class="verrou ok">fait</span></span></div>
           <div class="ln"><span class="ic ok"><i class="fi fi-rr-eye" aria-hidden="true"></i></span><span class="tx"><b>2 · Vision en lecture</b><span>« Regarde cette caméra » : instantané de Nova décrit par un VLM local (RTX 2070). Lecture seule, jamais d'action directe.</span></span><span class="rt"><span class="verrou ok">fait</span></span></div>
           <div class="ln"><span class="ic ok"><i class="fi fi-rr-share" aria-hidden="true"></i></span><span class="tx"><b>3 · MCP</b><span>Brancher des services externes (config/mcp.yml) sans toucher au cœur : lecture directe, écriture proposée. Réservé à Guillaume.</span></span><span class="rt"><span class="verrou ok">fait</span></span></div>
-          <div class="ln"><span class="ic acc"><i class="fi fi-rr-memory" aria-hidden="true"></i></span><span class="tx"><b>4 · Mémoire par niveaux + profil</b><span>Enrichir l'existant (travail · conversation · utilisateur · projets), pas repartir de zéro.</span></span></div>
+          <div class="ln"><span class="ic ok"><i class="fi fi-rr-memory" aria-hidden="true"></i></span><span class="tx"><b>4 · Mémoire par niveaux + profil</b><span>Niveaux utilisateur · maison · projet · conversation ; le profil stable injecté en premier. Toujours du contexte, jamais une action.</span></span><span class="rt"><span class="verrou ok">fait</span></span></div>
         </div>
       </section>
     </div>

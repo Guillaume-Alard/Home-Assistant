@@ -91,6 +91,52 @@ async def test_memoire_list_borne_aux_plus_recents(tmp_path):
         await store.close()
 
 
+async def test_memoire_niveau_defaut_et_maj(tmp_path):
+    """Brique 4 : chaque souvenir porte un niveau (défaut « utilisateur »)."""
+    store = Store(tmp_path / "scope.db")
+    await store.open()
+    try:
+        a = await store.add_memory("Aime le jazz")                       # défaut
+        await store.add_memory("Cave à vin", scope="projet", category="fait")
+        assert a["scope"] == "utilisateur"
+        got = {m["content"]: m["scope"] for m in await store.list_memories()}
+        assert got["Aime le jazz"] == "utilisateur" and got["Cave à vin"] == "projet"
+        updated = await store.update_memory(a["id"], scope="maison")
+        assert updated["scope"] == "maison"
+    finally:
+        await store.close()
+
+
+async def test_memoire_migration_ajoute_le_niveau(tmp_path):
+    """Une base d'avant la brique 4 (memories sans colonne scope) reçoit la colonne
+    à l'ouverture ; les souvenirs existants passent au niveau « utilisateur »."""
+    import aiosqlite
+
+    db_path = tmp_path / "old.db"
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "CREATE TABLE memories (id TEXT PRIMARY KEY, subject TEXT NOT NULL DEFAULT 'guillaume',"
+            " category TEXT NOT NULL DEFAULT 'fait', content TEXT NOT NULL,"
+            " source TEXT NOT NULL DEFAULT 'luna', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        await db.execute(
+            "INSERT INTO memories (id, subject, category, content, source, created_at, updated_at)"
+            " VALUES ('m1','guillaume','preference','Réponses courtes','luna','2026-01-01','2026-01-01')"
+        )
+        await db.commit()
+
+    store = Store(db_path)
+    await store.open()  # déclenche la migration idempotente
+    try:
+        mems = await store.list_memories(subject="guillaume")
+        assert mems and mems[0]["scope"] == "utilisateur"      # legacy → profil stable
+        await store.add_memory("Cuisine ouverte sur le salon", scope="maison")
+        got = {m["content"]: m["scope"] for m in await store.list_memories()}
+        assert got["Cuisine ouverte sur le salon"] == "maison"
+    finally:
+        await store.close()
+
+
 async def test_memoire_par_sujet(tmp_path):
     store = Store(tmp_path / "mem3.db")
     await store.open()

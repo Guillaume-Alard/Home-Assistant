@@ -21,6 +21,14 @@ tes propres échanges avec le cerveau (au même titre que l'historique).
   toi » est ajouté au prompt système, **après le point de cache** (il évolue,
   donc n'est jamais figé). Les catégories : **préférence · habitude · style de
   langage · à savoir**.
+- **Rangée par niveau (brique 4).** Chaque souvenir porte un *niveau* qui
+  organise le contexte : **utilisateur** (le *profil stable* de Guillaume —
+  défaut), **maison** (le logement), **projet** (un travail en cours),
+  **conversation** (passager). À l'injection, le profil stable vient d'abord et
+  le contexte « conversation », par nature éphémère, est borné à ses entrées les
+  plus récentes. Le niveau se choisit à la voix (« retiens, pour le projet…, que… »)
+  ou dans **Paramètres › Mémoire** ; les souvenirs d'avant cette brique sont, sans
+  rien faire, rattachés au profil **utilisateur**.
 - **Tu gardes la main — totalement.** Dans **Paramètres › Mémoire** tu vois
   *tout* ce que Luna retient, groupé par catégorie ; tu peux **ajouter** un
   souvenir toi-même et **supprimer** n'importe lequel d'un clic. C'est *cette*

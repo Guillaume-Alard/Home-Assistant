@@ -303,6 +303,12 @@ class Toolbox:
                             "enum": ["preference", "habitude", "style", "fait"],
                             "description": "preference | habitude | style (de langage) | fait",
                         },
+                        "niveau": {
+                            "type": "string",
+                            "enum": ["utilisateur", "maison", "projet", "conversation"],
+                            "description": "Niveau : utilisateur (profil stable, défaut) | maison "
+                            "(le logement) | projet (travail en cours) | conversation (passager).",
+                        },
                     },
                     "required": ["contenu"],
                 },
@@ -978,20 +984,21 @@ class Toolbox:
 
     async def _tool_memoriser(self, args, who: Speaker):
         from ..norm import normalize
-        from .memory import normalize_category
+        from .memory import normalize_category, normalize_scope
 
         subject = who.subject or "guillaume"
         contenu = str(args.get("contenu") or "").strip()[:500]
         if not contenu:
             return "Précise ce que je dois retenir.", True
         category = normalize_category(args.get("categorie"))
+        scope = normalize_scope(args.get("niveau"))
         # Anti-doublon : on ne réécrit pas ce qu'on sait déjà (comparaison sans accents/casse)
         target = normalize(contenu)
         for m in await self._store.list_memories(subject=subject, limit=200):
             if normalize(m.get("content") or "") == target:
                 return "C'est déjà noté.", False
         await self._store.add_memory(
-            contenu, category=category, subject=subject, source="luna"
+            contenu, category=category, scope=scope, subject=subject, source="luna"
         )
         await self._notify_memory_change(subject)
         return "C'est noté.", False
@@ -1002,7 +1009,8 @@ class Toolbox:
         if not mems:
             return "Je n'ai encore rien retenu de particulier.", False
         return _compact([
-            {"id": m["id"], "categorie": m["category"], "contenu": m["content"]}
+            {"id": m["id"], "niveau": m.get("scope") or "utilisateur",
+             "categorie": m["category"], "contenu": m["content"]}
             for m in mems
         ]), False
 
