@@ -81,6 +81,7 @@ ACTIVITY_LABELS = {
     "mcp_ressource": "lit une ressource MCP…",
     "mcp_prompt": "récupère un prompt MCP…",
     "plan": "organise son plan…",
+    "deleguer": "délègue à un agent…",
 }
 
 
@@ -130,6 +131,9 @@ class Toolbox:
         # MCP (couche d'extension) — serveurs externes optionnels. Absent = pas
         # d'outils MCP. Réservé au propriétaire.
         self._mcp = mcp
+        # Multi-agent : fonction de délégation à un sous-agent, injectée après coup
+        # par main (le cerveau référence la Toolbox, d'où l'injection tardive).
+        self._run_agent: Callable[..., Awaitable[str]] | None = None
         self._tz = tz
         self._on_reminders_change = on_reminders_change
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
@@ -140,6 +144,10 @@ class Toolbox:
         # Diffuse le plan de travail courant vers le cockpit (orchestrateur). Le plan
         # est éphémère (en mémoire) : un fil conducteur, jamais un exécuteur.
         self._on_plan_change = on_plan_change
+
+    def set_agent_runner(self, run_agent: Callable[..., Awaitable[str]]) -> None:
+        """Branche la délégation multi-agent (appelé par main une fois le cerveau prêt)."""
+        self._run_agent = run_agent
 
     _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
     _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova non configurée)."
@@ -669,6 +677,27 @@ class Toolbox:
                     },
                 },
             ]
+        # Multi-agent : délégation à un sous-agent spécialisé (présent si branché).
+        if self._run_agent is not None:
+            from .agents import agent_labels
+            specs.append({
+                "name": "deleguer",
+                "description": (
+                    "Confie une tâche à un AGENT spécialisé quand elle relève clairement de son "
+                    "domaine, puis synthétise sa réponse pour Guillaume. Agents : "
+                    + agent_labels() + ". L'agent travaille avec un sous-ensemble de tes outils, "
+                    "sous les mêmes règles de sécurité (propose puis approuve, mêmes droits). "
+                    "Pour une demande simple, réponds toi-même — ne délègue pas pour rien."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "agent": {"type": "string", "description": "Identifiant de l'agent (voir la liste)."},
+                        "tache": {"type": "string", "description": "La tâche/question, avec le contexte utile."},
+                    },
+                    "required": ["agent", "tache"],
+                },
+            })
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -703,6 +732,8 @@ class Toolbox:
         # MCP : brancher/piloter un service externe = administration → Guillaume seul.
         "mcp_outils": "owner", "mcp_appeler": "owner",
         "mcp_ressource": "owner", "mcp_prompt": "owner",
+        # Délégation : capacité courante (l'agent hérite des droits du demandeur).
+        "deleguer": "known",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -727,6 +758,8 @@ class Toolbox:
                 return f"Outil inconnu : {name}", True
             if name in self._MEMORY_TOOLS:
                 return await handler(args, who)
+            if name == "deleguer":  # a besoin de l'identité (l'agent hérite de `who`)
+                return await handler(args, who, source)
             return await handler(args, utterance, source)
         except Exception:
             log.exception("Outil %s en échec", name)
@@ -934,6 +967,26 @@ class Toolbox:
         except McpError as exc:
             return str(exc), True
         return _compact({"serveur": server_name, "prompt": nom, "rendu": rendu})[:6000], False
+
+    async def _tool_deleguer(self, args, who: Speaker, source: str):
+        """Délègue une tâche à un sous-agent spécialisé. L'agent hérite de l'identité
+        du demandeur (`who`) : aucune élévation de droits, mêmes règles de sécurité."""
+        from .agents import AGENTS
+
+        if self._run_agent is None:
+            return "La délégation à des agents n'est pas disponible.", True
+        agent = str(args.get("agent") or "").strip().lower()
+        tache = str(args.get("tache") or "").strip()
+        if agent not in AGENTS:
+            return f"Agent inconnu : « {agent} ». Disponibles : {', '.join(AGENTS)}.", True
+        if not tache:
+            return "Précise la tâche à confier à l'agent.", True
+        try:
+            result = await self._run_agent(agent, tache, who=who, source=source)
+        except Exception:
+            log.exception("Délégation à l'agent %s en échec", agent)
+            return "L'agent a échoué — détail dans les journaux du serveur.", True
+        return _compact({"agent": agent, "resultat": result})[:6000], False
 
     async def _tool_liste_pieces(self, args, _utt, _src):
         if self._ha is None or not self._ha.connected:

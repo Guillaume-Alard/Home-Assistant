@@ -338,6 +338,9 @@ class Sentinel:
             on_activity=self._on_activity, memory_provider=self._memory_context,
             on_sources=self._broadcast_sources, on_usage=self._record_usage,
         )
+        # Multi-agent : la Toolbox peut désormais déléguer à un sous-agent via le
+        # cerveau (injection tardive : le cerveau référence la Toolbox).
+        toolbox.set_agent_runner(self.brain.run_agent)
         self._proactive_task: asyncio.Task | None = None
         self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
         self._llm_cfg: dict = {}  # réglages LLM du cockpit (clés/modèles/params) — cf. restore_llm_config

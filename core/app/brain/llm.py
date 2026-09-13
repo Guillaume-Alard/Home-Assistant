@@ -150,6 +150,11 @@ est déjà là en début d'échange (repris après une interruption), ne le reco
 pas : relis l'état réel et reprends au premier point non « fait ». Le plan \
 n'exécute rien : il rend ton raisonnement visible. Pour un geste simple, pas de \
 plan — va droit au but.
+- Tu es aussi l'ORCHESTRATEUR d'agents spécialisés : quand une tâche relève \
+clairement du domaine d'un agent (`deleguer`), confie-la-lui puis SYNTHÉTISE sa \
+réponse pour Guillaume (ne recopie pas tout brut). L'agent travaille avec un \
+sous-ensemble de tes outils et les mêmes règles de sécurité. Ne délègue pas pour \
+une demande simple que tu traites déjà bien toi-même.
 - Mémoire : ne retiens que ce qui te servira plus tard — pas les banalités d'un \
 échange ponctuel, et JAMAIS de secret (mot de passe, code, données bancaires). Ne \
 redemande pas ce que tu sais déjà. Sois discrète : n'annonce pas chaque chose que tu \
@@ -176,6 +181,13 @@ tu as lancé, sans surjouer.
 effet n'est pas confirmé, redis l'ordre à Guillaume, qui le relancera et confirmera.
 - Si un outil échoue, dis-le simplement et propose la suite utile.
 """
+
+
+def _text_of(content) -> str:
+    """Concatène les blocs de texte d'une réponse Anthropic (hors blocs d'outils)."""
+    return "".join(
+        getattr(b, "text", "") for b in (content or []) if getattr(b, "type", None) == "text"
+    ).strip()
 
 
 def _last_user_text(messages: list[dict]) -> str:
@@ -629,3 +641,102 @@ class Brain:
             await self._on_usage(provider, model, int(in_tok), int(out_tok))
         except Exception:
             log.exception("Comptage de consommation impossible")
+
+    # ── Multi-agent : délégation à un sous-agent spécialisé ───────────────
+
+    async def run_agent(self, agent_id: str, task: str, *, who: Speaker, source: str = "delegation") -> str:
+        """Exécute un sous-agent (rôle) sur une tâche et renvoie son résultat en texte.
+
+        Sécurité : outils RESTREINTS au périmètre du rôle, exécutés par la MÊME
+        Toolbox et le MÊME moteur, avec la MÊME identité `who` (aucune élévation) ;
+        double contrôle : tout outil hors périmètre est refusé."""
+        from .agents import AGENTS, filter_specs
+
+        spec = AGENTS.get(agent_id)
+        if spec is None:
+            return f"Agent inconnu : « {agent_id} »."
+        task = (task or "").strip()
+        if not task:
+            return "Tâche vide pour l'agent."
+        allowed = set(spec.tools)
+        tools = filter_specs(self._toolbox.specs() if self._toolbox else [], spec.tools)
+
+        async def run_tool(name: str, args: dict) -> tuple[str, bool]:
+            if name not in allowed:  # défense en profondeur : hors périmètre du rôle
+                return f"L'agent {agent_id} n'a pas accès à l'outil « {name} ».", True
+            if self._toolbox is None:
+                return "Aucun outil disponible.", True
+            return await self._toolbox.run(
+                name, args, utterance=task, source=f"{source}:{agent_id}", speaker=who
+            )
+
+        profile = (self._by_id.get(spec.provider) if spec.provider else None) \
+            or self._by_id.get(self._active_id) or self._by_id.get(self._default_id)
+        try:
+            if profile is not None and profile.kind == "openai":
+                return await self._run_agent_openai(profile, spec, task, tools, run_tool)
+            return await self._run_agent_anthropic(profile, spec, task, tools, run_tool, who)
+        except LLMUnavailable as exc:
+            return f"L'agent {agent_id} n'a pas pu répondre : {exc}"
+
+    async def _run_agent_openai(self, profile, spec, task, tools, run_tool) -> str:
+        provider = self._openai_provider(profile)
+        parts: list[str] = []
+
+        async def on_usage(in_tok: int, out_tok: int) -> None:
+            await self._report_usage(profile.id, profile.model, in_tok, out_tok)
+
+        async for text in provider.stream(
+            messages=[{"role": "user", "content": task}], tools=tools or None,
+            system_text=spec.system, max_tokens=self._max_tokens,
+            notify_activity=self._notify_activity, run_tool=run_tool, on_usage=on_usage,
+        ):
+            parts.append(text)
+        return "".join(parts).strip() or "(l'agent n'a rien renvoyé)"
+
+    async def _run_agent_anthropic(self, profile, spec, task, tools, run_tool, who: Speaker) -> str:
+        if self._client is None:
+            raise LLMUnavailable("Aucune clé API Anthropic n'est configurée (ANTHROPIC_API_KEY).")
+        s = self._settings
+        model = profile.model if profile is not None else s.model
+        tools = list(tools)
+        if spec.web_search and s.web_search_enabled and who.can_act:
+            tools.append(_web_search_tool(s))
+        messages: list[dict] = [{"role": "user", "content": task}]
+        provider_id = profile.id if profile is not None else self._default_id
+        usage_in = usage_out = 0
+        try:
+            for round_no in range(MAX_TOOL_ROUNDS):
+                resp = await self._client.messages.create(
+                    model=model, max_tokens=self._max_tokens, system=spec.system,
+                    output_config={"effort": self._effort}, messages=messages,
+                    tools=(tools or None),
+                )
+                u = getattr(resp, "usage", None)
+                if u is not None:
+                    usage_in += ((getattr(u, "input_tokens", 0) or 0)
+                                 + (getattr(u, "cache_read_input_tokens", 0) or 0)
+                                 + (getattr(u, "cache_creation_input_tokens", 0) or 0))
+                    usage_out += getattr(u, "output_tokens", 0) or 0
+                if resp.stop_reason == "pause_turn":  # recherche web longue : on relance
+                    messages.append({"role": "assistant", "content": resp.content})
+                    continue
+                if resp.stop_reason != "tool_use" or not tools:
+                    return _text_of(resp.content) or "(l'agent n'a rien renvoyé)"
+                if round_no == MAX_TOOL_ROUNDS - 1:
+                    return (_text_of(resp.content) + "\n(Agent arrêté : trop d'étapes.)").strip()
+                messages.append({"role": "assistant", "content": resp.content})
+                results = []
+                for block in resp.content:
+                    if getattr(block, "type", None) != "tool_use":
+                        continue
+                    await self._notify_activity(block.name)
+                    content, is_error = await run_tool(block.name, dict(block.input or {}))
+                    item: dict = {"type": "tool_result", "tool_use_id": block.id, "content": content}
+                    if is_error:
+                        item["is_error"] = True
+                    results.append(item)
+                messages.append({"role": "user", "content": results})
+            return "(agent : trop d'étapes d'outils)"
+        finally:
+            await self._report_usage(provider_id, model, usage_in, usage_out)

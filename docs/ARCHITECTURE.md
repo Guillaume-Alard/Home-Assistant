@@ -130,6 +130,13 @@ pour les tâches à plusieurs étapes :
   depuis Nova.
 - **Corriger** : sur un verdict non confirmé, Luna réévalue et propose une
   correction, plan mis à jour. La discipline est portée par le prompt système.
+- **Délégation multi-agent** (`brain/agents.py`, `Brain.run_agent`, outil
+  `deleguer`) : Sentinel peut confier une tâche à un sous-agent spécialisé (un
+  rôle = prompt + sous-ensemble d'outils + modèle optionnel), puis synthétiser.
+  Le sous-agent tourne avec la **même identité** (`who`), ne voit **que** ses
+  outils (double contrôle), écrit **uniquement** via le moteur, n'a jamais
+  `deleguer` (pas de récursion). 1er agent : **Research** (lecture seule). Ajouter
+  un agent = une entrée de registre. Voir `docs/AGENTS.md`.
 - **Échec first-class** : une étape peut passer à l'état `bloque` (échec/non
   confirmé) — « vérifie → corrige » a ainsi une place explicite ; Luna corrige
   ou le signale, sans faire comme si de rien n'était.
