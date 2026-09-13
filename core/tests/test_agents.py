@@ -46,6 +46,30 @@ def test_filter_specs_restreint_au_perimetre():
     assert [s["name"] for s in filter_specs(specs, ("etat_maison",))] == ["etat_maison"]
 
 
+def test_aucun_agent_ne_peut_re_deleguer():
+    for spec in AGENTS.values():
+        assert "deleguer" not in spec.tools   # jamais de délégation récursive
+
+
+def test_developer_propose_seulement():
+    d = AGENTS["developer"]
+    # Auto-amélioration : lecture + proposition de diff ; jamais d'application ni d'action.
+    assert set(d.tools) <= {"lire_mon_code", "proposer_evolution", "lister_evolutions"}
+    assert "action_domotique" not in d.tools
+
+
+def test_infra_diagnostique_et_propose():
+    i = AGENTS["infra"]
+    assert set(i.tools) == {"sante_systemes", "audit_systemes", "creer_proposition"}
+    assert "action_domotique" not in i.tools   # remédiation = proposition, jamais direct
+
+
+def test_vision_lecture_seule():
+    v = AGENTS["vision"]
+    assert "regarder" in v.tools
+    assert not (set(v.tools) & {"action_domotique", "creer_proposition", "deleguer"})
+
+
 # ── Outil `deleguer` : routage, identité, gating ─────────────────────────────
 
 def _protocols(tmp_path):

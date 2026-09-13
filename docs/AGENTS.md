@@ -40,22 +40,27 @@ l'agent hérite ensuite de l'identité du demandeur.
 |---|---|---|
 | 🔎 **Research** | Cherche, compare, **vérifie** avec sources (recherche web + lectures). | ❌ lecture seule |
 | 🏠 **Home** | Diagnostique la maison (Home Assistant) et **agit** sur la domotique courante ; le reste passe par une proposition. | ✅ via le moteur |
+| 💻 **Developer** | Relit le propre code de Luna et **propose** une évolution (diff) que Guillaume valide. | ❌ propose seulement |
+| 🖥️ **Infra** | Diagnostique la santé des systèmes (conteneurs, ressources, Nova) et **propose** une remédiation. | ❌ propose seulement |
+| 👁️ **Vision** | Regarde une caméra de Nova et décrit ce qui est visible, factuellement. | ❌ lecture seule |
 
-**Home** est le premier agent qui **agit** : il n'écrit toutefois **jamais**
-directement — ses actions passent par `action_domotique`/`creer_proposition`,
-donc par le moteur « propose puis approuve », et une action sensible reste
-validable depuis l'interface uniquement. Il n'a aucun outil d'administration
-(santé système, dev, MCP…), réservés à l'orchestrateur ou à d'autres rôles.
+**Home** est le seul agent qui **agit** sur la maison : il n'écrit toutefois
+**jamais** directement — ses actions passent par
+`action_domotique`/`creer_proposition`, donc par le moteur « propose puis
+approuve », et une action sensible reste validable depuis l'interface uniquement.
+Il n'a aucun outil d'administration (santé système, dev, MCP…), réservés à
+l'orchestrateur ou à d'autres rôles.
+
+**Developer** et **Infra** ne **proposent** que : Developer relit le code
+(`lire_mon_code`) et soumet un diff (`proposer_evolution`) que Guillaume applique —
+il n'applique jamais rien lui-même et ne touche ni garde-fou de sécurité ni secret
+(refusé d'office) ; Infra diagnostique (`sante_systemes`, `audit_systemes`) puis, si
+besoin, propose une remédiation (`creer_proposition`) — il n'exécute rien. **Vision**
+regarde (`regarder`) et décrit : une observation, jamais une action.
 
 En ajouter un autre ne demande qu'une **entrée de registre** dans
 `core/app/brain/agents.py` — prompt, sous-ensemble d'outils, modèle optionnel.
-Prochains candidats naturels, en réutilisant l'existant :
-
-- 💻 **Developer** → l'atelier (worker Claude Code déjà isolé) ;
-- 🖥️ **Infra** → docker-proxy + santé ;
-- 👁️ **Vision** → l'outil `regarder`.
-
-Chacun n'exposera qu'un sous-ensemble d'outils **déjà** soumis au moteur : ajouter
+Chacun n'expose qu'un sous-ensemble d'outils **déjà** soumis au moteur : ajouter
 un agent n'ouvre aucune capacité nouvelle, ne fait que **cadrer** un rôle.
 
 ## Modèle par agent
