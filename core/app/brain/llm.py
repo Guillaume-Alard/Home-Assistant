@@ -383,6 +383,9 @@ class Brain:
         active = self._overrides.get("active")
         chosen = self._by_id.get(active) if active else None
         self._active_id = active if (chosen and chosen.available) else self._default_id
+        # Multi-agent : fournisseur assigné à un sous-agent (id → provider_id). Vide =
+        # « auto » (hérite de l'actif). Persisté dans le même blob que le reste.
+        self._agent_overrides = self._overrides.get("agents", {}) or {}
 
     def apply_config(self, overrides: dict) -> None:
         """Applique les réglages LLM du cockpit (clés API, modèles, effort…) à chaud."""
@@ -405,6 +408,18 @@ class Brain:
     @property
     def default_id(self) -> str:
         return self._default_id
+
+    def agent_provider_id(self, agent_id: str) -> str:
+        """Fournisseur assigné à un sous-agent (« » = auto, hérite de l'actif).
+
+        Assignation du cockpit d'abord, puis défaut éventuel du registre."""
+        from .agents import AGENTS
+
+        pref = self._agent_overrides.get(agent_id)
+        if pref:
+            return pref
+        spec = AGENTS.get(agent_id)
+        return spec.provider if spec else ""
 
     def providers_public(self) -> dict:
         """Vue cockpit des fournisseurs + paramètres de génération (jamais de clé)."""
@@ -689,8 +704,14 @@ class Brain:
                 name, args, utterance=task, source=f"{source}:{agent_id}", speaker=who
             )
 
-        profile = (self._by_id.get(spec.provider) if spec.provider else None) \
-            or self._by_id.get(self._active_id) or self._by_id.get(self._default_id)
+        # Fournisseur du rôle : assignation du cockpit, puis défaut du registre, sinon
+        # l'actif. Une préférence INDISPONIBLE (p. ex. « local » pas encore configuré)
+        # retombe proprement sur l'actif plutôt que d'échouer.
+        pref = self._agent_overrides.get(agent_id) or spec.provider
+        chosen = self._by_id.get(pref) if pref else None
+        if chosen is not None and not chosen.available:
+            chosen = None
+        profile = chosen or self._by_id.get(self._active_id) or self._by_id.get(self._default_id)
         # Observabilité : la mission commence. Le cockpit sait DÈS LORS quel agent
         # travaille et sur quoi — l'activité des outils qui suit lui est rattachée.
         await self._notify_mission({"phase": "start", "agent": spec.id, "label": spec.label, "task": task})

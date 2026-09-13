@@ -317,6 +317,39 @@ def test_llm_local_base_url_editable_via_ws(fake_wyoming, tmp_path, monkeypatch)
             assert loc3["available"] is True and loc3["base_url"] == "http://nebula:8000/v1"
 
 
+def test_agent_set_provider_via_ws(fake_wyoming, tmp_path, monkeypatch):
+    """Assigner un fournisseur à un sous-agent : diffusé (type « agents »), persisté,
+    et présent dans hello. Vide ⇒ retour à « auto »."""
+    _base_env(monkeypatch, tmp_path, fake_wyoming)
+    monkeypatch.setenv("HA_URL", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "clef")
+
+    from app.main import app
+
+    def wait(ws, mtype):
+        for _ in range(6):
+            m = json.loads(ws.receive()["text"])
+            if m["type"] == mtype:
+                return m
+        raise AssertionError(f"trame {mtype} non reçue")
+
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/ws") as ws:
+            hello = json.loads(ws.receive()["text"])
+            assert {a["id"]: a for a in hello["agents"]}["research"]["provider"] == ""
+
+            ws.send_text(json.dumps({"type": "agent_set_provider",
+                                     "agent": "research", "provider": "groq"}))
+            ag = {a["id"]: a for a in wait(ws, "agents")["agents"]}
+            assert ag["research"]["provider"] == "groq"   # assigné
+            assert ag["home"]["provider"] == ""           # les autres inchangés
+
+    with TestClient(app) as tc2:   # persistance au redémarrage
+        with tc2.websocket_connect("/ws") as ws2:
+            h2 = json.loads(ws2.receive()["text"])
+            assert {a["id"]: a for a in h2["agents"]}["research"]["provider"] == "groq"
+
+
 def test_llm_usage_via_ws(fake_wyoming, tmp_path, monkeypatch):
     """La commande llm_usage renvoie un résumé (tokens comptés localement + coût
     estimé) et un solde honnête par fournisseur — jamais une clé API."""

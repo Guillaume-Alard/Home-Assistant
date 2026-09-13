@@ -229,6 +229,40 @@ async def test_run_agent_inconnu(brainbox):
     assert "inconnu" in out.lower()
 
 
+# ── Un fournisseur par agent (le local, ou un autre) — jamais un droit de plus ──
+
+def test_agent_provider_id_reflete_l_assignation(brainbox):
+    assert brainbox.brain.agent_provider_id("research") == ""          # auto par défaut
+    brainbox.brain.apply_config({"agents": {"research": "groq"}})
+    assert brainbox.brain.agent_provider_id("research") == "groq"
+    assert brainbox.brain.agent_provider_id("home") == ""              # les autres inchangés
+
+
+async def test_run_agent_route_vers_le_fournisseur_assigne(brainbox, monkeypatch):
+    # Research assigné à un fournisseur compatible OpenAI DISPONIBLE → run_agent
+    # emprunte son chemin (le modèle qui parle change ; rien d'autre).
+    brainbox.brain.apply_config({"providers": {"groq": {"key": "g"}},
+                                 "agents": {"research": "groq"}})
+    seen = {}
+
+    async def fake_openai(profile, spec, task, tools, run_tool):
+        seen["provider"] = profile.id
+        return "réponse locale"
+
+    monkeypatch.setattr(brainbox.brain, "_run_agent_openai", fake_openai)
+    out = await brainbox.brain.run_agent("research", "x", who=OWNER, source="test")
+    assert out == "réponse locale" and seen["provider"] == "groq"
+
+
+async def test_run_agent_repli_si_fournisseur_assigne_indisponible(brainbox):
+    # Research assigné à « local » non configuré (indispo) → repli propre sur l'actif,
+    # pas d'échec. (Le local sans base_url n'est pas disponible.)
+    brainbox.brain.apply_config({"agents": {"research": "local"}})
+    brainbox.brain._client = _FakeAnthropic([_resp("end_turn", [_text("via l'actif")])])
+    out = await brainbox.brain.run_agent("research", "x", who=OWNER, source="test")
+    assert out == "via l'actif"   # a basculé sur le fournisseur actif (Claude ici)
+
+
 # ── Missions : la délégation est OBSERVABLE (début/fin), sans ouvrir de droit ──
 
 async def test_run_agent_emet_debut_et_fin_de_mission(brainbox):

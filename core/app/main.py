@@ -403,6 +403,16 @@ class Sentinel:
     async def _broadcast_llm(self) -> None:
         await self.hub.broadcast(self._llm_payload())
 
+    def _agents_payload(self) -> list[dict]:
+        """Roster des sous-agents + fournisseur assigné à chacun (« » = auto)."""
+        roster = agent_roster()
+        for a in roster:
+            a["provider"] = self.brain.agent_provider_id(a["id"])
+        return roster
+
+    async def _broadcast_agents(self) -> None:
+        await self.hub.broadcast({"type": "agents", "agents": self._agents_payload()})
+
     async def restore_llm_config(self) -> None:
         """Recharge les réglages LLM du cockpit (clés, modèles, params, actif) et
         les applique. Migre l'ancien réglage `llm_provider` (fournisseur actif seul)."""
@@ -1409,8 +1419,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "protocols": [
                 {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
             ],
-            # Roster des sous-agents (multi-agent) pour le cockpit — descriptif seul.
-            "agents": agent_roster(),
+            # Roster des sous-agents (multi-agent) + fournisseur assigné à chacun.
+            "agents": sentinel._agents_payload(),
             # Infos moteur et capacités (affichage seul) pour la page Paramètres.
             "engine": {
                 "model": sentinel.settings.model,
@@ -1688,6 +1698,9 @@ async def _on_message(sentinel: Sentinel, client: Client, msg: dict) -> None:
     elif mtype == "llm_set_params":
         await _llm_set_params(sentinel, client, msg)
 
+    elif mtype == "agent_set_provider":
+        await _agent_set_provider(sentinel, client, msg)
+
     elif mtype == "llm_usage":
         await sentinel.hub.send(client, await sentinel.build_usage_payload())
 
@@ -1825,6 +1838,30 @@ async def _llm_set_params(sentinel: Sentinel, client: Client, msg: dict) -> None
     if "history_window" in msg:
         params["history_window"] = msg.get("history_window")
     await sentinel._apply_llm()
+
+
+async def _agent_set_provider(sentinel: Sentinel, client: Client, msg: dict) -> None:
+    """Assigne un fournisseur à un sous-agent (multi-agent). Vide ⇒ « auto » (l'agent
+    hérite du fournisseur actif). N'ouvre AUCUN droit : le choix ne porte que sur le
+    modèle qui parle — outils, périmètre et moteur restent identiques."""
+    from .brain.agents import AGENTS
+
+    agent_id = str(msg.get("agent") or "").strip()
+    provider_id = str(msg.get("provider") or "").strip()
+    if agent_id not in AGENTS:
+        return
+    known = {p["id"] for p in sentinel.brain.providers_public()["providers"]}
+    if provider_id and provider_id not in known:
+        return  # fournisseur inconnu : on ignore (jamais d'assignation fantôme)
+    agents = sentinel._llm_cfg.setdefault("agents", {})
+    if provider_id:
+        agents[agent_id] = provider_id
+    else:
+        agents.pop(agent_id, None)  # vide ⇒ auto
+        if not agents:
+            sentinel._llm_cfg.pop("agents", None)
+    await sentinel._apply_llm()
+    await sentinel._broadcast_agents()
 
 
 async def _ha_set(sentinel: Sentinel, client: Client, msg: dict) -> None:

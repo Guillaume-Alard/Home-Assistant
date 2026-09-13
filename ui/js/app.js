@@ -442,6 +442,10 @@ ws.addEventListener('event', (e) => {
       }
       onMissionChange();
       break;
+    case 'agents':   // roster + fournisseur assigné mis à jour (assignation par agent)
+      st.agents = msg.agents || [];
+      if (!drawers.agents.hidden) renderAgents();
+      break;
     case 'alert': showAlert(msg.level || 'info', msg.text || ''); break;
     case 'proposal_new':
       upsertProposal(msg.proposal);
@@ -560,6 +564,7 @@ function onMissionChange() {
 
 function renderAgents() {
   // Cartes d'agent (roster reçu dans hello) + état live d'après la mission en cours.
+  const providers = (lastHello && lastHello.llm && lastHello.llm.providers) || [];
   els.agentsCards.textContent = '';
   if (!st.agents.length) {
     const empty = document.createElement('p');
@@ -610,7 +615,34 @@ function renderAgents() {
       stateEl.textContent = 'au repos';
     }
 
-    card.append(head, desc, stateEl);
+    // Fournisseur (modèle) de l'agent : « Auto » (hérite de l'actif) ou un
+    // fournisseur précis — dont le local. Ne change QUE le modèle qui parle :
+    // outils, périmètre et moteur « propose puis approuve » restent identiques.
+    const provRow = document.createElement('div');
+    provRow.className = 'agent-prov';
+    const plab = document.createElement('label');
+    plab.className = 'agent-prov-lab';
+    plab.textContent = 'Modèle';
+    const sel = document.createElement('select');
+    sel.className = 'agent-prov-sel';
+    sel.setAttribute('aria-label', `Modèle — ${a.label}`);
+    const optAuto = document.createElement('option');
+    optAuto.value = ''; optAuto.textContent = 'Auto (actif)';
+    sel.appendChild(optAuto);
+    for (const p of providers) {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.available ? p.label : `${p.label} (indispo)`;
+      if (p.id === (a.provider || '')) o.selected = true;
+      sel.appendChild(o);
+    }
+    if (!a.provider) optAuto.selected = true;
+    sel.addEventListener('change', () => {
+      ws.sendJSON({ type: 'agent_set_provider', agent: a.id, provider: sel.value });
+    });
+    provRow.append(plab, sel);
+
+    card.append(head, desc, stateEl, provRow);
     els.agentsCards.appendChild(card);
   }
 

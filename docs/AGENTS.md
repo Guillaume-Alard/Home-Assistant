@@ -81,12 +81,24 @@ En ajouter un autre ne demande qu'une **entrée de registre** dans
 Chacun n'expose qu'un sous-ensemble d'outils **déjà** soumis au moteur : ajouter
 un agent n'ouvre aucune capacité nouvelle, ne fait que **cadrer** un rôle.
 
-## Modèle par agent
+## Un modèle par agent
 
-Un agent peut préciser un `provider` (Claude ou un fournisseur compatible OpenAI
-local, ex. un Qwen). Sans précision, il utilise le fournisseur actif. La
-recherche web (native Claude) n'est disponible que sur Claude et pour une personne
-reconnue.
+Chaque agent peut tourner sur **son propre modèle**. Dans le cockpit, sa carte
+(tiroir **Agents**) a un sélecteur **Modèle** : **Auto** (il hérite du fournisseur
+actif) ou un fournisseur précis — Claude, un cloud, ou le **modèle local** (Qwen sur
+la RTX 2070 de Nebula). Idée : confier les rôles de **lecture** (Research, Vision) à
+un modèle local gratuit, et garder Claude pour l'**orchestration** et les tâches
+délicates.
+
+- L'assignation est **persistée** et **éditée à chaud** (message WS
+  `agent_set_provider` ; stockée dans le même blob `llm_config`, clé `agents`).
+- **Résolution** : assignation du cockpit → `provider` éventuel du registre →
+  fournisseur **actif**. Une préférence **indisponible** (p. ex. le local pas encore
+  configuré) **retombe** proprement sur l'actif — jamais d'échec.
+- **Aucun droit en plus.** Le choix ne porte **que** sur le modèle qui parle :
+  outils, périmètre et moteur « propose puis approuve » restent identiques.
+- La **recherche web** (native Claude) n'existe que sur Claude et pour une personne
+  reconnue ; un agent sur un autre modèle ne l'a pas (le reste marche).
 
 ## Sécurité — récapitulatif
 
