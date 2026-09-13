@@ -343,11 +343,14 @@ class Toolbox:
                 "description": (
                     "Affiche un PLAN de travail pour une tâche à PLUSIEURS étapes : pose les "
                     "étapes, puis rappelle cet outil pour marquer l'avancement (a_faire | "
-                    "en_cours | fait) à mesure que tu progresses, et vérifies chaque étape. "
-                    "C'est un fil conducteur VISIBLE dans le cockpit — il n'EXÉCUTE RIEN : "
-                    "chaque étape qui agit passe par tes outils habituels (et donc par le "
-                    "« propose puis approuve »). Réserve-le aux demandes complexes ; pour un "
-                    "geste simple, inutile. `effacer: true` retire le plan une fois terminé."
+                    "en_cours | fait | bloque) à mesure que tu progresses, et vérifies chaque "
+                    "étape. Marque « bloque » une étape dont le résultat n'est pas confirmé ou "
+                    "qui a échoué, puis corrige-la (ou signale-la à Guillaume) avant de "
+                    "continuer. C'est un fil conducteur VISIBLE dans le cockpit — il n'EXÉCUTE "
+                    "RIEN : chaque étape qui agit passe par tes outils habituels (et donc par "
+                    "le « propose puis approuve »). Après une interruption, reprends au premier "
+                    "point non « fait ». Réserve-le aux demandes complexes ; pour un geste "
+                    "simple, inutile. `effacer: true` retire le plan une fois terminé."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -360,7 +363,7 @@ class Toolbox:
                                 "type": "object",
                                 "properties": {
                                     "texte": {"type": "string"},
-                                    "etat": {"type": "string", "enum": ["a_faire", "en_cours", "fait"]},
+                                    "etat": {"type": "string", "enum": ["a_faire", "en_cours", "fait", "bloque"]},
                                 },
                                 "required": ["texte"],
                             },
@@ -1094,7 +1097,7 @@ class Toolbox:
                 continue
             if not texte:
                 continue
-            if etat not in ("a_faire", "en_cours", "fait"):
+            if etat not in ("a_faire", "en_cours", "fait", "bloque"):
                 etat = "a_faire"
             etapes.append({"texte": texte[:160], "etat": etat})
         if not etapes:
@@ -1102,7 +1105,9 @@ class Toolbox:
         plan = {"titre": str(args.get("titre") or "").strip()[:80], "etapes": etapes}
         await self._notify_plan(plan)
         faites = sum(1 for e in etapes if e["etat"] == "fait")
-        return f"Plan mis à jour : {faites}/{len(etapes)} étape(s) faite(s).", False
+        bloquees = sum(1 for e in etapes if e["etat"] == "bloque")
+        suffixe = f", {bloquees} bloquée(s)" if bloquees else ""
+        return f"Plan mis à jour : {faites}/{len(etapes)} étape(s) faite(s){suffixe}.", False
 
     # Auto-amélioration encadrée (Phase 6 — Luna PROPOSE ; Guillaume applique) ──
     #

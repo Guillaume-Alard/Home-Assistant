@@ -124,6 +124,14 @@ pour les tâches à plusieurs étapes :
   depuis Nova.
 - **Corriger** : sur un verdict non confirmé, Luna réévalue et propose une
   correction, plan mis à jour. La discipline est portée par le prompt système.
+- **Échec first-class** : une étape peut passer à l'état `bloque` (échec/non
+  confirmé) — « vérifie → corrige » a ainsi une place explicite ; Luna corrige
+  ou le signale, sans faire comme si de rien n'était.
+- **Reprise après redémarrage** : le plan est persisté (`store` clé
+  `plan.current`, horodaté) et rechargé au démarrage (`Sentinel.restore_plan`).
+  Garde-fou anti-zombie : un plan plus vieux que `PLAN_STALE_SECONDS` (12 h) ne
+  resurgit pas. La décision de « réanimation » est une fonction pure testable
+  (`_revive_plan`).
 
 ## Surveillance (`core/app/monitors/`) — Phase 3A
 

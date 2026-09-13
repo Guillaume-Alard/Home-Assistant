@@ -728,12 +728,29 @@ class Sentinel:
     async def _broadcast_reminders(self) -> None:
         await self.hub.broadcast(await self._reminders_payload())
 
+    # Un plan plus vieux que ça ne resurgit pas après un redémarrage (anti-zombie).
+    PLAN_STALE_SECONDS = 12 * 3600
+
     async def _on_plan_change(self, plan: dict) -> None:
-        """Le plan de travail de Luna a changé : on le garde (éphémère) et on le
-        diffuse au cockpit. Un plan vide efface l'affichage."""
+        """Le plan de travail de Luna a changé : on l'horodate, on le PERSISTE (pour
+        survivre à un redémarrage) et on le diffuse au cockpit. Un plan vide efface
+        l'affichage et la persistance."""
         etapes = plan.get("etapes") if isinstance(plan, dict) else None
-        self._plan = plan if etapes else {}
+        self._plan = {"titre": plan.get("titre", ""), "etapes": etapes, "updated": time.time()} if etapes else {}
+        with contextlib.suppress(Exception):
+            await self.store.set_setting("plan.current", json.dumps(self._plan))
         await self.hub.broadcast({"type": "plan", "plan": self._plan})
+
+    async def restore_plan(self) -> None:
+        """Recharge le plan persisté (reprise après redémarrage), sauf s'il est trop
+        vieux : un plan zombie serait plus trompeur qu'utile, on le purge alors."""
+        with contextlib.suppress(Exception):
+            raw = await self.store.get_setting("plan.current")
+            plan = _revive_plan(raw, time.time(), self.PLAN_STALE_SECONDS)
+            if plan:
+                self._plan = plan
+            elif raw and raw != "{}":
+                await self.store.set_setting("plan.current", json.dumps({}))  # purge le zombie
 
     async def _on_reminder_fired(self, reminder: dict) -> None:
         """Carillon + petit signal pour l'UI quand un minuteur/rappel sonne."""
@@ -1171,6 +1188,7 @@ async def lifespan(app: FastAPI):
     await sentinel.restore_llm_config()
     await sentinel.restore_wake_model()
     await sentinel.restore_connections()
+    await sentinel.restore_plan()
     if sentinel.ha:
         await sentinel.ha.start()
     sentinel.start_proactive()
@@ -1828,6 +1846,24 @@ async def _reply_historique(sentinel: Sentinel, client: Client) -> None:
 # réel, donc pas de passage par le moteur « propose puis approuve ». Guillaume
 # garde le contrôle direct (il voit, ajoute et supprime), ce qui EST le garde-fou
 # pour cette capacité. Après chaque changement, la liste est rediffusée à tous.
+
+
+def _revive_plan(raw: str | None, now: float, stale_after: float) -> dict:
+    """Décode un plan persisté et décide s'il mérite de revivre. Renvoie le plan
+    (avec des étapes) s'il est exploitable et pas trop vieux ; sinon {}. Fonction
+    pure (testable) : la reprise après redémarrage repose dessus."""
+    if not raw:
+        return {}
+    try:
+        plan = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    etapes = plan.get("etapes") if isinstance(plan, dict) else None
+    if not etapes:
+        return {}
+    if now - float(plan.get("updated") or 0) > stale_after:
+        return {}
+    return plan
 
 
 async def _memoire_add(sentinel: Sentinel, msg: dict) -> None:

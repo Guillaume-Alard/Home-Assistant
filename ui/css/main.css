@@ -882,3 +882,5 @@ select.llm-input { cursor: pointer; }
 .plan-step.is-en_cours .plan-text { color: var(--t1); font-weight: 600; }
 .plan-step.is-fait .plan-mark { color: var(--ok); }
 .plan-step.is-fait .plan-text { color: var(--t4); text-decoration: line-through; }
+.plan-step.is-bloque .plan-mark { color: var(--danger); }
+.plan-step.is-bloque .plan-text { color: var(--t1); }

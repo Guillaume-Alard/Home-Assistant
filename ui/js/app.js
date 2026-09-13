@@ -1792,7 +1792,7 @@ document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('cli
 // ── Plan de travail (orchestrateur) ───────────────────────────────────────
 // Le plan est un fil conducteur affiché : il n'exécute rien (chaque étape qui
 // agit passe par les outils habituels et le « propose puis approuve »).
-const PLAN_MARK = { fait: '✓', en_cours: '◐', a_faire: '○' };
+const PLAN_MARK = { fait: '✓', en_cours: '◐', a_faire: '○', bloque: '✕' };
 
 function renderPlan(plan) {
   if (!els.planPane) return;

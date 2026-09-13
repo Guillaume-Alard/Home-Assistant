@@ -81,3 +81,37 @@ async def test_plan_effacer(pbox):
 async def test_plan_sans_etapes_est_une_erreur(pbox):
     content, is_error = await _plan(pbox, {})
     assert is_error and not pbox.plans  # rien n'est diffusé
+
+
+async def test_plan_etat_bloque(pbox):
+    """Durcissement : une étape en échec/non confirmée a une place (« bloque »)."""
+    content, is_error = await _plan(pbox, {"etapes": [
+        {"texte": "Fermer le volet", "etat": "bloque"},
+        {"texte": "Vérifier plus tard", "etat": "a_faire"},
+    ]})
+    assert not is_error and "bloquée" in content
+    assert pbox.plans[-1]["etapes"][0]["etat"] == "bloque"
+
+
+# ── Reprise après redémarrage : la fonction pure de « réanimation » ──────────
+
+def test_revive_plan_frais_est_conserve():
+    from app.main import _revive_plan
+    raw = '{"titre": "T", "etapes": [{"texte": "x", "etat": "en_cours"}], "updated": 1000.0}'
+    plan = _revive_plan(raw, now=1000.0 + 60, stale_after=12 * 3600)
+    assert plan["titre"] == "T" and plan["etapes"][0]["texte"] == "x"
+
+
+def test_revive_plan_perime_est_oublie():
+    from app.main import _revive_plan
+    raw = '{"etapes": [{"texte": "x", "etat": "a_faire"}], "updated": 1000.0}'
+    # Plus vieux que le seuil → plan zombie, on l'oublie.
+    assert _revive_plan(raw, now=1000.0 + 13 * 3600, stale_after=12 * 3600) == {}
+
+
+def test_revive_plan_vide_ou_malforme():
+    from app.main import _revive_plan
+    assert _revive_plan(None, now=0, stale_after=1) == {}
+    assert _revive_plan("{}", now=0, stale_after=1) == {}
+    assert _revive_plan('{"etapes": []}', now=0, stale_after=1) == {}
+    assert _revive_plan("pas du json", now=0, stale_after=1) == {}
