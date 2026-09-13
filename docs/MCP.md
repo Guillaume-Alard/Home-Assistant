@@ -45,38 +45,59 @@ servers:
     risque: sensible            # défaut : interface uniquement
     # jeton: "…"                # optionnel (Authorization: Bearer)
     # entetes: { X-Clef: "…" }  # en-têtes HTTP additionnels
+
+  - nom: outil-local            # transport « stdio » : Sentinel lance une commande
+    transport: stdio
+    commande: mcp-server-machin
+    args: ["--option", "valeur"]
+    mode: lecture
+    # env: { CLE: "…" }         # variables d'environnement ajoutées au sous-processus
 ```
+
+Un serveur **stdio** est une **commande** que Sentinel lance (elle doit être
+présente dans le conteneur `sentinel-core`) et avec qui il parle en JSON-RPC sur
+stdin/stdout. Comme la commande vient de *ta* configuration (jamais de Luna),
+aucune exécution arbitraire n'est possible côté modèle.
 
 Par défaut, aucun serveur n'est déclaré : l'outillage MCP n'apparaît pas.
 `SENTINEL_MCP=off` le retire entièrement (voir `.env.example`).
 
 ## Utiliser
 
-Luna dispose de deux outils (réservés à Guillaume) :
+Luna dispose de quatre outils (réservés à Guillaume) :
 
-- `mcp_outils` — liste les serveurs, leurs outils, le schéma d'arguments et le
-  mode. Elle le consulte **avant** d'appeler, pour connaître les arguments.
+- `mcp_outils` — liste les serveurs, leurs **outils**, **ressources** et
+  **prompts** (avec schémas et mode). Elle le consulte **avant** d'appeler.
 - `mcp_appeler` — appelle un outil (`serveur`, `outil`, `arguments`). Selon le
   mode : réponse directe (lecture) ou proposition à valider (proposition).
+- `mcp_ressource` — lit une **ressource** (`serveur`, `uri`). Lecture seule.
+- `mcp_prompt` — récupère un **prompt** (modèle réutilisable) rendu en texte
+  (`serveur`, `nom`, `arguments`). Lecture seule.
 
-## Transport & limites (v1)
+Ressources et prompts sont par nature **en lecture seule** : ils ne créent jamais
+de proposition et n'ont aucun effet de bord.
 
-- **Transport « Streamable HTTP »** (endpoint HTTP unique, JSON-RPC 2.0 ;
-  réponses `application/json` ou `text/event-stream`). Le transport **stdio**
-  n'est pas encore géré — les serveurs MCP se lancent comme des conteneurs
-  exposant un endpoint HTTP (cohérent avec l'architecture multi-conteneurs).
-- Client **minimal** (pas de dépendance au SDK `mcp`) : `initialize`, session
-  (`Mcp-Session-Id`), `tools/list`, `tools/call`. Les *resources* et *prompts*
-  MCP ne sont pas encore exposés.
-- Validé contre un serveur de test conforme ; **fais un essai** contre ton vrai
-  serveur avant de t'y fier.
+## Transports & limites
+
+- **Deux transports** : « Streamable HTTP » (endpoint unique, JSON-RPC 2.0 ;
+  réponses `application/json` ou `text/event-stream`) et **stdio** (sous-processus
+  local, JSON-RPC ligne par ligne ; un échange à la fois par serveur).
+- Client **minimal** (pas de dépendance au SDK `mcp`) : `initialize` +
+  capacités, `tools/list` · `tools/call`, `resources/list` · `resources/read`,
+  `prompts/list` · `prompts/get`. Les ressources/prompts ne sont interrogés que si
+  le serveur les **annonce** à l'initialisation. Pas encore de *sampling*, de
+  *roots*, ni d'abonnement aux notifications.
+- Validé contre des serveurs de test conformes (HTTP et stdio) ; **fais un essai**
+  contre ton vrai serveur avant de t'y fier.
 
 ## Sécurité — récapitulatif
 
 | Garde-fou | Comment |
 |---|---|
 | Jamais d'effet externe à l'aveugle | `proposition` = validation avant exécution ; `mcp.call` passe par le moteur. |
+| Lecture = sans effet | `mcp_ressource`/`mcp_prompt` (et un serveur `lecture`) ne créent jamais de proposition. |
 | Sensible = interface | Un serveur `proposition`/`sensible` ne s'approuve pas à la voix. |
-| Réservé au propriétaire | `mcp_outils`/`mcp_appeler` exigent le niveau `owner`. |
+| Pas d'exécution arbitraire | La commande d'un serveur stdio vient de `config/mcp.yml` (toi), jamais de Luna. |
+| Réservé au propriétaire | Les outils MCP exigent le niveau `owner`. |
 | Jamais élévateur | La reconnaissance de locuteur ne débloque pas MCP. |
 | Dégradé propre | Serveur en panne → signalé dans `mcp_outils`, jamais d'exception opaque. |

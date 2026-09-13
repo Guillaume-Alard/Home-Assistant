@@ -78,6 +78,8 @@ ACTIVITY_LABELS = {
     "regarder": "regarde la caméra…",
     "mcp_outils": "liste les extensions MCP…",
     "mcp_appeler": "appelle une extension MCP…",
+    "mcp_ressource": "lit une ressource MCP…",
+    "mcp_prompt": "récupère un prompt MCP…",
     "plan": "organise son plan…",
 }
 
@@ -633,6 +635,39 @@ class Toolbox:
                         "required": ["serveur", "outil"],
                     },
                 },
+                {
+                    "name": "mcp_ressource",
+                    "description": (
+                        "Lit une RESSOURCE d'un service MCP (donnée en lecture seule : fichier, "
+                        "enregistrement…). Donne `serveur` et l'`uri` vue dans mcp_outils. "
+                        "Lecture seule — aucun effet de bord. Réservé à Guillaume."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "serveur": {"type": "string"},
+                            "uri": {"type": "string", "description": "URI de la ressource (voir mcp_outils)."},
+                        },
+                        "required": ["serveur", "uri"],
+                    },
+                },
+                {
+                    "name": "mcp_prompt",
+                    "description": (
+                        "Récupère un PROMPT (modèle réutilisable) d'un service MCP, rendu en "
+                        "texte, pour t'en inspirer. Donne `serveur`, `nom` et d'éventuels "
+                        "`arguments`. Lecture seule. Réservé à Guillaume."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "serveur": {"type": "string"},
+                            "nom": {"type": "string"},
+                            "arguments": {"type": "object", "description": "Arguments du prompt (optionnel)."},
+                        },
+                        "required": ["serveur", "nom"],
+                    },
+                },
             ]
         return specs
 
@@ -667,6 +702,7 @@ class Toolbox:
         "regarder": "known",
         # MCP : brancher/piloter un service externe = administration → Guillaume seul.
         "mcp_outils": "owner", "mcp_appeler": "owner",
+        "mcp_ressource": "owner", "mcp_prompt": "owner",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -865,6 +901,39 @@ class Toolbox:
             created_by="sentinel (LLM)",
         )
         return message, proposal is None
+
+    async def _tool_mcp_ressource(self, args, _utt, _src):
+        """Lit une ressource MCP (lecture seule, jamais d'effet de bord)."""
+        if self._mcp is None or not self._mcp.configured:
+            return "Aucun service MCP n'est configuré (config/mcp.yml).", True
+        server_name = str(args.get("serveur") or "").strip()
+        uri = str(args.get("uri") or "").strip()
+        if self._mcp.get(server_name) is None:
+            dispo = ", ".join(s.name for s in self._mcp.servers()) or "aucun"
+            return f"Serveur MCP inconnu : « {server_name} ». Disponibles : {dispo}.", True
+        try:
+            contenu = await self._mcp.read_resource(server_name, uri)
+        except McpError as exc:
+            return str(exc), True
+        return _compact({"serveur": server_name, "uri": uri, "contenu": contenu})[:6000], False
+
+    async def _tool_mcp_prompt(self, args, _utt, _src):
+        """Récupère un prompt MCP (modèle réutilisable), rendu en texte (lecture seule)."""
+        if self._mcp is None or not self._mcp.configured:
+            return "Aucun service MCP n'est configuré (config/mcp.yml).", True
+        server_name = str(args.get("serveur") or "").strip()
+        nom = str(args.get("nom") or "").strip()
+        arguments = args.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return "Les arguments du prompt doivent être un objet.", True
+        if self._mcp.get(server_name) is None:
+            dispo = ", ".join(s.name for s in self._mcp.servers()) or "aucun"
+            return f"Serveur MCP inconnu : « {server_name} ». Disponibles : {dispo}.", True
+        try:
+            rendu = await self._mcp.get_prompt(server_name, nom, arguments)
+        except McpError as exc:
+            return str(exc), True
+        return _compact({"serveur": server_name, "prompt": nom, "rendu": rendu})[:6000], False
 
     async def _tool_liste_pieces(self, args, _utt, _src):
         if self._ha is None or not self._ha.connected:

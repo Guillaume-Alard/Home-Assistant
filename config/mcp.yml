@@ -32,3 +32,12 @@ servers: []
 #     mode: proposition
 #     risque: sensible
 #     # jeton: "colle-ici-un-jeton"
+#
+#   # Transport « stdio » : Sentinel lance une commande (présente dans le conteneur
+#   # sentinel-core) et lui parle en JSON-RPC sur stdin/stdout.
+#   - nom: outil-local
+#     transport: stdio
+#     commande: mcp-server-machin
+#     args: ["--option", "valeur"]
+#     mode: lecture
+#     # env: { CLE: "valeur" }

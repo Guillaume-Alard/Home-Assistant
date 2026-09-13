@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -124,7 +125,8 @@ class FakeMcpServer:
         if method == "initialize":
             hdr = "Mcp-Session-Id: sess-123\r\n"
             return 200, hdr, {"jsonrpc": "2.0", "id": mid, "result": {
-                "protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
                 "serverInfo": {"name": "fake-mcp", "version": "1"},
             }}
         if method == "notifications/initialized":
@@ -133,6 +135,24 @@ class FakeMcpServer:
             return 200, "", {"jsonrpc": "2.0", "id": mid, "result": {"tools": [
                 {"name": "recherche", "description": "Cherche un truc",
                  "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}}},
+            ]}}
+        if method == "resources/list":
+            return 200, "", {"jsonrpc": "2.0", "id": mid, "result": {"resources": [
+                {"uri": "mem://notes", "name": "Notes", "description": "Bloc-notes"},
+            ]}}
+        if method == "resources/read":
+            uri = (msg.get("params") or {}).get("uri")
+            return 200, "", {"jsonrpc": "2.0", "id": mid, "result": {"contents": [
+                {"uri": uri, "mimeType": "text/plain", "text": f"contenu de {uri}"},
+            ]}}
+        if method == "prompts/list":
+            return 200, "", {"jsonrpc": "2.0", "id": mid, "result": {"prompts": [
+                {"name": "resume", "description": "Résume un texte", "arguments": []},
+            ]}}
+        if method == "prompts/get":
+            args = (msg.get("params") or {}).get("arguments") or {}
+            return 200, "", {"jsonrpc": "2.0", "id": mid, "result": {"messages": [
+                {"role": "user", "content": {"type": "text", "text": f"Résume ceci : {args}"}},
             ]}}
         if method == "tools/call":
             params = msg.get("params") or {}
@@ -216,6 +236,91 @@ async def test_reponse_sse_est_lue():
         server.stop()
 
 
+async def test_ressource_et_prompt_http(mcp_server):
+    mgr = McpManager([McpServer(name="local", url=mcp_server.url, mode="lecture")])
+    try:
+        cat = await mgr.catalog()
+        assert [r["uri"] for r in cat["local"]["ressources"]] == ["mem://notes"]
+        assert [p["nom"] for p in cat["local"]["invites"]] == ["resume"]
+        assert "contenu de mem://notes" in await mgr.read_resource("local", "mem://notes")
+        assert "Résume ceci" in await mgr.get_prompt("local", "resume", {"x": "y"})
+    finally:
+        await mgr.aclose()
+
+
+# Faux serveur MCP « stdio » : un script Python qui parle JSON-RPC sur stdin/stdout.
+STDIO_SERVER = r'''
+import sys, json
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n"); sys.stdout.flush()
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    mid, method = msg.get("id"), msg.get("method")
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":mid,"result":{"protocolVersion":"2025-06-18",
+              "capabilities":{"tools":{},"resources":{}},"serverInfo":{"name":"fake-stdio","version":"1"}}})
+    elif method == "notifications/initialized":
+        pass
+    elif method == "tools/list":
+        send({"jsonrpc":"2.0","id":mid,"result":{"tools":[{"name":"echo","description":"Echo","inputSchema":{"type":"object"}}]}})
+    elif method == "tools/call":
+        args = (msg.get("params") or {}).get("arguments") or {}
+        send({"jsonrpc":"2.0","id":mid,"result":{"content":[{"type":"text","text":"stdio echo "+json.dumps(args, ensure_ascii=False)}]}})
+    elif method == "resources/list":
+        send({"jsonrpc":"2.0","id":mid,"result":{"resources":[{"uri":"mem://x","name":"X"}]}})
+    elif method == "resources/read":
+        uri = (msg.get("params") or {}).get("uri")
+        send({"jsonrpc":"2.0","id":mid,"result":{"contents":[{"uri":uri,"mimeType":"text/plain","text":"lu:"+str(uri)}]}})
+    else:
+        send({"jsonrpc":"2.0","id":mid,"error":{"code":-32601,"message":"inconnu"}})
+'''
+
+
+async def test_stdio_transport(tmp_path):
+    script = tmp_path / "fake_stdio_mcp.py"
+    script.write_text(STDIO_SERVER, encoding="utf-8")
+    mgr = McpManager([McpServer(
+        name="loc", transport="stdio", command=sys.executable, args=(str(script),), mode="lecture",
+    )])
+    try:
+        cat = await mgr.catalog()
+        assert cat["loc"]["transport"] == "stdio"
+        assert [t["nom"] for t in cat["loc"]["outils"]] == ["echo"]
+        out = await mgr.call_tool("loc", "echo", {"a": 1})
+        assert "stdio echo" in out and '"a"' in out
+        assert "lu:mem://x" in await mgr.read_resource("loc", "mem://x")
+        # Le serveur stdio n'annonce pas « prompts » → pas d'appel, liste vide.
+        assert "invites" not in cat["loc"]
+    finally:
+        await mgr.aclose()
+
+
+def test_load_mcp_config_stdio(tmp_path):
+    path = tmp_path / "mcp.yml"
+    path.write_text(
+        "servers:\n"
+        "  - nom: local\n"
+        "    transport: stdio\n"
+        "    commande: mcp-server\n"
+        "    args: ['--flag', 'x']\n"
+        "  - nom: sans-commande\n"      # stdio sans commande → ignoré
+        "    transport: stdio\n"
+        "  - nom: http-sans-url\n"       # http sans url → ignoré
+        "    transport: http\n",
+        encoding="utf-8",
+    )
+    servers = {s.name: s for s in load_mcp_config(path)}
+    assert set(servers) == {"local"}
+    assert servers["local"].transport == "stdio"
+    assert servers["local"].command == "mcp-server" and servers["local"].args == ("--flag", "x")
+
+
 def test_load_mcp_config(tmp_path):
     path = tmp_path / "mcp.yml"
     path.write_text(
@@ -276,6 +381,14 @@ class FakeMcp:
         if isinstance(res, Exception):
             raise res
         return res
+
+    async def read_resource(self, server, uri):
+        self.calls.append(("read_resource", server, uri))
+        return f"contenu:{uri}"
+
+    async def get_prompt(self, server, name, arguments=None):
+        self.calls.append(("get_prompt", server, name, arguments))
+        return f"prompt:{name}"
 
 
 @pytest.fixture()
@@ -349,6 +462,28 @@ async def test_mcp_reserve_au_proprietaire(mbox):
 async def test_mcp_serveur_inconnu(mbox):
     content, is_error = await _mcp(mbox, {"serveur": "fantome", "outil": "echo"})
     assert is_error and "inconnu" in content.lower()
+
+
+async def test_mcp_ressource_lecture_directe(mbox):
+    content, is_error = await mbox.toolbox.run(
+        "mcp_ressource", {"serveur": "lecture", "uri": "mem://x"},
+        utterance="", source="text", speaker=OWNER,
+    )
+    assert not is_error and "contenu:mem://x" in content
+    # Réservé au propriétaire.
+    c2, _ = await mbox.toolbox.run(
+        "mcp_ressource", {"serveur": "lecture", "uri": "mem://x"},
+        utterance="", source="text", speaker=UNKNOWN,
+    )
+    assert "réservé à guillaume" in c2.lower()
+
+
+async def test_mcp_prompt_lecture(mbox):
+    content, is_error = await mbox.toolbox.run(
+        "mcp_prompt", {"serveur": "lecture", "nom": "resume", "arguments": {"x": 1}},
+        utterance="", source="text", speaker=OWNER,
+    )
+    assert not is_error and "prompt:resume" in content
 
 
 async def test_mcp_absent_si_non_configure(tmp_path):

@@ -99,16 +99,22 @@ bras (voir `docs/VISION.md`).
 Sentinel est **client MCP** : brancher un service externe sans toucher au cœur
 (voir `docs/MCP.md`).
 
-- **Client** : transport « Streamable HTTP » (JSON-RPC 2.0 sur httpx, sans SDK) —
-  `initialize` + session `Mcp-Session-Id`, `tools/list`, `tools/call` ; réponses
-  `application/json` ou SSE. Serveurs déclarés dans `config/mcp.yml`.
+- **Client** : deux transports (JSON-RPC 2.0, sans SDK) — « Streamable HTTP »
+  (httpx : `initialize` + session `Mcp-Session-Id`, réponses `application/json`
+  ou SSE) et **stdio** (sous-processus lancé par Sentinel, JSON-RPC ligne à ligne,
+  un échange à la fois). `initialize` capture les **capacités** ; puis
+  `tools/list` · `tools/call`, `resources/list` · `resources/read`, `prompts/list`
+  · `prompts/get` (ressources/prompts seulement si annoncés). Serveurs déclarés
+  dans `config/mcp.yml`.
 - **Contrat de sécurité** : serveur `lecture` → appel direct ; serveur
   `proposition` (défaut) → **proposition** (`mcp.call`) approuvée avant exécution,
   au niveau `sensible` (interface seule) ou `moyen`. L'exécution passe par le
   **moteur d'actions** (journalisée) ; ce n'est pas une écriture Nova, mais le
-  « propose puis approuve » s'y applique quand même.
-- **Outils** `mcp_outils` / `mcp_appeler` (Toolbox) réservés au propriétaire
-  (`owner`). Absents si aucun serveur n'est déclaré.
+  « propose puis approuve » s'y applique quand même. Ressources et prompts sont en
+  **lecture seule** (aucune proposition). La commande d'un serveur stdio vient de
+  la config (Guillaume), jamais du modèle : pas d'exécution arbitraire.
+- **Outils** `mcp_outils` / `mcp_appeler` / `mcp_ressource` / `mcp_prompt`
+  (Toolbox) réservés au propriétaire (`owner`). Absents si aucun serveur déclaré.
 
 ## Orchestration : plan → agir → vérifier → corriger
 
