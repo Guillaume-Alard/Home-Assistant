@@ -35,7 +35,7 @@ class AgentSpec:
 # Outils de LECTURE communs (jamais d'écriture ici — l'écriture passe par le moteur).
 _READ = ("etat_maison", "details_entite", "liste_pieces", "chercher_entites")
 
-# Registre des agents. Premier agent : Research (lecture seule) — le patron.
+# Registre des agents. Ajouter un agent = une entrée ici (rien d'autre à toucher).
 AGENTS: dict[str, AgentSpec] = {
     "research": AgentSpec(
         id="research",
@@ -53,6 +53,27 @@ AGENTS: dict[str, AgentSpec] = {
         ),
         tools=_READ,
         web_search=True,
+    ),
+    "home": AgentSpec(
+        id="home",
+        label="Home",
+        description=(
+            "spécialiste domotique (Home Assistant) : diagnostique l'état de la maison "
+            "et agit sur la domotique courante ; le reste passe par une proposition"
+        ),
+        system=(
+            "Tu es Home, le spécialiste domotique de Sentinel (Home Assistant / Nova). Tu "
+            "DIAGNOSTIQUES (états d'entités, capteurs, disponibilité) via tes lectures, et tu "
+            "AGIS sur la domotique COURANTE quand c'est demandé : lumières, volets, scènes, "
+            "chauffage, musique, protocoles. Vérifie toujours les entity_ids avec etat_maison "
+            "AVANT d'agir, et ne prétends jamais qu'une action a réussi sans confirmation. "
+            "Pour tout ce qui sort de la domotique courante — ou toute action sensible — passe "
+            "par une PROPOSITION (creer_proposition) : tu n'exécutes jamais une action sensible "
+            "toi-même. Sois concret et concis."
+        ),
+        # Écritures possibles, mais UNIQUEMENT via ces outils → le moteur « propose
+        # puis approuve » s'applique (sensible = interface, comme partout).
+        tools=_READ + ("action_domotique", "lancer_protocole", "etat_musique", "musique", "creer_proposition"),
     ),
 }
 

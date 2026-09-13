@@ -39,13 +39,19 @@ l'agent hérite ensuite de l'identité du demandeur.
 | Agent | Rôle | Écrit ? |
 |---|---|---|
 | 🔎 **Research** | Cherche, compare, **vérifie** avec sources (recherche web + lectures). | ❌ lecture seule |
+| 🏠 **Home** | Diagnostique la maison (Home Assistant) et **agit** sur la domotique courante ; le reste passe par une proposition. | ✅ via le moteur |
 
-C'est le **premier** agent (le patron). En ajouter un ne demande qu'une **entrée
-de registre** dans `core/app/brain/agents.py` — prompt, sous-ensemble d'outils,
-modèle optionnel. Prochains candidats naturels, en réutilisant l'existant :
+**Home** est le premier agent qui **agit** : il n'écrit toutefois **jamais**
+directement — ses actions passent par `action_domotique`/`creer_proposition`,
+donc par le moteur « propose puis approuve », et une action sensible reste
+validable depuis l'interface uniquement. Il n'a aucun outil d'administration
+(santé système, dev, MCP…), réservés à l'orchestrateur ou à d'autres rôles.
+
+En ajouter un autre ne demande qu'une **entrée de registre** dans
+`core/app/brain/agents.py` — prompt, sous-ensemble d'outils, modèle optionnel.
+Prochains candidats naturels, en réutilisant l'existant :
 
 - 💻 **Developer** → l'atelier (worker Claude Code déjà isolé) ;
-- 🏠 **Home** → les outils domotique ;
 - 🖥️ **Infra** → docker-proxy + santé ;
 - 👁️ **Vision** → l'outil `regarder`.
 

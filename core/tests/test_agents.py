@@ -184,3 +184,26 @@ async def test_run_agent_refuse_un_outil_hors_perimetre(brainbox):
 async def test_run_agent_inconnu(brainbox):
     out = await brainbox.brain.run_agent("martien", "x", who=OWNER, source="test")
     assert "inconnu" in out.lower()
+
+
+# ── Agent Home : peut agir, mais UNIQUEMENT via le moteur ────────────────────
+
+def test_home_perimetre():
+    h = AGENTS["home"]
+    assert "action_domotique" in h.tools and "creer_proposition" in h.tools
+    # Pas d'administration/propriétaire, pas de délégation, pas d'accès hors cadre.
+    interdits = {"deleguer", "sante_systemes", "audit_systemes", "lire_mon_code",
+                 "proposer_evolution", "mcp_appeler"}
+    assert not (set(h.tools) & interdits)
+
+
+async def test_home_agit_via_le_moteur(brainbox):
+    # Home délégué par le propriétaire agit sur la domotique courante — mais l'ordre
+    # part par le MOTEUR (comme Luna), pas en direct.
+    brainbox.brain._client = _FakeAnthropic([
+        _resp("tool_use", [_tool_use("action_domotique", "t1", {"operation": "allumer", "zone": "salon"})]),
+        _resp("end_turn", [_text("Salon allumé.")]),
+    ])
+    out = await brainbox.brain.run_agent("home", "allume le salon", who=OWNER, source="test")
+    assert "salon" in out.lower()
+    assert any(c[:2] == ("homeassistant", "turn_on") for c in brainbox.calls)
