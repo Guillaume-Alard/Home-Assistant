@@ -159,6 +159,13 @@ class Settings:
     vision_max_tokens: int = 512
     vision_timeout: int = 60
 
+    # MCP (couche d'extension) — Luna branche des services externes déclarés dans
+    # config/mcp.yml, sous le contrat de sécurité : serveur « lecture » = appel
+    # direct ; serveur « proposition » = validation avant exécution. Réservé au
+    # propriétaire. SENTINEL_MCP=off retire entièrement l'outillage MCP.
+    mcp_enabled: bool = True
+    mcp_timeout: int = 20
+
     # Notifications mobiles (Phase 14) — Luna te joint sur ton téléphone via l'app
     # Home Assistant. `notify_service` = le service Nova (« mobile_app_xxx »), vide
     # = désactivé. Les bascules disent QUOI pousser : rappels qui sonnent, alertes
@@ -248,6 +255,9 @@ class Settings:
             vision_api_key=os.environ.get("VISION_API_KEY", "").strip(),
             vision_max_tokens=_int(os.environ.get("VISION_MAX_TOKENS"), 512),
             vision_timeout=_int(os.environ.get("VISION_TIMEOUT"), 60),
+            mcp_enabled=os.environ.get("SENTINEL_MCP", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            mcp_timeout=_int(os.environ.get("MCP_TIMEOUT"), 20),
             notify_service=os.environ.get("SENTINEL_NOTIFY_SERVICE", "").strip(),
             notify_reminders=os.environ.get("SENTINEL_NOTIFY_REMINDERS", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),

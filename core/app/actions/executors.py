@@ -18,6 +18,7 @@ from .registry import ActionError, ActionRegistry, ActionSpec
 
 if TYPE_CHECKING:  # uniquement pour les annotations — pas d'import circulaire
     from ..ha.protocols import ProtocolBook
+    from ..brain.mcp import McpManager
 
 log = logging.getLogger("sentinel.actions")
 
@@ -92,8 +93,35 @@ async def _await_state(
 def build_registry(
     ha: HAClient | None,
     protocols: "ProtocolBook | None" = None,
+    mcp: "McpManager | None" = None,
 ) -> ActionRegistry:
     reg = ActionRegistry()
+
+    # ── MCP (couche d'extension) ─────────────────────────────────────────
+    # Un appel d'outil MCP à effet de bord ne s'exécute JAMAIS en direct : il
+    # arrive ici via une proposition approuvée (mode « proposition »). C'est un
+    # effet externe (httpx), pas une écriture Nova — l'invariant `call_service`
+    # ne le concerne pas, mais le « propose puis approuve » s'y applique quand même.
+    if mcp is not None:
+        from ..brain.mcp import McpError
+
+        async def mcp_call(params: dict) -> str:
+            server = str(params.get("server") or "").strip()
+            tool = str(params.get("tool") or "").strip()
+            arguments = params.get("arguments") or {}
+            if not server or not tool:
+                raise ActionError("Appel MCP invalide (serveur et outil requis).")
+            if not isinstance(arguments, dict):
+                raise ActionError("Arguments MCP invalides (objet attendu).")
+            try:
+                return await mcp.call_tool(server, tool, arguments)
+            except McpError as exc:
+                raise ActionError(str(exc)) from exc
+
+        reg.register(ActionSpec(
+            "mcp.call", "Appeler un outil MCP (réservé aux propositions approuvées)",
+            "medium", False, mcp_call,
+        ))
 
     if ha is None:
         return reg

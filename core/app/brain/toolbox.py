@@ -17,6 +17,7 @@ from ..identity import OWNER, Speaker
 from ..reminders import compute_due_iso
 from ..routines import RoutineError, RoutineService
 from ..selfmod import SelfSource, evaluate as evaluate_diff, summarize as summarize_diff
+from .mcp import McpError, McpManager
 from .vision import VisionError, VisionService
 from ..ha.client import HAClient, HAError
 from ..ha import media as media_lib
@@ -75,6 +76,8 @@ ACTIVITY_LABELS = {
     "lister_rappels": "relit tes rappels…",
     "annuler_rappel": "annule un rappel…",
     "regarder": "regarde la caméra…",
+    "mcp_outils": "liste les extensions MCP…",
+    "mcp_appeler": "appelle une extension MCP…",
 }
 
 
@@ -96,6 +99,7 @@ class Toolbox:
         media: MediaConfig | None = None,
         reminders: bool = False,
         vision: VisionService | None = None,
+        mcp: McpManager | None = None,
         tz: str = "Europe/Paris",
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
@@ -119,6 +123,9 @@ class Toolbox:
         # Vision en lecture (brique agentique) — service local optionnel. Absent
         # ou non configuré = pas d'outil « regarder ».
         self._vision = vision
+        # MCP (couche d'extension) — serveurs externes optionnels. Absent = pas
+        # d'outils MCP. Réservé au propriétaire.
+        self._mcp = mcp
         self._tz = tz
         self._on_reminders_change = on_reminders_change
         # Notifie l'UI (rafraîchit Paramètres › Mémoire) quand Luna retient/oublie
@@ -549,6 +556,39 @@ class Toolbox:
                     },
                 },
             })
+        # MCP (couche d'extension) — outils réservés au propriétaire, présents si
+        # au moins un serveur est déclaré dans config/mcp.yml.
+        if self._mcp is not None and self._mcp.configured:
+            specs += [
+                {
+                    "name": "mcp_outils",
+                    "description": (
+                        "Liste les services MCP branchés et leurs outils (nom, description, "
+                        "schéma d'arguments, mode). Consulte-le AVANT d'appeler un outil MCP "
+                        "pour connaître les arguments attendus. Réservé à Guillaume."
+                    ),
+                    "input_schema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "mcp_appeler",
+                    "description": (
+                        "Appelle un outil d'un service MCP. Un serveur « lecture » répond "
+                        "directement ; un serveur « proposition » crée une PROPOSITION que "
+                        "Guillaume approuve avant exécution (rien d'externe ne part à l'aveugle). "
+                        "Donne `serveur`, `outil` et `arguments` (selon le schéma vu dans "
+                        "mcp_outils). Réservé à Guillaume."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "serveur": {"type": "string"},
+                            "outil": {"type": "string"},
+                            "arguments": {"type": "object", "description": "Arguments de l'outil (selon son schéma)."},
+                        },
+                        "required": ["serveur", "outil"],
+                    },
+                },
+            ]
         return specs
 
     # ── Exécution ────────────────────────────────────────────────────────
@@ -580,6 +620,8 @@ class Toolbox:
         # seulement (jamais un invité). La reconnaissance n'élève aucun droit :
         # c'est une lecture, pas une action.
         "regarder": "known",
+        # MCP : brancher/piloter un service externe = administration → Guillaume seul.
+        "mcp_outils": "owner", "mcp_appeler": "owner",
     }
     _MEMORY_TOOLS = ("memoriser", "lister_souvenirs", "oublier")
 
@@ -734,6 +776,50 @@ class Toolbox:
             "entity_id": camera,
             "observation": description,
         })[:4000], False
+
+    async def _tool_mcp_outils(self, _args, _utt, _src):
+        if self._mcp is None or not self._mcp.configured:
+            return "Aucun service MCP n'est configuré (config/mcp.yml).", True
+        return _compact(await self._mcp.catalog())[:6000], False
+
+    async def _tool_mcp_appeler(self, args, _utt, _src):
+        """Appelle un outil MCP. Serveur « lecture » → direct ; « proposition » →
+        une proposition à valider (jamais d'effet externe à l'aveugle)."""
+        if self._mcp is None or not self._mcp.configured:
+            return "Aucun service MCP n'est configuré (config/mcp.yml).", True
+        server_name = str(args.get("serveur") or "").strip()
+        tool = str(args.get("outil") or "").strip()
+        arguments = args.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return "Les arguments MCP doivent être un objet.", True
+        server = self._mcp.get(server_name)
+        if server is None:
+            dispo = ", ".join(s.name for s in self._mcp.servers()) or "aucun"
+            return f"Serveur MCP inconnu : « {server_name} ». Disponibles : {dispo}.", True
+        if not tool:
+            return "Précise l'outil MCP à appeler (voir mcp_outils).", True
+        if server.mode == "lecture":
+            try:
+                result = await self._mcp.call_tool(server_name, tool, arguments)
+            except McpError as exc:
+                return str(exc), True
+            return _compact({"serveur": server_name, "outil": tool, "resultat": result})[:6000], False
+        # Mode « proposition » : rien ne part sans l'accord de Guillaume.
+        if self._engine is None:
+            return (
+                "Ce service MCP exige une validation, mais le moteur de propositions "
+                "n'est pas disponible (Nova non configurée).", True
+            )
+        proposal, message = await self._engine.propose(
+            title=f"MCP · {server_name}.{tool}",
+            description=f"Appel de l'outil MCP « {tool} » sur le service « {server_name} ».",
+            justification=str(args.get("justification") or ""),
+            risk=server.risk,
+            action_id="mcp.call",
+            params={"server": server_name, "tool": tool, "arguments": arguments},
+            created_by="sentinel (LLM)",
+        )
+        return message, proposal is None
 
     async def _tool_liste_pieces(self, args, _utt, _src):
         if self._ha is None or not self._ha.connected:

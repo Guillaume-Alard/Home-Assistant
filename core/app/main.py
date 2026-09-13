@@ -60,6 +60,7 @@ from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
 from .brain.memory import format_profile, normalize_category
 from .brain.speech_text import SentenceChunker, markdown_to_speech
+from .brain.mcp import McpManager, load_mcp_config
 from .brain.toolbox import Toolbox
 from .brain.vision import VisionService
 from .config import Settings, find_ui_dir
@@ -237,6 +238,14 @@ class Sentinel:
 
         # ── Domotique & surveillance — chaque brique se dégrade proprement ──
         self.protocols = ProtocolBook.load(settings.config_dir / "protocols.yml")
+        # MCP (couche d'extension) : serveurs externes déclarés dans config/mcp.yml.
+        # Absent/vide = pas d'outillage MCP. Le pilotage passe par le moteur de
+        # propositions (serveur « proposition ») ou en direct (serveur « lecture »).
+        self.mcp: McpManager | None = None
+        if settings.mcp_enabled:
+            mcp_servers = load_mcp_config(settings.config_dir / "mcp.yml")
+            if mcp_servers:
+                self.mcp = McpManager(mcp_servers, timeout=settings.mcp_timeout)
         self.ha: HAClient | None = None
         self.engine: ActionEngine | None = None
         self.alerts: AlertEngine | None = None
@@ -256,7 +265,7 @@ class Sentinel:
         self.health = HealthService(settings, self.ha)
 
         if self.ha:
-            registry = build_registry(self.ha, self.protocols)
+            registry = build_registry(self.ha, self.protocols, mcp=self.mcp)
             self.engine = ActionEngine(registry, store, on_proposal_change=self._on_proposal_change)
         # Notifications mobiles (Phase 14) : Luna te joint sur ton téléphone via le
         # service notify de Nova. Communication seule, jamais de pilotage. Inactif
@@ -309,7 +318,8 @@ class Sentinel:
             self.ha, self.engine, self.protocols, store,
             health=self.health, source=self.source, self_improve=settings.self_improve_enabled,
             routines=self.routines, media=self.media_cfg,
-            reminders=settings.reminders_enabled, vision=self.vision, tz=settings.tz,
+            reminders=settings.reminders_enabled, vision=self.vision, mcp=self.mcp,
+            tz=settings.tz,
             on_memory_change=self._broadcast_memoires,
             on_suggestions_change=self._broadcast_evolutions,
             on_reminders_change=self._broadcast_reminders,
@@ -763,6 +773,8 @@ class Sentinel:
             await self.routines.stop()
         if self.reminders:
             await self.reminders.stop()
+        if self.mcp:
+            await self.mcp.aclose()
         await self.health.close()
 
     async def _speak_announcement(self, text: str, severity: str) -> None:

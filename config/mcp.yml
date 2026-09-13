@@ -1,0 +1,34 @@
+# ── Services MCP de Sentinel (couche d'extension) ─────────────────────────
+# Branche des services externes (MCP, transport « Streamable HTTP ») sans
+# toucher au cœur de Sentinel. Réservé à Guillaume (administration).
+#
+# Contrat de sécurité — le « propose puis approuve » s'applique AUSSI ici :
+#   mode: lecture      → les outils du serveur s'appellent DIRECTEMENT
+#                        (réserve-le aux serveurs sûrs en lecture/requête).
+#   mode: proposition  → (défaut) chaque appel devient une PROPOSITION que tu
+#                        approuves avant exécution. Rien d'externe à l'aveugle.
+#   risque: moyen|sensible  → (mode proposition) niveau d'approbation :
+#                        « sensible » (défaut) = validation dans l'interface
+#                        uniquement ; « moyen » = approuvable à la voix.
+#
+# Champs par serveur :
+#   nom    : identifiant court (utilisé par Luna pour cibler le serveur)
+#   url    : endpoint HTTP du serveur MCP (Streamable HTTP)
+#   mode   : lecture | proposition   (défaut : proposition)
+#   risque : moyen | sensible        (défaut : sensible)
+#   jeton  : jeton d'authentification (optionnel ; en-tête Authorization: Bearer)
+#   entetes: en-têtes HTTP supplémentaires (optionnel)
+#
+# Par défaut : AUCUN serveur (l'outillage MCP n'apparaît pas). Décommente pour
+# activer. Voir docs/MCP.md.
+
+servers: []
+#   - nom: recherche
+#     url: http://sentinel-mcp-recherche:8080/mcp
+#     mode: lecture
+#
+#   - nom: domotique-avancee
+#     url: http://sentinel-mcp-ha:8080/mcp
+#     mode: proposition
+#     risque: sensible
+#     # jeton: "colle-ici-un-jeton"

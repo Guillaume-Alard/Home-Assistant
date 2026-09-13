@@ -94,6 +94,22 @@ bras (voir `docs/VISION.md`).
   action — agir sur ce qu'elle voit repasse par une **proposition**. Absent si le
   service de vision ou une caméra manquent (dégradé propre).
 
+## MCP (`core/app/brain/mcp.py`) — couche d'extension
+
+Sentinel est **client MCP** : brancher un service externe sans toucher au cœur
+(voir `docs/MCP.md`).
+
+- **Client** : transport « Streamable HTTP » (JSON-RPC 2.0 sur httpx, sans SDK) —
+  `initialize` + session `Mcp-Session-Id`, `tools/list`, `tools/call` ; réponses
+  `application/json` ou SSE. Serveurs déclarés dans `config/mcp.yml`.
+- **Contrat de sécurité** : serveur `lecture` → appel direct ; serveur
+  `proposition` (défaut) → **proposition** (`mcp.call`) approuvée avant exécution,
+  au niveau `sensible` (interface seule) ou `moyen`. L'exécution passe par le
+  **moteur d'actions** (journalisée) ; ce n'est pas une écriture Nova, mais le
+  « propose puis approuve » s'y applique quand même.
+- **Outils** `mcp_outils` / `mcp_appeler` (Toolbox) réservés au propriétaire
+  (`owner`). Absents si aucun serveur n'est déclaré.
+
 ## Surveillance (`core/app/monitors/`) — Phase 3A
 
 - **Docker** (`docker.py`) via DEUX proxys tecnativa (aucun port LAN, socket
