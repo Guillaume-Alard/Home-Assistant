@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from app.brain.llm import _speaker_line, _system_blocks
-from app.brain.memory import format_profile, normalize_category, normalize_scope
+from app.brain.memory import (
+    format_profile, normalize_category, normalize_scope, rank_by_similarity, select_context,
+)
 from app.config import Settings
 from app.identity import OWNER, UNKNOWN, Speaker
 
@@ -74,6 +76,51 @@ def test_format_profile_conversation_bornee():
     # Contexte passager : seuls les plus récents sont injectés.
     assert "note 0" not in out
     assert f"note {CONVERSATION_INJECT_MAX + 4}" in out
+
+
+# ── RAG mémoire : classement par similarité + sélection du contexte ──────────
+
+def _emb(mid, content, scope, vec, category="fait"):
+    return {"id": mid, "content": content, "scope": scope, "category": category, "embedding": vec}
+
+
+def test_rank_by_similarity_ordonne_et_ignore_sans_vecteur():
+    q = [1.0, 0.0]
+    mems = [
+        _emb("a", "aligné", "maison", [1.0, 0.0]),
+        _emb("b", "orthogonal", "maison", [0.0, 1.0]),
+        _emb("c", "proche", "maison", [0.9, 0.1]),
+        _emb("d", "sans vecteur", "maison", None),
+    ]
+    assert [m["id"] for m in rank_by_similarity(q, mems, top_k=2)] == ["a", "c"]
+
+
+def test_rank_ignore_dimension_differente():
+    assert rank_by_similarity([1.0, 0.0], [_emb("x", "x", "maison", [1.0, 0.0, 0.0])], top_k=3) == []
+
+
+def test_rank_parse_embedding_json():
+    import json
+    ranked = rank_by_similarity([1.0, 0.0], [_emb("x", "x", "maison", json.dumps([1.0, 0.0]))], top_k=1)
+    assert [m["id"] for m in ranked] == ["x"]  # vecteur stocké en texte (comme en base)
+
+
+def test_select_context_repli_recence_sans_vecteur():
+    mems = [_emb(str(i), f"m{i}", "utilisateur", None) for i in range(5)]
+    sel = select_context(mems, None, top_k=3, recent=2)
+    assert [m["id"] for m in sel] == ["3", "4"]  # les 2 plus récents (comportement d'origine)
+
+
+def test_select_context_profil_stable_plus_pertinents():
+    q = [1.0, 0.0]
+    mems = [
+        _emb("p1", "profil", "utilisateur", [0.0, 1.0]),         # profil (peu pertinent)
+        _emb("proj", "projet pertinent", "projet", [1.0, 0.0]),  # très pertinent
+        _emb("m1", "maison hors sujet", "maison", [0.0, 1.0]),   # hors sujet
+    ]
+    ids = [m["id"] for m in select_context(mems, q, top_k=1, recent=60)]
+    assert "p1" in ids and "proj" in ids   # profil stable TOUJOURS + le plus pertinent
+    assert "m1" not in ids                  # le hors-sujet n'est pas rappelé
 
 
 def test_system_blocks_injecte_la_memoire_apres_le_cache():

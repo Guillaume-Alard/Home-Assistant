@@ -9,6 +9,9 @@ réel n'en découle. La transparence et le contrôle restent à Guillaume
 
 from __future__ import annotations
 
+import json
+import math
+
 # Catégories reconnues, dans l'ordre d'affichage, avec leur libellé.
 CATEGORY_LABELS = {
     "preference": "Préférences",
@@ -96,6 +99,67 @@ def format_profile(memories: list[dict]) -> str:
         if block:
             sections.append(block)
     return "\n\n".join(sections)
+
+
+# ── RAG mémoire : récupération par pertinence sémantique ──────────────────
+
+def _mem_vector(m: dict) -> list[float] | None:
+    """Vecteur d'embedding d'un souvenir (stocké en JSON), ou None."""
+    v = m.get("embedding")
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            return None
+    return v if isinstance(v, list) and v else None
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b) or not a:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def rank_by_similarity(query_vec: list[float] | None, memories: list[dict], top_k: int) -> list[dict]:
+    """Les `top_k` souvenirs les plus proches de la requête (cosinus). Ignore ceux
+    sans vecteur ou de dimension différente (vecteur périmé)."""
+    if not query_vec or top_k <= 0:
+        return []
+    dim = len(query_vec)
+    scored = []
+    for m in memories:
+        vec = _mem_vector(m)
+        if vec is None or len(vec) != dim:
+            continue
+        scored.append((_cosine(query_vec, vec), m))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [m for _, m in scored[:top_k]]
+
+
+def select_context(
+    memories: list[dict], query_vec: list[float] | None = None, *, top_k: int = 6, recent: int = 60
+) -> list[dict]:
+    """Choisit les souvenirs à injecter. Sans vecteur de requête (RAG inactif) :
+    les plus récents (comportement d'origine). Avec : le PROFIL STABLE (niveau
+    « utilisateur ») + les `top_k` souvenirs les plus PERTINENTS des autres
+    niveaux — pour que le profil ne soit jamais évincé et qu'un souvenir ancien
+    mais pertinent remonte."""
+    mems = [m for m in memories if str(m.get("content") or "").strip()]
+    if not query_vec:
+        return mems[-recent:] if recent and recent > 0 else mems
+    profile = [m for m in mems if normalize_scope(m.get("scope")) == "utilisateur"]
+    if recent and recent > 0:
+        profile = profile[-recent:]
+    selected = list(profile)
+    kept = {m.get("id") for m in profile}
+    for m in rank_by_similarity(query_vec, mems, top_k):
+        if m.get("id") not in kept:
+            selected.append(m)
+            kept.add(m.get("id"))
+    return selected
 
 
 def _format_scope(scope: str, items: list[dict]) -> str:

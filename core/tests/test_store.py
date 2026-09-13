@@ -133,6 +133,31 @@ async def test_memoire_migration_ajoute_le_niveau(tmp_path):
         await store.add_memory("Cuisine ouverte sur le salon", scope="maison")
         got = {m["content"]: m["scope"] for m in await store.list_memories()}
         assert got["Cuisine ouverte sur le salon"] == "maison"
+        # La colonne embedding (RAG) est ajoutée aussi, à NULL sur le souvenir migré.
+        assert mems[0]["embedding"] is None
+    finally:
+        await store.close()
+
+
+async def test_memoire_embedding_rag(tmp_path):
+    """RAG : vecteur stocké/relu, souvenirs à embarquer listés, reset au changement."""
+    import json
+
+    store = Store(tmp_path / "emb.db")
+    await store.open()
+    try:
+        m = await store.add_memory("Aime le jazz")
+        assert m.get("embedding") is None
+        assert [p["id"] for p in await store.memories_missing_embedding()] == [m["id"]]
+
+        await store.set_memory_embedding(m["id"], [0.1, 0.2, 0.3])
+        stored = (await store.list_memories())[0]
+        assert json.loads(stored["embedding"]) == [0.1, 0.2, 0.3]
+        assert await store.memories_missing_embedding() == []
+
+        # Changer le contenu efface le vecteur (il sera recalculé).
+        await store.update_memory(m["id"], content="Aime le blues")
+        assert (await store.get_memory(m["id"]))["embedding"] is None
     finally:
         await store.close()
 

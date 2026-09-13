@@ -169,9 +169,12 @@ class McpManager:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
-        for proc in list(self._procs.values()):  # stdio : couper les sous-processus
-            with contextlib.suppress(Exception):
-                proc.terminate()
+        for proc in list(self._procs.values()):  # stdio : couper et récolter les sous-processus
+            if proc.returncode is None:
+                with contextlib.suppress(Exception):
+                    proc.terminate()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(proc.wait(), timeout=2)  # récolte dans la boucle
         self._procs.clear()
 
     async def _rpc(self, server: str, payload: dict, *, expect_response: bool = True) -> dict | None:

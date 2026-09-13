@@ -113,6 +113,16 @@ class Settings:
     memory_enabled: bool = True
     memory_window: int = 60
 
+    # RAG mémoire (récupération par pertinence) — service d'embeddings LOCAL
+    # (compatible OpenAI, RTX 2070). Vide = désactivé : la mémoire retombe sur la
+    # récence (comportement d'origine). Les vecteurs sont stockés localement.
+    # memory_rag_top_k = nb de souvenirs pertinents rappelés en plus du profil stable.
+    embeddings_enabled: bool = True
+    embeddings_base_url: str = ""
+    embeddings_model: str = ""
+    embeddings_api_key: str = ""
+    memory_rag_top_k: int = 6
+
     # Recherche web (Phase 4) — outil natif Anthropic (web_search), citations
     # intégrées. Contrôlée : plafond d'usages par tour ; réservée aux personnes
     # reconnues (owner + maisonnée). SENTINEL_WEB_SEARCH=off pour la désactiver.
@@ -232,6 +242,12 @@ class Settings:
             memory_enabled=os.environ.get("SENTINEL_MEMORY", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             memory_window=_int(os.environ.get("SENTINEL_MEMORY_WINDOW"), 60),
+            embeddings_enabled=os.environ.get("SENTINEL_EMBEDDINGS", "on").strip().lower()
+            not in ("off", "0", "false", "no", "non"),
+            embeddings_base_url=os.environ.get("EMBEDDINGS_BASE_URL", "").strip().rstrip("/"),
+            embeddings_model=os.environ.get("EMBEDDINGS_MODEL", "").strip(),
+            embeddings_api_key=os.environ.get("EMBEDDINGS_API_KEY", "").strip(),
+            memory_rag_top_k=_int(os.environ.get("MEMORY_RAG_TOP_K"), 6),
             web_search_enabled=os.environ.get("SENTINEL_WEB_SEARCH", "on").strip().lower()
             not in ("off", "0", "false", "no", "non"),
             web_search_max_uses=_int(os.environ.get("SENTINEL_WEB_SEARCH_MAX"), 5),

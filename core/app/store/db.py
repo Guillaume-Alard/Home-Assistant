@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS memories (
     scope       TEXT NOT NULL DEFAULT 'utilisateur', -- utilisateur | maison | projet | conversation
     content     TEXT NOT NULL,
     source      TEXT NOT NULL DEFAULT 'luna',    -- luna | manuel
+    embedding   TEXT,                            -- vecteur JSON (RAG) ; NULL = pas encore calculé
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -261,6 +262,8 @@ class Store:
         # Brique 4 : niveau de mémoire. Les souvenirs déjà présents portent sur
         # Guillaume → niveau « utilisateur » (le profil stable).
         await self._ensure_column("memories", "scope", "TEXT NOT NULL DEFAULT 'utilisateur'")
+        # RAG mémoire : vecteur d'embedding (NULL = à calculer, rempli en tâche de fond).
+        await self._ensure_column("memories", "embedding", "TEXT")
 
     async def _ensure_column(self, table: str, column: str, decl: str) -> None:
         cursor = await self._db.execute(f"PRAGMA table_info({table})")
@@ -455,12 +458,34 @@ class Store:
         fields = {k: v for k, v in fields.items() if k in ("content", "category", "scope", "subject")}
         if fields:
             fields["updated_at"] = _now_iso()
+            # Le contenu change → le vecteur d'embedding devient obsolète : on l'efface
+            # (il sera recalculé en tâche de fond).
+            if "content" in fields:
+                fields["embedding"] = None
             keys = ", ".join(f"{k} = ?" for k in fields)
             await self._db.execute(
                 f"UPDATE memories SET {keys} WHERE id = ?", (*fields.values(), mem_id)
             )
             await self._db.commit()
         return await self.get_memory(mem_id)
+
+    async def set_memory_embedding(self, mem_id: str, vector: list[float] | None) -> None:
+        """Enregistre (ou efface) le vecteur d'embedding d'un souvenir (RAG)."""
+        assert self._db is not None, "Store non ouvert"
+        payload = json.dumps(vector) if vector else None
+        await self._db.execute(
+            "UPDATE memories SET embedding = ? WHERE id = ?", (payload, mem_id)
+        )
+        await self._db.commit()
+
+    async def memories_missing_embedding(self, limit: int = 200) -> list[dict]:
+        """Souvenirs sans vecteur (à calculer par la tâche de fond RAG)."""
+        assert self._db is not None, "Store non ouvert"
+        cursor = await self._db.execute(
+            "SELECT * FROM memories WHERE embedding IS NULL ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
 
     async def delete_memory(self, mem_id: str) -> bool:
         assert self._db is not None, "Store non ouvert"

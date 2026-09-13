@@ -29,6 +29,16 @@ tes propres échanges avec le cerveau (au même titre que l'historique).
   plus récentes. Le niveau se choisit à la voix (« retiens, pour le projet…, que… »)
   ou dans **Paramètres › Mémoire** ; les souvenirs d'avant cette brique sont, sans
   rien faire, rattachés au profil **utilisateur**.
+- **Récupération par pertinence (RAG), optionnelle.** Par défaut, on injecte les
+  souvenirs les plus **récents**. Si tu déclares un **service d'embeddings local**
+  (compatible OpenAI, sur la RTX 2070 — `EMBEDDINGS_BASE_URL` dans `.env`), Luna
+  récupère en plus les souvenirs les plus **pertinents** pour ta demande, même
+  anciens : le profil stable est **toujours** injecté, complété des `MEMORY_RAG_TOP_K`
+  souvenirs les plus proches (cosinus). Les vecteurs sont calculés en tâche de
+  fond et **stockés localement** (rien ne quitte Nebula) ; changer le contenu d'un
+  souvenir recalcule le sien. Service absent ou en panne → repli **silencieux** sur
+  la récence, rien ne casse. *(Si tu changes de modèle d'embeddings, les anciens
+  vecteurs — de dimension différente — sont simplement ignorés.)*
 - **Tu gardes la main — totalement.** Dans **Paramètres › Mémoire** tu vois
   *tout* ce que Luna retient, groupé par catégorie ; tu peux **ajouter** un
   souvenir toi-même et **supprimer** n'importe lequel d'un clic. C'est *cette*

@@ -58,7 +58,8 @@ from .actions.executors import build_registry
 from .notify import Notifier
 from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
-from .brain.memory import format_profile, normalize_category, normalize_scope
+from .brain.embeddings import EmbeddingsError, EmbeddingsService
+from .brain.memory import format_profile, normalize_category, normalize_scope, select_context
 from .brain.speech_text import SentenceChunker, markdown_to_speech
 from .brain.mcp import McpManager, load_mcp_config
 from .brain.toolbox import Toolbox
@@ -314,6 +315,9 @@ class Sentinel:
         # Vision en lecture (brique agentique) : service local optionnel (RTX 2070).
         # Non configuré → `available` faux → l'outil « regarder » n'apparaît pas.
         self.vision = VisionService(settings)
+        # RAG mémoire : service d'embeddings local optionnel. Non configuré →
+        # `available` faux → la mémoire retombe sur la récence (comportement d'origine).
+        self.embeddings = EmbeddingsService(settings)
         toolbox = Toolbox(
             self.ha, self.engine, self.protocols, store,
             health=self.health, source=self.source, self_improve=settings.self_improve_enabled,
@@ -603,16 +607,50 @@ class Sentinel:
 
     # ── Mémoire persistante (Phase 1) ────────────────────────────────────
 
-    async def _memory_context(self, subject: str | None) -> str:
-        """Bloc « ce que je sais de toi » du locuteur courant (vide si invité/coupée)."""
+    async def _memory_context(self, subject: str | None, query: str | None = None) -> str:
+        """Bloc « ce que je sais de toi » du locuteur courant (vide si invité/coupée).
+
+        RAG : si un service d'embeddings est configuré et qu'on a une requête, on
+        récupère les souvenirs les PLUS PERTINENTS (en plus du profil stable) ;
+        sinon on retombe sur les plus récents (comportement d'origine)."""
         if not self.settings.memory_enabled or not subject:
             return ""
+        rag = self.embeddings.available and bool(query and query.strip())
+        limit = 500 if rag else self.settings.memory_window
         try:
-            mems = await self.store.list_memories(subject=subject, limit=self.settings.memory_window)
+            mems = await self.store.list_memories(subject=subject, limit=limit)
         except Exception:
             log.exception("Lecture de la mémoire impossible")
             return ""
-        return format_profile(mems)
+        query_vec = None
+        if rag and mems:
+            try:
+                query_vec = (await self.embeddings.embed([query]))[0] or None
+            except EmbeddingsError:
+                query_vec = None  # service indisponible → repli propre sur la récence
+        selected = select_context(
+            mems, query_vec, top_k=self.settings.memory_rag_top_k, recent=self.settings.memory_window
+        )
+        return format_profile(selected)
+
+    async def _embed_pending(self) -> None:
+        """Tâche de fond RAG : calcule les vecteurs des souvenirs qui n'en ont pas
+        encore. Inerte si le service d'embeddings n'est pas configuré. Bornée et
+        silencieuse en cas d'indisponibilité (la mémoire marche sans, sur la récence)."""
+        if not self.embeddings.available:
+            return
+        try:
+            pending = await self.store.memories_missing_embedding(limit=200)
+            if not pending:
+                return
+            vectors = await self.embeddings.embed([m["content"] for m in pending])
+            for mem, vec in zip(pending, vectors):
+                if vec:
+                    await self.store.set_memory_embedding(mem["id"], vec)
+        except EmbeddingsError:
+            pass  # service momentanément indisponible : on réessaiera au prochain changement
+        except Exception:
+            log.exception("Calcul des embeddings mémoire impossible")
 
     async def _memoires_payload(self) -> dict:
         # Paramètres › Mémoire montre la mémoire de Guillaume (les profils de la
@@ -622,6 +660,10 @@ class Sentinel:
 
     async def _broadcast_memoires(self, subject: str | None = None) -> None:
         """Rafraîchit Paramètres › Mémoire (mémoire de Guillaume) sur tous les appareils."""
+        # Un souvenir a changé (quel que soit le profil) → (re)calcule les vecteurs
+        # manquants en tâche de fond (RAG). Inerte si les embeddings ne sont pas là.
+        if self.embeddings.available:
+            self._spawn(self._embed_pending())
         if subject not in (None, "guillaume"):
             return  # un changement dans un autre profil n'affecte pas le panneau
         await self.hub.broadcast(await self._memoires_payload())
@@ -1189,6 +1231,9 @@ async def lifespan(app: FastAPI):
     await sentinel.restore_wake_model()
     await sentinel.restore_connections()
     await sentinel.restore_plan()
+    # RAG mémoire : rattrape en tâche de fond les vecteurs manquants (inerte si
+    # le service d'embeddings n'est pas configuré).
+    sentinel._spawn(sentinel._embed_pending())
     if sentinel.ha:
         await sentinel.ha.start()
     sentinel.start_proactive()

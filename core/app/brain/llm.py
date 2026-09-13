@@ -178,6 +178,21 @@ effet n'est pas confirmé, redis l'ordre à Guillaume, qui le relancera et confi
 """
 
 
+def _last_user_text(messages: list[dict]) -> str:
+    """Dernier message utilisateur (texte) de l'historique — sert de requête au RAG."""
+    for m in reversed(messages or []):
+        if m.get("role") == "user":
+            content = m.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):  # blocs → concatène le texte
+                return " ".join(
+                    str(b.get("text", "")) for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ).strip()
+    return ""
+
+
 def _speaker_line(speaker: Speaker | None) -> str:
     """Ligne « à qui tu parles » injectée par tour (variable, hors cache)."""
     if speaker is None or speaker.is_owner:
@@ -298,7 +313,7 @@ class Brain:
         settings: Settings,
         toolbox: Toolbox | None = None,
         on_activity: Callable[[str], Awaitable[None]] | None = None,
-        memory_provider: Callable[[], Awaitable[str]] | None = None,
+        memory_provider: Callable[[str | None, str], Awaitable[str]] | None = None,
         on_sources: Callable[[list[dict]], Awaitable[None]] | None = None,
         on_usage: Callable[[str, str, int, int], Awaitable[None]] | None = None,
     ):
@@ -402,12 +417,13 @@ class Brain:
             self._oai[profile.id] = prov
         return prov
 
-    async def _read_memory(self, who: Speaker) -> str:
-        """Mémoire du locuteur courant, lue une fois pour tout le tour (invité = rien)."""
+    async def _read_memory(self, who: Speaker, query: str = "") -> str:
+        """Mémoire du locuteur courant, lue une fois pour tout le tour (invité = rien).
+        `query` (la demande courante) sert au RAG : récupérer les souvenirs pertinents."""
         if self._memory_provider is None:
             return ""
         try:
-            return await self._memory_provider(who.subject)
+            return await self._memory_provider(who.subject, query)
         except Exception:
             log.exception("Lecture de la mémoire impossible — tour sans profil")
             return ""
@@ -431,7 +447,9 @@ class Brain:
         profile = self._by_id.get(self._active_id) or self._by_id.get(self._default_id)
         messages: list[dict] = list(history)
         tools: list[dict] = list(self._toolbox.specs()) if self._toolbox else []
-        memory_text = await self._read_memory(who)
+        # La demande courante (voix ou dernier message) sert au RAG mémoire.
+        query = utterance.strip() or _last_user_text(messages)
+        memory_text = await self._read_memory(who, query)
 
         if profile is not None and profile.kind == "openai":
             async for text in self._stream_openai(
