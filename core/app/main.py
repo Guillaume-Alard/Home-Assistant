@@ -337,6 +337,7 @@ class Sentinel:
             settings, toolbox,
             on_activity=self._on_activity, memory_provider=self._memory_context,
             on_sources=self._broadcast_sources, on_usage=self._record_usage,
+            on_mission=self._on_mission,
         )
         # Multi-agent : la Toolbox peut désormais déléguer à un sous-agent via le
         # cerveau (injection tardive : le cerveau référence la Toolbox).
@@ -375,6 +376,13 @@ class Sentinel:
 
     async def _on_activity(self, label: str) -> None:
         await self.hub.broadcast({"type": "activity", "text": label})
+
+    async def _on_mission(self, event: dict) -> None:
+        """Cycle de vie d'une délégation multi-agent (début/fin) → cockpit.
+
+        Purement observable : le cockpit sait quel agent travaille et rattache
+        l'activité des outils à sa mission. N'ouvre aucun droit."""
+        await self.hub.broadcast({"type": "mission", **event})
 
     async def _broadcast_sources(self, sources: list[dict]) -> None:
         """Sources web citées par Luna (Phase 4) — rattachées au dernier message."""

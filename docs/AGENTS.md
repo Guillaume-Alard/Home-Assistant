@@ -34,6 +34,17 @@ Un sous-agent n'est **jamais** un moyen d'en faire plus :
 `deleguer` est réservé aux **personnes reconnues** (comme la domotique courante) ;
 l'agent hérite ensuite de l'identité du demandeur.
 
+## Missions (délégation observable)
+
+Une délégation est une **mission** : le cockpit sait, en direct, **quel** agent
+travaille et **sur quoi**. Le cerveau émet un évènement `mission` au **début** et
+à la **fin** de chaque `run_agent`, et l'activité des outils qui suit (« consulte
+Nova… ») est **rattachée** à l'agent en cours (« 🔎 Research · consulte Nova… »).
+
+C'est **purement observable** : rien n'est ouvert, aucun chemin d'exécution n'est
+modifié — juste de la visibilité. Les droits restent ceux du demandeur, et une
+action sensible reste validable depuis l'interface uniquement.
+
 ## Les agents
 
 | Agent | Rôle | Écrit ? |

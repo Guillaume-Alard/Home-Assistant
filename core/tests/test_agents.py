@@ -210,6 +210,38 @@ async def test_run_agent_inconnu(brainbox):
     assert "inconnu" in out.lower()
 
 
+# ── Missions : la délégation est OBSERVABLE (début/fin), sans ouvrir de droit ──
+
+async def test_run_agent_emet_debut_et_fin_de_mission(brainbox):
+    missions: list[dict] = []
+
+    async def cap(ev):
+        missions.append(ev)
+
+    brainbox.brain._on_mission = cap
+    brainbox.brain._client = _FakeAnthropic([
+        _resp("tool_use", [_tool_use("etat_maison", "t1", {"zone": "salon"})]),
+        _resp("end_turn", [_text("Le salon est calme.")]),
+    ])
+    out = await brainbox.brain.run_agent("research", "état du salon ?", who=OWNER, source="test")
+    assert out == "Le salon est calme."
+    assert [m["phase"] for m in missions] == ["start", "done"]   # cycle complet
+    assert missions[0]["agent"] == "research" and missions[0]["task"] == "état du salon ?"
+    assert missions[1]["ok"] is True and "salon" in missions[1]["summary"].lower()
+
+
+async def test_run_agent_inconnu_n_emet_aucune_mission(brainbox):
+    missions: list[dict] = []
+
+    async def cap(ev):
+        missions.append(ev)
+
+    brainbox.brain._on_mission = cap
+    out = await brainbox.brain.run_agent("martien", "x", who=OWNER, source="test")
+    assert "inconnu" in out.lower()
+    assert missions == []   # pas de mission pour un agent qui n'existe pas
+
+
 # ── Agent Home : peut agir, mais UNIQUEMENT via le moteur ────────────────────
 
 def test_home_perimetre():

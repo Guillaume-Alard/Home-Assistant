@@ -193,6 +193,7 @@ const st = {
   proposals: new Map(),
   wakeArmed: false,
   wakeStreaming: false,
+  mission: null,   // délégation multi-agent en cours { agent, label } — sinon null
 };
 
 const dev = {
@@ -259,6 +260,12 @@ function refreshUi() {
   els.wakeBtn.classList.toggle('live', st.wakeStreaming);
   orb.state(s);
   updateTranscript();
+}
+
+// Reflète en direct « ce que fait Luna » (activité d'outil, ou mission d'un agent).
+function showActivity(text) {
+  els.stateLabel.textContent = text;
+  els.transcript.textContent = text;
 }
 
 function toast(text) {
@@ -411,7 +418,18 @@ ws.addEventListener('event', (e) => {
       if (lastHello) { lastHello.ha_connected = !!msg.connected; renderSettings(); }
       break;
     case 'activity':
-      if (st.server === 'thinking') { els.stateLabel.textContent = msg.text; els.transcript.textContent = msg.text; }
+      // Pendant une délégation, l'activité des outils est rattachée à l'agent
+      // en cours (« Research · consulte Nova… ») — sinon telle quelle.
+      if (st.server === 'thinking') { showActivity(st.mission ? `${st.mission.label} · ${msg.text}` : msg.text); }
+      break;
+    case 'mission':
+      // Observabilité de la délégation multi-agent (aucun droit, juste l'affichage).
+      if (msg.phase === 'start') {
+        st.mission = { agent: msg.agent, label: msg.label };
+        if (st.server === 'thinking') showActivity(`${msg.label} · ${msg.task || 'en mission…'}`);
+      } else {
+        st.mission = null;   // fin : l'orchestrateur (Luna) reprend la main
+      }
       break;
     case 'alert': showAlert(msg.level || 'info', msg.text || ''); break;
     case 'proposal_new':
@@ -419,7 +437,11 @@ ws.addEventListener('event', (e) => {
       toast(`Nouvelle proposition n°${msg.proposal.num} : ${msg.proposal.title}`);
       break;
     case 'proposal_update': upsertProposal(msg.proposal); break;
-    case 'status': st.server = msg.state; refreshUi(); syncWake(); break;
+    case 'status':
+      st.server = msg.state;
+      if (msg.state !== 'thinking') st.mission = null;   // filet : la mission ne survit pas au tour
+      refreshUi(); syncWake();
+      break;
     case 'wake': st.wakeStreaming = false; orb.pulse(); chime(); startListening(); break;
     case 'wake_error': onWakeError(msg.text || 'Le mot d’éveil est indisponible.'); break;
     case 'message':

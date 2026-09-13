@@ -190,6 +190,12 @@ def _text_of(content) -> str:
     ).strip()
 
 
+def _mission_summary(text: str, limit: int = 120) -> str:
+    """Première ligne non vide d'un résultat d'agent (aperçu de fin de mission)."""
+    first = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    return first[:limit]
+
+
 def _last_user_text(messages: list[dict]) -> str:
     """Dernier message utilisateur (texte) de l'historique — sert de requête au RAG."""
     for m in reversed(messages or []):
@@ -328,10 +334,15 @@ class Brain:
         memory_provider: Callable[[str | None, str], Awaitable[str]] | None = None,
         on_sources: Callable[[list[dict]], Awaitable[None]] | None = None,
         on_usage: Callable[[str, str, int, int], Awaitable[None]] | None = None,
+        on_mission: Callable[[dict], Awaitable[None]] | None = None,
     ):
         self._settings = settings
         self._toolbox = toolbox
         self._on_activity = on_activity
+        # Notifie l'UI du cycle de vie d'une délégation (multi-agent) : début/fin de
+        # « mission ». Purement observable — n'ouvre aucun droit, ne change aucun
+        # chemin d'exécution. Absent en test → aucune diffusion.
+        self._on_mission = on_mission
         # Notifie l'UI des sources web citées à la fin d'un tour (Phase 4).
         self._on_sources = on_sources
         # Comptabilise les tokens consommés par tour (provider, model, in, out) —
@@ -625,6 +636,14 @@ class Brain:
             except Exception:
                 log.exception("Notification d'activité impossible")
 
+    async def _notify_mission(self, event: dict) -> None:
+        """Cycle de vie d'une délégation (début/fin) — best-effort, jamais bloquant."""
+        if self._on_mission:
+            try:
+                await self._on_mission(event)
+            except Exception:
+                log.exception("Notification de mission impossible")
+
     async def _emit_sources(self, sources: list[dict]) -> None:
         deduped = _dedup_sources(sources)
         if deduped and self._on_sources is not None:
@@ -672,12 +691,25 @@ class Brain:
 
         profile = (self._by_id.get(spec.provider) if spec.provider else None) \
             or self._by_id.get(self._active_id) or self._by_id.get(self._default_id)
+        # Observabilité : la mission commence. Le cockpit sait DÈS LORS quel agent
+        # travaille et sur quoi — l'activité des outils qui suit lui est rattachée.
+        await self._notify_mission({"phase": "start", "agent": spec.id, "label": spec.label, "task": task})
+        result, ok = "", False
         try:
             if profile is not None and profile.kind == "openai":
-                return await self._run_agent_openai(profile, spec, task, tools, run_tool)
-            return await self._run_agent_anthropic(profile, spec, task, tools, run_tool, who)
+                result = await self._run_agent_openai(profile, spec, task, tools, run_tool)
+            else:
+                result = await self._run_agent_anthropic(profile, spec, task, tools, run_tool, who)
+            ok = True
+            return result
         except LLMUnavailable as exc:
-            return f"L'agent {agent_id} n'a pas pu répondre : {exc}"
+            result = f"L'agent {agent_id} n'a pas pu répondre : {exc}"
+            return result
+        finally:
+            await self._notify_mission({
+                "phase": "done", "agent": spec.id, "label": spec.label,
+                "ok": ok, "summary": _mission_summary(result),
+            })
 
     async def _run_agent_openai(self, profile, spec, task, tools, run_tool) -> str:
         provider = self._openai_provider(profile)
