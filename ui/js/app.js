@@ -106,6 +106,9 @@ const els = {
   memoireForm: document.getElementById('memoire-form'),
   memoireCat: document.getElementById('memoire-cat'),
   memoireScope: document.getElementById('memoire-scope'),
+  planPane: document.getElementById('plan-pane'),
+  planTitle: document.getElementById('plan-title'),
+  planSteps: document.getElementById('plan-steps'),
   memoireInput: document.getElementById('memoire-input'),
   memoireList: document.getElementById('memoire-list'),
   memoireCount: document.getElementById('memoire-count'),
@@ -394,6 +397,7 @@ ws.addEventListener('event', (e) => {
       st.proposals.clear();
       (msg.proposals || []).forEach((p) => st.proposals.set(p.num, p));
       renderProposals();
+      renderPlan(msg.plan);
       updateChatMeta();
       renderSettings();
       renderSpeakers({ enabled: !!(msg.config && msg.config.speaker), speakers: msg.speakers || [] });
@@ -446,6 +450,7 @@ ws.addEventListener('event', (e) => {
     case 'sante': renderSante(msg); break;
     case 'historique': renderHistory(msg); break;
     case 'mail': renderMail(msg); break;
+    case 'plan': renderPlan(msg.plan); break;
     case 'memoires': renderMemoires(msg); break;
     case 'speakers': renderSpeakers(msg); break;
     case 'speaker': updateWhoSpeaks(msg); break;
@@ -1783,6 +1788,38 @@ function setSettingsSection(name) {
   if (name === 'connexions' && ws.alive) ws.sendJSON({ type: 'connections' });
 }
 document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => setSettingsSection(b.dataset.sec)));
+
+// ── Plan de travail (orchestrateur) ───────────────────────────────────────
+// Le plan est un fil conducteur affiché : il n'exécute rien (chaque étape qui
+// agit passe par les outils habituels et le « propose puis approuve »).
+const PLAN_MARK = { fait: '✓', en_cours: '◐', a_faire: '○' };
+
+function renderPlan(plan) {
+  if (!els.planPane) return;
+  const steps = (plan && plan.etapes) || [];
+  if (!steps.length) {
+    els.planPane.hidden = true;
+    els.planSteps.textContent = '';
+    if (els.planTitle) els.planTitle.textContent = '';
+    return;
+  }
+  els.planPane.hidden = false;
+  if (els.planTitle) els.planTitle.textContent = (plan.titre || '').slice(0, 80);
+  els.planSteps.textContent = '';
+  for (const step of steps) {
+    const etat = PLAN_MARK[step.etat] ? step.etat : 'a_faire';
+    const li = document.createElement('li');
+    li.className = `plan-step is-${etat}`;
+    const mark = document.createElement('span');
+    mark.className = 'plan-mark';
+    mark.textContent = PLAN_MARK[etat];
+    const text = document.createElement('span');
+    text.className = 'plan-text';
+    text.textContent = step.texte || '';
+    li.append(mark, text);
+    els.planSteps.appendChild(li);
+  }
+}
 
 // ── Mémoire (Paramètres › Mémoire) ────────────────────────────────────────
 const MEM_CATS = {

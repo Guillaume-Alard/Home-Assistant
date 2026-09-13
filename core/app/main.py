@@ -323,6 +323,7 @@ class Sentinel:
             on_memory_change=self._broadcast_memoires,
             on_suggestions_change=self._broadcast_evolutions,
             on_reminders_change=self._broadcast_reminders,
+            on_plan_change=self._on_plan_change,
         )
         self.intents = LocalIntents(
             self.ha, self.engine, self.protocols, store,
@@ -336,6 +337,7 @@ class Sentinel:
         self._proactive_task: asyncio.Task | None = None
         self._bg: set[asyncio.Task] = set()  # références fortes (le GC peut sinon tuer une tâche)
         self._llm_cfg: dict = {}  # réglages LLM du cockpit (clés/modèles/params) — cf. restore_llm_config
+        self._plan: dict = {}  # plan de travail courant (orchestrateur) — éphémère, diffusé au cockpit
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -725,6 +727,13 @@ class Sentinel:
 
     async def _broadcast_reminders(self) -> None:
         await self.hub.broadcast(await self._reminders_payload())
+
+    async def _on_plan_change(self, plan: dict) -> None:
+        """Le plan de travail de Luna a changé : on le garde (éphémère) et on le
+        diffuse au cockpit. Un plan vide efface l'affichage."""
+        etapes = plan.get("etapes") if isinstance(plan, dict) else None
+        self._plan = plan if etapes else {}
+        await self.hub.broadcast({"type": "plan", "plan": self._plan})
 
     async def _on_reminder_fired(self, reminder: dict) -> None:
         """Carillon + petit signal pour l'UI quand un minuteur/rappel sonne."""
@@ -1364,6 +1373,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "reminders": await sentinel.store.list_reminders("active"),
             # Fournisseurs LLM (multi-LLM) — Paramètres › Connexions : modèle actif + bascule
             "llm": sentinel.brain.providers_public(),
+            # Plan de travail courant (orchestrateur) — éphémère, {} si aucun
+            "plan": sentinel._plan,
         },
     )
 

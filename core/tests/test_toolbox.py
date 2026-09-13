@@ -73,7 +73,7 @@ async def test_specs_stables_et_completes(box):
         "etat_maison", "details_entite", "action_domotique", "lancer_protocole",
         "creer_proposition", "lister_propositions", "liste_pieces", "chercher_entites",
         "sante_systemes", "audit_systemes",
-        "memoriser", "lister_souvenirs", "oublier",
+        "memoriser", "lister_souvenirs", "oublier", "plan",
         "lire_mon_code", "proposer_evolution", "lister_evolutions",
         "proposer_routine", "lancer_routine", "lister_routines",
         "etat_musique", "musique",

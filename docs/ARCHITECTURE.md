@@ -110,6 +110,21 @@ Sentinel est **client MCP** : brancher un service externe sans toucher au cœur
 - **Outils** `mcp_outils` / `mcp_appeler` (Toolbox) réservés au propriétaire
   (`owner`). Absents si aucun serveur n'est déclaré.
 
+## Orchestration : plan → agir → vérifier → corriger
+
+La boucle agentique de `brain/llm.py` (tool_use en série) est rendue **explicite**
+pour les tâches à plusieurs étapes :
+
+- **Plan visible** : l'outil `plan` (Toolbox) publie un fil conducteur (étapes +
+  état a_faire/en_cours/fait) diffusé au cockpit (`type: "plan"`, éphémère, dans
+  `Sentinel._plan`). Il **n'exécute rien** — pas de moteur, pas de `call_service`.
+- **Agir** : chaque étape qui touche le monde passe par les outils habituels, donc
+  par le moteur « propose puis approuve ».
+- **Vérifier** (brique 1) : le résultat de chaque action porte un verdict relu
+  depuis Nova.
+- **Corriger** : sur un verdict non confirmé, Luna réévalue et propose une
+  correction, plan mis à jour. La discipline est portée par le prompt système.
+
 ## Surveillance (`core/app/monitors/`) — Phase 3A
 
 - **Docker** (`docker.py`) via DEUX proxys tecnativa (aucun port LAN, socket

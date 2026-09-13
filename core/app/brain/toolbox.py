@@ -78,6 +78,7 @@ ACTIVITY_LABELS = {
     "regarder": "regarde la caméra…",
     "mcp_outils": "liste les extensions MCP…",
     "mcp_appeler": "appelle une extension MCP…",
+    "plan": "organise son plan…",
 }
 
 
@@ -104,6 +105,7 @@ class Toolbox:
         on_memory_change: Callable[[str], Awaitable[None]] | None = None,
         on_suggestions_change: Callable[[], Awaitable[None]] | None = None,
         on_reminders_change: Callable[[], Awaitable[None]] | None = None,
+        on_plan_change: Callable[[dict], Awaitable[None]] | None = None,
     ):
         self._ha = ha
         self._engine = engine
@@ -133,6 +135,9 @@ class Toolbox:
         self._on_memory_change = on_memory_change
         # Rafraîchit Paramètres › Évolutions quand Luna propose une auto-amélioration.
         self._on_suggestions_change = on_suggestions_change
+        # Diffuse le plan de travail courant vers le cockpit (orchestrateur). Le plan
+        # est éphémère (en mémoire) : un fil conducteur, jamais un exécuteur.
+        self._on_plan_change = on_plan_change
 
     _NOVA_ABSENTE = "Nova (Home Assistant) n'est pas configurée ou pas joignable."
     _MOTEUR_ABSENT = "Le moteur d'actions n'est pas disponible (Nova non configurée)."
@@ -331,6 +336,37 @@ class Toolbox:
                     "type": "object",
                     "properties": {"id": {"type": "string"}},
                     "required": ["id"],
+                },
+            },
+            {
+                "name": "plan",
+                "description": (
+                    "Affiche un PLAN de travail pour une tâche à PLUSIEURS étapes : pose les "
+                    "étapes, puis rappelle cet outil pour marquer l'avancement (a_faire | "
+                    "en_cours | fait) à mesure que tu progresses, et vérifies chaque étape. "
+                    "C'est un fil conducteur VISIBLE dans le cockpit — il n'EXÉCUTE RIEN : "
+                    "chaque étape qui agit passe par tes outils habituels (et donc par le "
+                    "« propose puis approuve »). Réserve-le aux demandes complexes ; pour un "
+                    "geste simple, inutile. `effacer: true` retire le plan une fois terminé."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "titre": {"type": "string", "description": "Titre court du plan (optionnel)."},
+                        "etapes": {
+                            "type": "array",
+                            "description": "Les étapes, dans l'ordre.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "texte": {"type": "string"},
+                                    "etat": {"type": "string", "enum": ["a_faire", "en_cours", "fait"]},
+                                },
+                                "required": ["texte"],
+                            },
+                        },
+                        "effacer": {"type": "boolean", "description": "Retire le plan courant."},
+                    },
                 },
             },
         ]
@@ -1027,6 +1063,46 @@ class Toolbox:
         await self._store.delete_memory(mem_id)
         await self._notify_memory_change(subject)
         return "C'est oublié.", False
+
+    # Orchestrateur : plan de travail VISIBLE — n'exécute jamais rien ───────
+
+    async def _notify_plan(self, plan: dict) -> None:
+        if self._on_plan_change is not None:
+            try:
+                await self._on_plan_change(plan)
+            except Exception:
+                log.exception("Diffusion du plan impossible")
+
+    async def _tool_plan(self, args, _utt, _src):
+        """Pose/actualise le plan de travail affiché dans le cockpit. C'est un fil
+        conducteur : AUCUNE action n'en découle — chaque étape qui agit passe par
+        les outils habituels (et le moteur « propose puis approuve »)."""
+        if args.get("effacer"):
+            await self._notify_plan({"titre": "", "etapes": []})
+            return "Plan effacé.", False
+        raw = args.get("etapes")
+        if not isinstance(raw, list) or not raw:
+            return "Donne les étapes du plan (liste), ou effacer:true pour le retirer.", True
+        etapes = []
+        for item in raw[:12]:
+            if isinstance(item, str):
+                texte, etat = item, "a_faire"
+            elif isinstance(item, dict):
+                texte = str(item.get("texte") or "").strip()
+                etat = str(item.get("etat") or "a_faire").strip().lower()
+            else:
+                continue
+            if not texte:
+                continue
+            if etat not in ("a_faire", "en_cours", "fait"):
+                etat = "a_faire"
+            etapes.append({"texte": texte[:160], "etat": etat})
+        if not etapes:
+            return "Aucune étape valide dans le plan.", True
+        plan = {"titre": str(args.get("titre") or "").strip()[:80], "etapes": etapes}
+        await self._notify_plan(plan)
+        faites = sum(1 for e in etapes if e["etat"] == "fait")
+        return f"Plan mis à jour : {faites}/{len(etapes)} étape(s) faite(s).", False
 
     # Auto-amélioration encadrée (Phase 6 — Luna PROPOSE ; Guillaume applique) ──
     #
