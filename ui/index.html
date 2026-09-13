@@ -207,6 +207,7 @@
       <button class="set-navitem" type="button" data-sec="proactivite" aria-selected="false" id="nav-proactivite"><i class="fi fi-rr-bulb" aria-hidden="true"></i> Proactivité</button>
       <button class="set-navitem" type="button" data-sec="routines" aria-selected="false" id="nav-routines"><i class="fi fi-rr-magic-wand" aria-hidden="true"></i> Routines</button>
       <button class="set-navitem" type="button" data-sec="moteur" aria-selected="false"><i class="fi fi-rr-microchip" aria-hidden="true"></i> Moteur</button>
+      <button class="set-navitem" type="button" data-sec="agents" aria-selected="false"><i class="fi fi-rr-apps" aria-hidden="true"></i> Agents</button>
       <button class="set-navitem" type="button" data-sec="conso" aria-selected="false"><i class="fi fi-rr-chart-histogram" aria-hidden="true"></i> Consommation</button>
       <button class="set-navitem" type="button" data-sec="securite" aria-selected="false"><i class="fi fi-rr-shield-check" aria-hidden="true"></i> Confidentialité</button>
       <button class="set-navitem" type="button" data-sec="architecture" aria-selected="false"><i class="fi fi-rr-diagram-project" aria-hidden="true"></i> Architecture</button>
@@ -370,6 +371,21 @@
             <div class="set-row"><span class="set-k">Synthèse (TTS)</span><span class="set-v" id="set-tts">—</span></div>
             <div class="set-row"><span class="set-k">Rapport quotidien</span><span class="set-v" id="set-report">—</span></div>
             <div class="set-row"><span class="set-k">Fuseau</span><span class="set-v" id="set-tz">—</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-sec" data-sec="agents" hidden>
+        <div class="set-title">Agents</div>
+        <div class="set-sub">Les sous-agents de Sentinel : leur rôle, leurs droits (<b>calculés</b> d'après leurs outils), et le <b>modèle</b> qui les fait tourner — le local (Nebula) ou un autre. Choisir le modèle ne change <b>que</b> qui parle : outils, périmètre et « propose puis approuve » restent identiques.</div>
+        <div class="set-cards">
+          <div class="set-card set-card--wide">
+            <div class="set-card-h">Rôles &amp; modèles</div>
+            <div id="set-agents-cards" class="agents-grid"><span class="set-note">Chargement des agents…</span></div>
+          </div>
+          <div class="set-card set-card--wide">
+            <div class="set-card-h">Missions récentes <span class="set-note">tokens &amp; coût estimé</span></div>
+            <div id="set-agents-journal" class="agents-grid"></div>
           </div>
         </div>
       </section>

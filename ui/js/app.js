@@ -35,6 +35,8 @@ const els = {
   agentsBtn: document.getElementById('agents-btn'),
   agentsCards: document.getElementById('agents-cards'),
   agentsJournal: document.getElementById('agents-journal'),
+  setAgentsCards: document.getElementById('set-agents-cards'),
+  setAgentsJournal: document.getElementById('set-agents-journal'),
   santeBtn: document.getElementById('sante-btn'),
   historyBtn: document.getElementById('history-btn'),
   connNova: document.getElementById('conn-nova'),
@@ -449,7 +451,7 @@ ws.addEventListener('event', (e) => {
       break;
     case 'agents':   // roster + fournisseur assigné mis à jour (assignation par agent)
       st.agents = msg.agents || [];
-      if (!drawers.agents.hidden) renderAgents();
+      renderAgents();   // tiroir + Paramètres › Agents (idempotent si masqués)
       break;
     case 'alert': showAlert(msg.level || 'info', msg.text || ''); break;
     case 'proposal_new':
@@ -575,20 +577,28 @@ function missionCostText(m) {
 }
 
 function onMissionChange() {
-  // Pastille « en mission » sur le bouton Agents ; rafraîchit le tiroir s'il est ouvert.
+  // Pastille « en mission » sur le bouton Agents ; rafraîchit les vues visibles.
   els.agentsBtn.classList.toggle('attention', !!st.mission);
-  if (!drawers.agents.hidden) renderAgents();
+  renderAgents();
 }
 
+// Rend les cartes d'agent + le journal dans DEUX surfaces : le tiroir (vue live) et
+// la section Paramètres › Agents. Même contenu, mêmes commandes — deux points d'accès.
 function renderAgents() {
+  renderAgentsInto(els.agentsCards, els.agentsJournal);
+  if (els.setAgentsCards) renderAgentsInto(els.setAgentsCards, els.setAgentsJournal);
+}
+
+function renderAgentsInto(cardsEl, journalEl) {
+  if (!cardsEl || !journalEl) return;
   // Cartes d'agent (roster reçu dans hello) + état live d'après la mission en cours.
   const providers = (lastHello && lastHello.llm && lastHello.llm.providers) || [];
-  els.agentsCards.textContent = '';
+  cardsEl.textContent = '';
   if (!st.agents.length) {
     const empty = document.createElement('p');
     empty.className = 'pane-empty';
     empty.textContent = 'Aucun agent déclaré.';
-    els.agentsCards.appendChild(empty);
+    cardsEl.appendChild(empty);
   }
   for (const a of st.agents) {
     const card = document.createElement('article');
@@ -661,16 +671,16 @@ function renderAgents() {
     provRow.append(plab, sel);
 
     card.append(head, desc, stateEl, provRow);
-    els.agentsCards.appendChild(card);
+    cardsEl.appendChild(card);
   }
 
   // Journal des délégations récentes (plus récent d'abord).
-  els.agentsJournal.textContent = '';
+  journalEl.textContent = '';
   if (!st.missions.length) {
     const empty = document.createElement('p');
     empty.className = 'pane-empty';
     empty.textContent = 'Aucune délégation pour l’instant. Luna délègue quand une tâche relève d’un agent.';
-    els.agentsJournal.appendChild(empty);
+    journalEl.appendChild(empty);
     return;
   }
   for (const m of st.missions) {
@@ -702,7 +712,7 @@ function renderAgents() {
       mp.textContent = meta;
       row.appendChild(mp);
     }
-    els.agentsJournal.appendChild(row);
+    journalEl.appendChild(row);
   }
 }
 
@@ -1283,6 +1293,7 @@ function renderSettings() {
   els.setVoiceEngine.textContent = cloned ? 'clonage local · repli Piper' : 'Piper · local';
   els.setVoice.textContent = cloned ? `« ${eng.cloned_tts_voice || 'luna'} » (clonée)` : (eng.piper_voice || '—');
   renderLLMEditor(h.llm || {});
+  renderAgents();   // remplit aussi Paramètres › Agents (mêmes cartes que le tiroir)
   els.setStt.textContent = eng.whisper_model ? `${eng.whisper_model} · faster-whisper` : '—';
   els.setTts.textContent = cloned
     ? `voix clonée « ${eng.cloned_tts_voice || 'luna'} » (repli Piper)`

@@ -540,6 +540,8 @@ body[data-view="accueil"] .cockpit:not(:has(#thread:empty)) .chips { display: no
 .agent-prov-lab { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); flex: 0 0 auto; }
 .agent-prov-sel { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--edge-2); border-radius: 8px; color: var(--text); font-family: inherit; font-size: 12px; padding: 5px 8px; cursor: pointer; }
 .agent-prov-sel:focus { outline: none; border-color: var(--accent-line); }
+/* Conteneurs « Agents » dans Paramètres (flux normal, sans scroll propre) */
+.agents-grid { display: flex; flex-direction: column; gap: 10px; }
 .agents-jtitle { margin: 8px 18px 2px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .mission-row { border: 1px solid var(--edge); background: var(--panel); border-radius: 10px; padding: 9px 12px; display: flex; flex-direction: column; gap: 4px; }
 .mission-row.ko { border-color: rgba(240, 104, 90, 0.4); }
