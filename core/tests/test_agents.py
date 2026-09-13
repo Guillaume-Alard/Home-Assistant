@@ -18,7 +18,7 @@ from conftest import PROTOCOLS_TEST_YML, make_ha_stub
 
 from app.actions.engine import ActionEngine
 from app.actions.executors import build_registry
-from app.brain.agents import AGENTS, filter_specs
+from app.brain.agents import AGENTS, agent_posture, agent_roster, filter_specs
 from app.brain.llm import Brain
 from app.brain.toolbox import Toolbox
 from app.config import Settings
@@ -68,6 +68,25 @@ def test_vision_lecture_seule():
     v = AGENTS["vision"]
     assert "regarder" in v.tools
     assert not (set(v.tools) & {"action_domotique", "creer_proposition", "deleguer"})
+
+
+def test_posture_calculee_depuis_les_outils():
+    # La posture reflète la colonne « Écrit ? » de la doc — dérivée des outils réels.
+    assert agent_posture(AGENTS["home"]) == "act"        # agit via le moteur
+    assert agent_posture(AGENTS["developer"]) == "propose"
+    assert agent_posture(AGENTS["infra"]) == "propose"
+    assert agent_posture(AGENTS["research"]) == "read"   # lecture seule
+    assert agent_posture(AGENTS["vision"]) == "read"
+
+
+def test_roster_expose_le_registre_sans_secret():
+    roster = agent_roster()
+    assert {a["id"] for a in roster} == set(AGENTS)          # tous les agents, rien de plus
+    for a in roster:
+        assert set(a) == {"id", "label", "description", "posture", "web"}  # descriptif seul
+        assert a["posture"] in {"act", "propose", "read"}
+    research = next(a for a in roster if a["id"] == "research")
+    assert research["web"] is True and research["posture"] == "read"
 
 
 # ── Outil `deleguer` : routage, identité, gating ─────────────────────────────

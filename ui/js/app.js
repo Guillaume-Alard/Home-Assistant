@@ -32,6 +32,9 @@ const els = {
   proposalsBtn: document.getElementById('proposals-btn'),
   propCount: document.getElementById('prop-count'),
   mailBtn: document.getElementById('mail-btn'),
+  agentsBtn: document.getElementById('agents-btn'),
+  agentsCards: document.getElementById('agents-cards'),
+  agentsJournal: document.getElementById('agents-journal'),
   santeBtn: document.getElementById('sante-btn'),
   historyBtn: document.getElementById('history-btn'),
   connNova: document.getElementById('conn-nova'),
@@ -177,6 +180,7 @@ const drawers = {
   sante: document.getElementById('sante-panel'),
   history: document.getElementById('history-panel'),
   mail: document.getElementById('mail-panel'),
+  agents: document.getElementById('agents-panel'),
 };
 
 const ws = new WSClient();
@@ -193,7 +197,9 @@ const st = {
   proposals: new Map(),
   wakeArmed: false,
   wakeStreaming: false,
-  mission: null,   // délégation multi-agent en cours { agent, label } — sinon null
+  mission: null,   // délégation en cours { agent, label, task, at } — sinon null
+  agents: [],      // roster des sous-agents (reçu dans hello) — descriptif
+  missions: [],    // journal des délégations récentes (plus récent d'abord, borné)
 };
 
 const dev = {
@@ -389,6 +395,8 @@ ws.addEventListener('event', (e) => {
       if (els.navRoutines) els.navRoutines.hidden = !(msg.config && msg.config.routines);
       els.mediaBtn.hidden = !(msg.config && msg.config.music);
       renderProactive({ suggestions: msg.proactive || [], muted: msg.proactive_muted || [] });
+      st.agents = msg.agents || [];
+      renderAgents();
       renderRoutines({ routines: msg.routines || [] });
       renderMedia({ players: msg.media || [], enabled: !!(msg.config && msg.config.music) });
       remindersEnabled = !!(msg.config && msg.config.reminders);
@@ -425,11 +433,14 @@ ws.addEventListener('event', (e) => {
     case 'mission':
       // Observabilité de la délégation multi-agent (aucun droit, juste l'affichage).
       if (msg.phase === 'start') {
-        st.mission = { agent: msg.agent, label: msg.label };
+        st.mission = { agent: msg.agent, label: msg.label, task: msg.task || '', at: Date.now() };
         if (st.server === 'thinking') showActivity(`${msg.label} · ${msg.task || 'en mission…'}`);
-      } else {
+      } else if (st.mission) {
+        st.missions.unshift({ ...st.mission, ok: msg.ok !== false, summary: msg.summary || '', doneAt: Date.now() });
+        st.missions = st.missions.slice(0, 40);   // journal borné
         st.mission = null;   // fin : l'orchestrateur (Luna) reprend la main
       }
+      onMissionChange();
       break;
     case 'alert': showAlert(msg.level || 'info', msg.text || ''); break;
     case 'proposal_new':
@@ -439,7 +450,7 @@ ws.addEventListener('event', (e) => {
     case 'proposal_update': upsertProposal(msg.proposal); break;
     case 'status':
       st.server = msg.state;
-      if (msg.state !== 'thinking') st.mission = null;   // filet : la mission ne survit pas au tour
+      if (msg.state !== 'thinking' && st.mission) { st.mission = null; onMissionChange(); }  // filet : pas de mission fantôme
       refreshUi(); syncWake();
       break;
     case 'wake': st.wakeStreaming = false; orb.pulse(); chime(); startListening(); break;
@@ -526,6 +537,116 @@ function upsertProposal(p) {
   if (p.status === 'pending' || p.status === 'deferred') st.proposals.set(p.num, p);
   else st.proposals.delete(p.num);
   renderProposals();
+}
+
+// ── Agents & missions (multi-agent observable) ───────────────────────────
+// Purement descriptif : ces vues n'ouvrent aucun droit. La posture vient du
+// backend (calculée d'après les outils réels du rôle).
+const POSTURE = {
+  act:     { label: 'agit',    cls: 'act',     hint: 'agit via le moteur' },
+  propose: { label: 'propose', cls: 'propose', hint: 'propose seulement' },
+  read:    { label: 'lecture', cls: 'read',    hint: 'lecture seule' },
+};
+
+function fmtClock(ms) {
+  return new Date(ms).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function onMissionChange() {
+  // Pastille « en mission » sur le bouton Agents ; rafraîchit le tiroir s'il est ouvert.
+  els.agentsBtn.classList.toggle('attention', !!st.mission);
+  if (!drawers.agents.hidden) renderAgents();
+}
+
+function renderAgents() {
+  // Cartes d'agent (roster reçu dans hello) + état live d'après la mission en cours.
+  els.agentsCards.textContent = '';
+  if (!st.agents.length) {
+    const empty = document.createElement('p');
+    empty.className = 'pane-empty';
+    empty.textContent = 'Aucun agent déclaré.';
+    els.agentsCards.appendChild(empty);
+  }
+  for (const a of st.agents) {
+    const card = document.createElement('article');
+    card.className = 'agent-card';
+    const active = st.mission && st.mission.agent === a.id;
+    if (active) card.classList.add('on');
+
+    const head = document.createElement('div');
+    head.className = 'agent-head';
+    const name = document.createElement('span');
+    name.className = 'agent-name';
+    name.textContent = a.label;
+    const post = POSTURE[a.posture] || POSTURE.read;
+    const badge = document.createElement('span');
+    badge.className = `agent-posture ${post.cls}`;
+    badge.textContent = post.label;
+    badge.title = post.hint;
+    head.append(name, badge);
+    if (a.web) {
+      const web = document.createElement('span');
+      web.className = 'agent-web';
+      web.textContent = 'web';
+      web.title = 'recherche web (personne reconnue)';
+      head.appendChild(web);
+    }
+
+    const desc = document.createElement('p');
+    desc.className = 'agent-desc';
+    desc.textContent = a.description;
+
+    const stateEl = document.createElement('p');
+    stateEl.className = 'agent-state';
+    const last = st.missions.find((m) => m.agent === a.id);
+    if (active) {
+      stateEl.classList.add('live');
+      stateEl.textContent = `● en mission — ${st.mission.task || '…'}`;
+    } else if (last) {
+      if (!last.ok) stateEl.classList.add('ko');
+      stateEl.textContent = `${last.ok ? '✓' : '✗'} ${last.summary || last.task || 'terminé'} · ${fmtClock(last.doneAt)}`;
+    } else {
+      stateEl.classList.add('idle');
+      stateEl.textContent = 'au repos';
+    }
+
+    card.append(head, desc, stateEl);
+    els.agentsCards.appendChild(card);
+  }
+
+  // Journal des délégations récentes (plus récent d'abord).
+  els.agentsJournal.textContent = '';
+  if (!st.missions.length) {
+    const empty = document.createElement('p');
+    empty.className = 'pane-empty';
+    empty.textContent = 'Aucune délégation pour l’instant. Luna délègue quand une tâche relève d’un agent.';
+    els.agentsJournal.appendChild(empty);
+    return;
+  }
+  for (const m of st.missions) {
+    const row = document.createElement('div');
+    row.className = `mission-row${m.ok ? '' : ' ko'}`;
+    const top = document.createElement('div');
+    top.className = 'mission-top';
+    const who = document.createElement('span');
+    who.className = 'mission-agent';
+    who.textContent = m.label;
+    const when = document.createElement('span');
+    when.className = 'mission-when';
+    when.textContent = fmtClock(m.doneAt);
+    top.append(who, when);
+    const task = document.createElement('p');
+    task.className = 'mission-task';
+    task.textContent = m.task || '';
+    row.append(top, task);
+    if (m.summary) {
+      const sum = document.createElement('p');
+      sum.className = 'mission-sum';
+      sum.textContent = `${m.ok ? '✓' : '✗'} ${m.summary}`;
+      row.appendChild(sum);
+    }
+    els.agentsJournal.appendChild(row);
+  }
 }
 
 function renderProposals() {
@@ -618,8 +739,10 @@ function drawersChanged() {
   if (!drawers.media.hidden) ws.sendJSON({ type: 'media' });
   if (!drawers.reminders.hidden) ws.sendJSON({ type: 'reminders' });
   if (!drawers.agenda.hidden) ws.sendJSON({ type: 'agenda' });
+  if (!drawers.agents.hidden) renderAgents();   // données déjà en mémoire (hello + missions)
 }
 els.proposalsBtn.addEventListener('click', () => openDrawer('proposals'));
+els.agentsBtn.addEventListener('click', () => openDrawer('agents'));
 els.santeBtn.addEventListener('click', () => openDrawer('sante'));
 els.historyBtn.addEventListener('click', () => openDrawer('history'));
 els.mailBtn.addEventListener('click', () => openDrawer('mail'));

@@ -45,6 +45,13 @@ C'est **purement observable** : rien n'est ouvert, aucun chemin d'exécution n'e
 modifié — juste de la visibilité. Les droits restent ceux du demandeur, et une
 action sensible reste validable depuis l'interface uniquement.
 
+Dans le **cockpit**, le tiroir **Agents** (icône « diagramme ») montre une **carte
+par agent** — son rôle, sa **posture** (`lecture` / `propose` / `agit`, *calculée*
+d'après ses outils réels) et son état en direct (« en mission… » quand il
+travaille) — plus un **journal des délégations récentes** (agent, tâche, résultat).
+Le roster vient du serveur (`agent_roster`) ; les cartes ne font qu'**afficher**,
+elles ne pilotent rien.
+
 ## Les agents
 
 | Agent | Rôle | Écrit ? |

@@ -56,6 +56,7 @@ from . import __version__
 from .actions.engine import ActionEngine
 from .actions.executors import build_registry
 from .notify import Notifier
+from .brain.agents import agent_roster
 from .brain.intents import LocalIntents
 from .brain.llm import Brain, LLMUnavailable
 from .brain.embeddings import EmbeddingsError, EmbeddingsService
@@ -1408,6 +1409,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             "protocols": [
                 {"nom": p.display, "risque": p.risk} for p in sentinel.protocols.all()
             ],
+            # Roster des sous-agents (multi-agent) pour le cockpit — descriptif seul.
+            "agents": agent_roster(),
             # Infos moteur et capacités (affichage seul) pour la page Paramètres.
             "engine": {
                 "model": sentinel.settings.model,

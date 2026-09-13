@@ -157,6 +157,10 @@ def test_hello_et_sante(client):
         assert hello["llm"]["active"] and hello["llm"]["default"]
         assert hello["llm"]["providers"][0]["id"] == "claude"
         assert "api_key" not in hello["llm"]["providers"][0]
+        # Roster multi-agent (cockpit « Agents ») : descriptif, avec posture calculée
+        ids = {a["id"] for a in hello["agents"]}
+        assert {"research", "home", "developer", "infra", "vision"} <= ids
+        assert all(a["posture"] in {"act", "propose", "read"} for a in hello["agents"])
 
 
 def test_llm_select_via_ws(fake_wyoming, tmp_path, monkeypatch):

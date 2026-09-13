@@ -55,6 +55,7 @@
       </button>
       <button id="agenda-btn" class="tool" type="button" hidden title="Agenda" aria-label="Agenda"><i class="fi fi-rr-calendar" aria-hidden="true"></i></button>
       <button id="mail-btn" class="tool" type="button" hidden title="Courriel (non lus)" aria-label="Courriel"><i class="fi fi-rr-envelope" aria-hidden="true"></i></button>
+      <button id="agents-btn" class="tool" type="button" title="Agents &amp; missions" aria-label="Agents et missions"><i class="fi fi-rr-diagram-project" aria-hidden="true"></i></button>
       <button id="sante-btn" class="tool" type="button" title="Santé des systèmes" aria-label="Santé"><i class="fi fi-rr-heart-rate" aria-hidden="true"></i></button>
       <button id="history-btn" class="tool" type="button" title="Historique et journal" aria-label="Historique"><i class="fi fi-rr-time-past" aria-hidden="true"></i></button>
       <div class="topbar-sep" aria-hidden="true"></div>
@@ -512,6 +513,19 @@
       <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
     </header>
     <div id="history-body" class="drawer-list"></div>
+  </aside>
+
+  <aside id="agents-panel" class="drawer" hidden aria-label="Agents et missions">
+    <header class="drawer-head">
+      <h2>Agents <span class="drawer-sub">mêmes droits, même moteur</span></h2>
+      <button class="drawer-x" type="button" aria-label="Fermer"><i class="fi fi-rr-cross-small" aria-hidden="true"></i></button>
+    </header>
+    <div id="agents-cards" class="agents-cards"></div>
+    <h3 class="agents-jtitle">Missions récentes</h3>
+    <div id="agents-journal" class="drawer-list"></div>
+    <p class="drawer-hint">Luna <em>délègue</em> à un agent puis synthétise. Un agent hérite
+      de tes droits (aucune élévation) et agit toujours par le moteur « propose puis
+      approuve » — une action sensible reste validable ici uniquement.</p>
   </aside>
 
   <aside id="mail-panel" class="drawer" hidden aria-label="Courriel (lecture seule)">

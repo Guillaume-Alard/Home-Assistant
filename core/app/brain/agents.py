@@ -129,6 +129,37 @@ AGENTS: dict[str, AgentSpec] = {
 }
 
 
+# Outils qui AGISSENT sur le réel via le moteur, vs. qui ne font que PROPOSER.
+# Sert à qualifier la « posture » d'un agent pour le cockpit (pur affichage).
+_ACT_TOOLS = {"action_domotique", "lancer_protocole", "musique", "lancer_routine"}
+_PROPOSE_TOOLS = {"creer_proposition", "proposer_evolution", "proposer_routine"}
+
+
+def agent_posture(spec: AgentSpec) -> str:
+    """Posture d'écriture d'un agent : « act » (via le moteur), « propose » ou « read ».
+
+    Reflète exactement la colonne « Écrit ? » de la doc — dérivée des outils, jamais
+    déclarée à part (une entrée de registre ne peut pas mentir sur ses droits)."""
+    tools = set(spec.tools)
+    if tools & _ACT_TOOLS:
+        return "act"
+    if tools & _PROPOSE_TOOLS:
+        return "propose"
+    return "read"
+
+
+def agent_roster() -> list[dict]:
+    """Roster des agents pour le cockpit (id, libellé, rôle, posture, web).
+
+    Purement descriptif : rien ici n'ouvre un droit — la posture est CALCULÉE à
+    partir des outils réels du rôle."""
+    return [
+        {"id": a.id, "label": a.label, "description": a.description,
+         "posture": agent_posture(a), "web": a.web_search}
+        for a in AGENTS.values()
+    ]
+
+
 def agent_labels() -> str:
     """Ligne « agents disponibles » pour le prompt de l'orchestrateur."""
     return " ; ".join(f"{a.id} — {a.description}" for a in AGENTS.values())
